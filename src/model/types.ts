@@ -25,6 +25,14 @@ export type TaskStatus =
   | "reclaimed"
   | "blocked";
 
+export type TaskType =
+  | "translate"
+  | "proofread"
+  | "review"
+  | "term"
+  | "export"
+  | "custom";
+
 export type TaskSubmitMethod =
   | "change_package"
   | "git_hidden"
@@ -97,7 +105,7 @@ export interface Term {
 
 export interface Task {
   id: string;
-  type: string;
+  type: TaskType;
   title: string;
   file_id: string;
   range_start: number;
@@ -114,38 +122,36 @@ export interface Task {
 export interface Comment {
   id: string;
   entry_id: string;
-  task_id?: string;
-  author: string;
+  user_id: string;
+  created_at: string;
   body: string;
+  reply_to: string | null;
+  task_id?: string;
   disputed?: boolean;
   resolved?: boolean;
-  created_at: string;
   updated_at?: string;
 }
 
 export interface ProjectEvent {
   id: string;
   type: string;
-  message: string;
-  created_by: string;
+  user_id: string;
   created_at: string;
-  file_id?: string;
   entry_id?: string;
   task_id?: string;
-  details?: Record<string, unknown>;
+  file_id?: string;
+  detail?: Record<string, unknown>;
 }
 
 export interface ChangePackageManifest {
   schema_version: number;
-  package_id: string;
   project_id: string;
-  project_name: string;
-  created_by: string;
+  user_id: string;
+  user_name: string;
+  task_id: string;
   created_at: string;
-  entry_ids: string[];
-  task_ids?: string[];
-  comment_ids?: string[];
-  files: string[];
+  changed_entries: number;
+  new_comments: number;
 }
 
 export interface ProjectStats {
