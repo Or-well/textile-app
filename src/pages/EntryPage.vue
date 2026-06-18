@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import EntryEditor from "../components/EntryEditor.vue";
 import EntryList from "../components/EntryList.vue";
 import type { Entry } from "../model/types";
 import { openProject } from "../services/project";
 import {
   getEntryById,
   loadEntries,
+  saveEntry,
   setEntriesProjectRoot,
 } from "../services/entries";
 
@@ -13,13 +15,16 @@ const entries = ref<Entry[]>([]);
 const selectedEntry = ref<Entry>();
 const projectName = ref("");
 const isLoading = ref(false);
+const isSaving = ref(false);
 const errorMessage = ref("");
+const savedMessage = ref("");
 
 const hasEntries = computed(() => entries.value.length > 0);
 
 async function handleOpenProject() {
   isLoading.value = true;
   errorMessage.value = "";
+  savedMessage.value = "";
 
   try {
     const project = await openProject();
@@ -46,6 +51,64 @@ async function handleOpenProject() {
 
 async function handleSelectEntry(entry: Entry) {
   selectedEntry.value = await getEntryById(entry.id);
+  savedMessage.value = "";
+}
+
+function replaceEntry(savedEntry: Entry) {
+  entries.value = entries.value.map((entry) =>
+    entry.id === savedEntry.id ? savedEntry : entry,
+  );
+  selectedEntry.value = savedEntry;
+}
+
+function selectNextEntry(currentEntryId: string) {
+  const currentIndex = entries.value.findIndex((entry) => entry.id === currentEntryId);
+  const nextEntry = entries.value[currentIndex + 1];
+
+  if (nextEntry) {
+    selectedEntry.value = nextEntry;
+  }
+}
+
+async function handleSaveEntry(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const savedEntry = await saveEntry(entry);
+
+    replaceEntry(savedEntry);
+    savedMessage.value = "已保存译文。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "保存失败。请确认项目文件夹仍然可以访问。";
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function handleSaveAndNext(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const savedEntry = await saveEntry(entry);
+
+    replaceEntry(savedEntry);
+    selectNextEntry(savedEntry.id);
+    savedMessage.value = "已保存译文。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "保存失败。请确认项目文件夹仍然可以访问。";
+  } finally {
+    isSaving.value = false;
+  }
 }
 </script>
 
@@ -68,6 +131,7 @@ async function handleSelectEntry(entry: Entry) {
     </header>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+    <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
 
     <section v-if="hasEntries" class="entry-workspace">
       <EntryList
@@ -77,33 +141,13 @@ async function handleSelectEntry(entry: Entry) {
         @select="handleSelectEntry"
       />
 
-      <article v-if="selectedEntry" class="detail-pane">
-        <p class="detail-index">#{{ selectedEntry.index }}</p>
-        <h2>{{ selectedEntry.speaker || "旁白" }}</h2>
-
-        <dl>
-          <div>
-            <dt>原文</dt>
-            <dd>{{ selectedEntry.source }}</dd>
-          </div>
-          <div>
-            <dt>译文</dt>
-            <dd>{{ selectedEntry.target || "未填写译文" }}</dd>
-          </div>
-          <div>
-            <dt>上下文</dt>
-            <dd>{{ selectedEntry.context || "无" }}</dd>
-          </div>
-          <div>
-            <dt>状态</dt>
-            <dd>{{ selectedEntry.status }}</dd>
-          </div>
-          <div>
-            <dt>键名</dt>
-            <dd>{{ selectedEntry.key }}</dd>
-          </div>
-        </dl>
-      </article>
+      <EntryEditor
+        class="detail-pane"
+        :entry="selectedEntry"
+        :is-saving="isSaving"
+        @save="handleSaveEntry"
+        @save-next="handleSaveAndNext"
+      />
     </section>
 
     <p v-else-if="!isLoading" class="empty-state">
@@ -129,8 +173,7 @@ async function handleSelectEntry(entry: Entry) {
   margin: 0 auto 20px;
 }
 
-.eyebrow,
-.detail-index {
+.eyebrow {
   margin: 0 0 6px;
   color: #5b6472;
   font-size: 14px;
@@ -167,6 +210,7 @@ h2 {
 }
 
 .error-message,
+.saved-message,
 .empty-state {
   max-width: 1180px;
   margin: 0 auto;
@@ -175,6 +219,10 @@ h2 {
 
 .error-message {
   color: #b42318;
+}
+
+.saved-message {
+  color: #166534;
 }
 
 .empty-state {
@@ -200,28 +248,6 @@ h2 {
 
 .detail-pane {
   align-self: start;
-  padding: 22px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-dl {
-  display: grid;
-  gap: 18px;
-  margin: 24px 0 0;
-}
-
-dt {
-  margin-bottom: 6px;
-  color: #5b6472;
-  font-size: 13px;
-}
-
-dd {
-  margin: 0;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
 }
 
 @media (max-width: 900px) {

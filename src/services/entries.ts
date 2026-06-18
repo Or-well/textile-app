@@ -1,7 +1,9 @@
 import type { Entry } from "../model/types";
+import { nowIso } from "../utils/time";
 import {
   listFiles,
   readJsonl,
+  writeJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
 
@@ -31,13 +33,24 @@ function getFileIdFromEntryId(entryId: string): string {
   return fileId;
 }
 
+async function listEntryChunkFiles(
+  root: ProjectDirectoryHandle,
+  fileId: string,
+): Promise<string[]> {
+  const entryDirectory = `entries/${fileId}`;
+  const fileNames = await listFiles(root, entryDirectory);
+
+  return fileNames
+    .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export async function loadEntries(fileId: string): Promise<Entry[]> {
   const root = getProjectRoot();
   const entryDirectory = `entries/${fileId}`;
 
   try {
-    const fileNames = await listFiles(root, entryDirectory);
-    const chunkFiles = fileNames.filter((name) => /^chunk_.*\.jsonl$/i.test(name));
+    const chunkFiles = await listEntryChunkFiles(root, fileId);
     const entryGroups = await Promise.all(
       chunkFiles.map((fileName) =>
         readJsonl<Entry>(root, `${entryDirectory}/${fileName}`),
@@ -89,4 +102,49 @@ export async function getEntryById(entryId: string): Promise<Entry | undefined> 
   const entries = await loadEntries(fileId);
 
   return entries.find((entry) => entry.id === entryId);
+}
+
+export async function saveEntry(entry: Entry): Promise<Entry> {
+  const root = getProjectRoot();
+  const fileId = getFileIdFromEntryId(entry.id);
+  const entryDirectory = `entries/${fileId}`;
+  const chunkFiles = await listEntryChunkFiles(root, fileId);
+
+  for (const chunkFile of chunkFiles) {
+    const chunkPath = `${entryDirectory}/${chunkFile}`;
+    const entries = await readJsonl<Entry>(root, chunkPath);
+    const entryIndex = entries.findIndex((row) => row.id === entry.id);
+
+    if (entryIndex < 0) {
+      continue;
+    }
+
+    const originalEntry = entries[entryIndex];
+    const target = entry.target;
+    const shouldMarkTranslated =
+      target.trim().length > 0 && originalEntry.status === "untranslated";
+    const savedEntry: Entry = {
+      ...originalEntry,
+      ...entry,
+      status: shouldMarkTranslated ? "translated" : entry.status,
+      updated_at: nowIso(),
+      updated_by: entry.updated_by || originalEntry.assignee || originalEntry.updated_by,
+    };
+
+    entries[entryIndex] = savedEntry;
+
+    await writeJsonl(root, chunkPath, entries);
+
+    cachedEntries = cachedEntries.map((cachedEntry) =>
+      cachedEntry.id === savedEntry.id ? savedEntry : cachedEntry,
+    );
+
+    if (!cachedEntries.some((cachedEntry) => cachedEntry.id === savedEntry.id)) {
+      cachedEntries.push(savedEntry);
+    }
+
+    return savedEntry;
+  }
+
+  throw new Error("没有找到要保存的词条。请重新打开项目后再试。");
 }
