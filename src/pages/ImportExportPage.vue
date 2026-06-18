@@ -16,6 +16,7 @@ import {
   type ConflictResolution,
   type ReadChangePackage,
 } from "../services/changes";
+import { exportProject, setExporterProjectRoot } from "../services/exporter";
 import { getCurrentUser, setCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
@@ -27,6 +28,7 @@ const selectedUserId = ref(getCurrentUser()?.id ?? "");
 const selectedTaskId = ref("");
 const isLoading = ref(false);
 const isExporting = ref(false);
+const isExportingRelease = ref(false);
 const isReadingPackage = ref(false);
 const isApplyingPackage = ref(false);
 const errorMessage = ref("");
@@ -72,6 +74,7 @@ async function handleOpenProject() {
     }
 
     setChangesProjectRoot(project.root);
+    setExporterProjectRoot(project.root);
     setTasksProjectRoot(project.root);
     tasks.value = await loadTasks();
     selectedTaskId.value = tasks.value[0]?.id ?? "";
@@ -125,6 +128,24 @@ async function handleExportChanges() {
       error instanceof Error ? error.message : "导出修改包失败。请稍后再试。";
   } finally {
     isExporting.value = false;
+  }
+}
+
+async function handleExportRelease() {
+  isExportingRelease.value = true;
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    const result = await exportProject();
+
+    downloadBlob(result.blob, result.fileName);
+    message.value = `已导出成品：${result.fileName}`;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "导出成品失败。请稍后再试。";
+  } finally {
+    isExportingRelease.value = false;
   }
 }
 
@@ -276,6 +297,21 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
         />
       </section>
 
+      <section v-if="projectName" class="release-section">
+        <h2>导出成品</h2>
+        <p class="section-note">
+          暂时导出为简单文本格式，并包含 manifest 和检查报告。
+        </p>
+        <button
+          class="export-button"
+          type="button"
+          :disabled="isExportingRelease"
+          @click="handleExportRelease"
+        >
+          {{ isExportingRelease ? "正在导出..." : "导出成品" }}
+        </button>
+      </section>
+
       <p v-else-if="!isLoading && !errorMessage" class="empty-state">
         请打开项目文件夹，选择用户和任务后导出修改。
       </p>
@@ -361,15 +397,22 @@ button:disabled {
 }
 
 .form-grid,
-.import-section {
+.import-section,
+.release-section {
   display: grid;
   gap: 16px;
   margin-top: 24px;
 }
 
-.import-section {
+.import-section,
+.release-section {
   padding-top: 24px;
   border-top: 1px solid #e5e7eb;
+}
+
+.section-note {
+  color: #4b5563;
+  line-height: 1.7;
 }
 
 h2 {
