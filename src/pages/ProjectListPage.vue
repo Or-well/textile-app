@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import LauncherActionCard from "../components/LauncherActionCard.vue";
+import RecentProjectCard from "../components/RecentProjectCard.vue";
 import type { RecentProjectRecord } from "../services/recentProjects";
 import { formatDateTime } from "../utils/time";
 
@@ -39,9 +41,6 @@ function getSourceTypeText(sourceType: RecentProjectRecord["sourceType"]): strin
   return sourceType === "folder" ? "文件夹" : ".hproj";
 }
 
-function getLastUserText(record: RecentProjectRecord): string {
-  return record.lastUserId ? record.lastUserId : "暂无";
-}
 </script>
 
 <template>
@@ -63,45 +62,37 @@ function getLastUserText(record: RecentProjectRecord): string {
 
       <div class="start-layout">
         <section class="action-panel">
-          <h2>开始</h2>
+          <header class="panel-heading">
+            <p class="eyebrow">开始操作</p>
+            <h2>选择工作入口</h2>
+          </header>
 
-          <button
-            class="action-button primary-action"
-            type="button"
-            @click="emit('createProject')"
-          >
-            <strong>创建项目</strong>
-            <span>生成新的本地项目结构和 owner 账号</span>
-          </button>
+          <LauncherActionCard
+            :title="isOpening ? '正在打开...' : '打开项目文件夹'"
+            description="选择包含项目配置的本地项目目录"
+            :busy="isOpening"
+            @activate="emit('openLocalProject')"
+          />
 
-          <button
-            class="action-button"
-            type="button"
-            :disabled="isOpening"
-            @click="emit('openLocalProject')"
-          >
-            <strong>{{ isOpening ? "正在打开..." : "打开项目文件夹" }}</strong>
-            <span>选择包含 project.json 的本地项目目录</span>
-          </button>
+          <LauncherActionCard
+            title="打开 .hproj 项目文件"
+            description="单文件项目入口尚未接入；相关模块存在，但本任务不启用真实读写"
+            eyebrow="未启用"
+            disabled
+            @activate="emit('openProjectFile')"
+          />
 
-          <button
-            class="action-button"
-            type="button"
-            :disabled="isOpeningFile"
-            @click="emit('openProjectFile')"
-          >
-            <strong>{{ isOpeningFile ? "正在打开..." : "打开 .hproj 项目文件" }}</strong>
-            <span>单文件项目入口，当前版本显示支持计划</span>
-          </button>
+          <LauncherActionCard
+            title="导入项目 / 修改包"
+            description="打开项目后，在导入导出页处理修改包。"
+            @activate="emit('importProject')"
+          />
 
-          <button
-            class="action-button"
-            type="button"
-            @click="emit('importProject')"
-          >
-            <strong>导入项目 / 修改包</strong>
-            <span>已有项目内的导入导出页继续处理修改包</span>
-          </button>
+          <LauncherActionCard
+            title="创建项目"
+            description="新建一个空的本地汉化项目"
+            @activate="emit('createProject')"
+          />
 
           <section v-if="currentProject" class="current-project">
             <p class="eyebrow">当前已打开</p>
@@ -140,47 +131,16 @@ function getLastUserText(record: RecentProjectRecord): string {
           </header>
 
           <div v-if="hasRecentProjects" class="recent-list">
-            <article
+            <RecentProjectCard
               v-for="project in recentProjects"
               :key="project.projectId"
-              class="recent-row"
-            >
-              <div class="recent-main">
-                <div class="recent-title-row">
-                  <h3>{{ project.name }}</h3>
-                  <span>{{ getSourceTypeText(project.sourceType) }}</span>
-                </div>
-                <p>{{ project.displayPath }}</p>
-                <dl>
-                  <div>
-                    <dt>上次打开</dt>
-                    <dd>{{ formatDateTime(project.lastOpenedAt) }}</dd>
-                  </div>
-                  <div>
-                    <dt>上次登录用户</dt>
-                    <dd>{{ getLastUserText(project) }}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div class="recent-actions">
-                <button
-                  class="small-primary-button"
-                  type="button"
-                  :disabled="isOpening"
-                  @click="emit('openRecentProject', project)"
-                >
-                  快速打开
-                </button>
-                <button
-                  class="small-secondary-button"
-                  type="button"
-                  @click="emit('removeRecentProject', project.projectId)"
-                >
-                  从列表移除
-                </button>
-              </div>
-            </article>
+              :project="project"
+              :source-label="getSourceTypeText(project.sourceType)"
+              :last-opened-text="formatDateTime(project.lastOpenedAt)"
+              :is-opening="isOpening"
+              @open="emit('openRecentProject', $event)"
+              @remove="emit('removeRecentProject', $event)"
+            />
           </div>
 
           <section v-else class="empty-recent">
@@ -196,14 +156,16 @@ function getLastUserText(record: RecentProjectRecord): string {
 <style scoped>
 .project-start-page {
   min-height: 100vh;
-  padding: 28px;
-  background: #eef2f5;
+  padding: 26px;
+  background: #f1f4f6;
   color: #1f2937;
 }
 
 .start-shell {
-  width: min(100%, 1220px);
+  width: min(100%, 1180px);
   margin: 0 auto;
+  display: grid;
+  gap: 16px;
 }
 
 .start-header {
@@ -211,7 +173,7 @@ function getLastUserText(record: RecentProjectRecord): string {
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  margin-bottom: 18px;
+  min-height: 0;
 }
 
 .eyebrow,
@@ -231,15 +193,14 @@ dd {
 }
 
 h1 {
-  margin-top: 5px;
   color: #111827;
-  font-size: 32px;
+  font-size: 28px;
   line-height: 1.2;
 }
 
 h2 {
   color: #111827;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1.25;
 }
 
@@ -250,7 +211,8 @@ h3 {
 }
 
 .summary {
-  margin-top: 9px;
+  margin-top: 7px;
+  max-width: 680px;
   color: #5b6472;
   line-height: 1.6;
 }
@@ -266,8 +228,7 @@ h3 {
 }
 
 .error-message {
-  margin-bottom: 14px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid #f0b8aa;
   border-radius: 6px;
   background: #ffffff;
@@ -277,7 +238,8 @@ h3 {
 
 .start-layout {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: 326px minmax(0, 1fr);
+  align-items: start;
   gap: 18px;
 }
 
@@ -293,14 +255,22 @@ h3 {
   display: grid;
   align-content: start;
   gap: 12px;
-  padding: 18px;
+  padding: 16px;
+}
+
+.panel-heading {
+  display: grid;
+  gap: 5px;
+  padding: 2px 0 6px;
+  border-bottom: 1px solid #eef1f5;
 }
 
 .recent-panel {
   display: grid;
   align-content: start;
-  gap: 14px;
-  padding: 18px;
+  gap: 12px;
+  min-height: 500px;
+  padding: 16px;
 }
 
 .panel-header {
@@ -312,52 +282,11 @@ h3 {
   border-bottom: 1px solid #eef1f5;
 }
 
-.action-button {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  min-height: 76px;
-  padding: 14px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #1f2937;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.action-button strong {
-  color: #111827;
-  font-size: 16px;
-}
-
-.action-button span {
-  color: #5b6472;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.action-button:hover:not(:disabled) {
-  border-color: #2f6f73;
-  background: #f8fcfb;
-}
-
-.primary-action {
-  border-color: #2f6f73;
-  background: #2f6f73;
-}
-
-.primary-action strong,
-.primary-action span {
-  color: #ffffff;
-}
-
 .current-project {
   display: grid;
   gap: 10px;
-  margin-top: 8px;
-  padding: 14px;
+  margin-top: 4px;
+  padding: 12px;
   border: 1px solid #cfe0dc;
   border-radius: 8px;
   background: #f8fcfb;
@@ -398,52 +327,6 @@ dl div {
 .recent-list {
   display: grid;
   gap: 10px;
-}
-
-.recent-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: center;
-  padding: 14px;
-  border: 1px solid #e1e6ee;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.recent-title-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.recent-title-row span {
-  padding: 3px 7px;
-  border-radius: 999px;
-  background: #e8f3f1;
-  color: #194b4f;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.recent-main {
-  min-width: 0;
-}
-
-.recent-main p {
-  overflow-wrap: anywhere;
-  font-size: 14px;
-}
-
-.recent-main dl {
-  margin-top: 10px;
-}
-
-.recent-actions {
-  display: grid;
-  gap: 8px;
 }
 
 .small-primary-button,
@@ -494,8 +377,7 @@ button:disabled {
   }
 
   .start-header,
-  .start-layout,
-  .recent-row {
+  .start-layout {
     grid-template-columns: 1fr;
   }
 
@@ -503,9 +385,8 @@ button:disabled {
     display: grid;
   }
 
-  .recent-actions {
-    display: flex;
-    flex-wrap: wrap;
+  .recent-panel {
+    min-height: 0;
   }
 }
 </style>
