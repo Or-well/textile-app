@@ -9,7 +9,9 @@ import ImportExportPage from "./pages/ImportExportPage.vue";
 import ProjectListPage from "./pages/ProjectListPage.vue";
 import ProjectPage from "./pages/ProjectPage.vue";
 import SettingsPage from "./pages/SettingsPage.vue";
+import StatsPage from "./pages/StatsPage.vue";
 import TasksPage from "./pages/TasksPage.vue";
+import TermsPage from "./pages/TermsPage.vue";
 import type { Member, ProjectConfig } from "./model/types";
 import { setChangesProjectRoot } from "./services/changes";
 import { setCommentsProjectRoot } from "./services/comments";
@@ -293,7 +295,11 @@ onBeforeUnmount(() => {
 
       <TasksPage v-else-if="route.section === 'tasks'" />
 
+      <TermsPage v-else-if="route.section === 'terms'" />
+
       <CommentsPage v-else-if="route.section === 'comments'" />
+
+      <StatsPage v-else-if="route.section === 'stats'" />
 
       <ImportExportPage v-else-if="route.section === 'import-export'" />
 
@@ -305,6 +311,10 @@ onBeforeUnmount(() => {
         <p>这个栏目已经接入项目工作台导航，当前版本还没有对应页面文件。</p>
       </section>
     </template>
+
+    <TermsPage v-else-if="route.section === 'terms'" />
+
+    <StatsPage v-else-if="route.section === 'stats'" />
 
     <section v-else class="placeholder-page">
       <p class="eyebrow">未打开项目</p>
