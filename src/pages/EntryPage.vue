@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntryList from "../components/EntryList.vue";
+import ProgressBar from "../components/ProgressBar.vue";
 import type { Entry } from "../model/types";
 import { openProject } from "../services/project";
 import {
@@ -10,10 +11,12 @@ import {
   saveEntry,
   setEntriesProjectRoot,
 } from "../services/entries";
+import { getProjectStats, type BasicProjectStats } from "../services/stats";
 import { setTermsProjectRoot } from "../services/terms";
 
 const entries = ref<Entry[]>([]);
 const selectedEntry = ref<Entry>();
+const stats = ref<BasicProjectStats>();
 const projectName = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -21,6 +24,10 @@ const errorMessage = ref("");
 const savedMessage = ref("");
 
 const hasEntries = computed(() => entries.value.length > 0);
+
+async function refreshStats() {
+  stats.value = await getProjectStats(entries.value);
+}
 
 async function handleOpenProject() {
   isLoading.value = true;
@@ -35,9 +42,11 @@ async function handleOpenProject() {
 
     entries.value = await loadEntries("script_001");
     selectedEntry.value = entries.value[0];
+    await refreshStats();
   } catch (error) {
     entries.value = [];
     selectedEntry.value = undefined;
+    stats.value = undefined;
 
     if (error instanceof DOMException && error.name === "AbortError") {
       errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
@@ -81,6 +90,7 @@ async function handleSaveEntry(entry: Entry) {
     const savedEntry = await saveEntry(entry);
 
     replaceEntry(savedEntry);
+    await refreshStats();
     savedMessage.value = "已保存译文。";
   } catch (error) {
     errorMessage.value =
@@ -101,6 +111,7 @@ async function handleSaveAndNext(entry: Entry) {
     const savedEntry = await saveEntry(entry);
 
     replaceEntry(savedEntry);
+    await refreshStats();
     selectNextEntry(savedEntry.id);
     savedMessage.value = "已保存译文。";
   } catch (error) {
@@ -134,6 +145,18 @@ async function handleSaveAndNext(entry: Entry) {
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
+
+    <section v-if="stats" class="stats-summary">
+      <ProgressBar :percent="stats.progressPercent" label="当前文件进度" />
+      <div class="stats-counts">
+        <span>总词条：{{ stats.totalEntries }}</span>
+        <span>未翻译：{{ stats.untranslatedEntries }}</span>
+        <span>已翻译：{{ stats.translatedEntries }}</span>
+        <span>已校对：{{ stats.proofreadEntries }}</span>
+        <span>已审核：{{ stats.reviewedEntries }}</span>
+        <span>有争议：{{ stats.disputedEntries }}</span>
+      </div>
+    </section>
 
     <section v-if="hasEntries" class="entry-workspace">
       <EntryList
@@ -233,6 +256,25 @@ h2 {
   border-radius: 8px;
   background: #ffffff;
   color: #4b5563;
+}
+
+.stats-summary {
+  display: grid;
+  gap: 12px;
+  max-width: 1180px;
+  margin: 0 auto 20px;
+  padding: 16px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.stats-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  color: #4b5563;
+  font-size: 14px;
 }
 
 .entry-workspace {
