@@ -39,6 +39,18 @@ interface ProjectSummary {
   taskCount: number;
 }
 
+const sectionLabels: Record<ProjectSection, string> = {
+  overview: "概览",
+  files: "文件",
+  tasks: "任务",
+  terms: "术语",
+  comments: "评论",
+  stats: "统计",
+  "import-export": "导入导出",
+  settings: "设置",
+  "file-entry": "词条",
+};
+
 const routePath = ref(window.location.pathname);
 const currentProject = ref<OpenedProject | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
@@ -266,7 +278,7 @@ onBeforeUnmount(() => {
 
       <section v-else class="placeholder-page">
         <p class="eyebrow">项目内页面</p>
-        <h1>{{ route.section }}</h1>
+        <h1>{{ sectionLabels[route.section] }}</h1>
         <p>这个栏目已经接入项目工作台导航，完整内容将在后续模块迁移。</p>
       </section>
     </template>

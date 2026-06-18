@@ -42,7 +42,7 @@ const sectionLabels: Record<ProjectSection, string> = {
     <header class="workspace-header">
       <nav class="breadcrumb" aria-label="面包屑">
         <button type="button" @click="emit('navigateProjectList')">
-          项目列表
+          项目
         </button>
         <span>/</span>
         <button
@@ -53,7 +53,18 @@ const sectionLabels: Record<ProjectSection, string> = {
           {{ project?.name || "未打开项目" }}
         </button>
         <span>/</span>
-        <strong>{{ fileId || sectionLabels[activeSection] }}</strong>
+        <button
+          v-if="activeSection === 'file-entry'"
+          type="button"
+          @click="emit('navigateSection', 'files')"
+        >
+          文件
+        </button>
+        <template v-if="activeSection === 'file-entry'">
+          <span>/</span>
+          <strong>{{ fileId || "词条编辑" }}</strong>
+        </template>
+        <strong v-else>{{ sectionLabels[activeSection] }}</strong>
       </nav>
     </header>
 
@@ -73,15 +84,18 @@ const sectionLabels: Record<ProjectSection, string> = {
 <style scoped>
 .project-layout {
   min-height: 100vh;
-  background: #eef2f5;
+  background: #f1f4f6;
   color: #1f2937;
 }
 
 .workspace-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
-  min-height: 58px;
-  padding: 0 24px;
+  min-height: 56px;
+  padding: 0 26px;
   border-bottom: 1px solid #d7dde5;
   background: #ffffff;
 }
@@ -115,13 +129,13 @@ const sectionLabels: Record<ProjectSection, string> = {
 
 .workspace-body {
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  min-height: calc(100vh - 59px);
+  grid-template-columns: 216px minmax(0, 1fr);
+  min-height: calc(100vh - 57px);
 }
 
 .workspace-content {
   min-width: 0;
-  padding: 24px;
+  padding: 22px 24px 28px;
 }
 
 @media (max-width: 840px) {

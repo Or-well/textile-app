@@ -67,9 +67,10 @@ const visibleCurrentProject = computed(() => {
 
     <div class="project-list-layout">
       <aside class="project-filter">
+        <p class="filter-title">项目</p>
         <label>
-          <span>搜索项目</span>
-          <input v-model="searchText" type="search" placeholder="输入项目名" />
+          <span>搜索</span>
+          <input v-model="searchText" type="search" placeholder="搜索项目" />
         </label>
 
         <button
@@ -131,8 +132,8 @@ const visibleCurrentProject = computed(() => {
 <style scoped>
 .project-list-page {
   min-height: 100vh;
-  padding: 28px;
-  background: #eef2f5;
+  padding: 26px;
+  background: #f1f4f6;
   color: #1f2937;
 }
 
@@ -141,7 +142,7 @@ const visibleCurrentProject = computed(() => {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  max-width: 1180px;
+  max-width: 1220px;
   margin: 0 auto 20px;
 }
 
@@ -186,7 +187,7 @@ h2 {
 }
 
 .error-message {
-  max-width: 1180px;
+  max-width: 1220px;
   margin: 0 auto 18px;
   color: #b42318;
   line-height: 1.7;
@@ -194,20 +195,26 @@ h2 {
 
 .project-list-layout {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 22px;
-  max-width: 1180px;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 18px;
+  max-width: 1220px;
   margin: 0 auto;
 }
 
 .project-filter {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   padding: 16px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
+}
+
+.filter-title {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 label {
@@ -217,7 +224,7 @@ label {
 
 label span {
   color: #5b6472;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 input {
@@ -231,7 +238,7 @@ input {
 }
 
 .filter-button {
-  min-height: 38px;
+  min-height: 40px;
   padding: 0 12px;
   border: 0;
   border-radius: 6px;
@@ -244,13 +251,13 @@ input {
 
 .filter-button:hover,
 .filter-button.active {
-  background: #e6f0ef;
-  color: #174346;
+  background: #eef6f4;
+  color: #194b4f;
 }
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 

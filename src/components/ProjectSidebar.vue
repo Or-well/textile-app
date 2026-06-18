@@ -40,6 +40,7 @@ function isActive(section: ProjectSection): boolean {
 
 <template>
   <nav class="project-sidebar" aria-label="项目内导航">
+    <p class="sidebar-title">项目工作台</p>
     <button
       v-for="item in navItems"
       :key="item.section"
@@ -59,14 +60,23 @@ function isActive(section: ProjectSection): boolean {
   align-content: start;
   gap: 6px;
   min-width: 180px;
-  padding: 14px;
+  padding: 16px 12px;
   border-right: 1px solid #dfe4ea;
-  background: #f8fafb;
+  background: #ffffff;
+}
+
+.sidebar-title {
+  margin: 0 0 8px;
+  padding: 0 10px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
 }
 
 .nav-item {
-  min-height: 38px;
-  padding: 0 12px;
+  min-height: 40px;
+  padding: 0 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -79,12 +89,13 @@ function isActive(section: ProjectSection): boolean {
 
 .nav-item:hover,
 .nav-item.active {
-  background: #e6f0ef;
-  color: #174346;
+  background: #eef6f4;
+  color: #194b4f;
 }
 
 .nav-item.active {
   font-weight: 700;
+  box-shadow: inset 3px 0 0 #2f6f73;
 }
 
 @media (max-width: 840px) {
@@ -94,6 +105,10 @@ function isActive(section: ProjectSection): boolean {
     overflow-x: auto;
     border-right: 0;
     border-bottom: 1px solid #dfe4ea;
+  }
+
+  .sidebar-title {
+    display: none;
   }
 
   .nav-item {

@@ -31,6 +31,22 @@ const tabs: Array<{ id: AssistTab; label: string }> = [
   { id: "comments", label: "注释" },
 ];
 
+function describeEvent(event: ProjectEvent): string {
+  if (event.type === "entry.updated") {
+    return "词条已更新";
+  }
+
+  if (event.type === "entry.disputed") {
+    return "标记为有争议";
+  }
+
+  if (event.type === "entry.dispute_resolved") {
+    return "争议已处理";
+  }
+
+  return "记录已更新";
+}
+
 watch(
   [() => props.entry?.source, () => props.draftTarget],
   async ([sourceText, targetText]) => {
@@ -116,7 +132,7 @@ watch(
       </p>
       <ul v-else class="history-list">
         <li v-for="event in historyEvents" :key="event.id">
-          <strong>{{ event.type }}</strong>
+          <strong>{{ describeEvent(event) }}</strong>
           <span>{{ event.user_id }} · {{ event.created_at }}</span>
         </li>
       </ul>

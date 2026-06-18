@@ -32,22 +32,22 @@ function summarize(text: string): string {
   <aside class="entry-side-list">
     <div class="list-tools">
       <label>
-        <span>搜索词条</span>
+        <span>搜索</span>
         <input
           :value="searchText"
           type="search"
-          placeholder="搜索原文或译文"
+          placeholder="搜索词条"
           @input="emit('updateSearchText', ($event.target as HTMLInputElement).value)"
         />
       </label>
 
       <label>
-        <span>状态筛选</span>
+        <span>筛选</span>
         <select
           :value="statusFilter"
           @change="emit('updateStatusFilter', ($event.target as HTMLSelectElement).value as EntryStatus | 'all')"
         >
-          <option value="all">全部状态</option>
+          <option value="all">全部</option>
           <option value="untranslated">未翻译</option>
           <option value="translated">已翻译</option>
           <option value="proofread">已校对</option>
@@ -69,7 +69,7 @@ function summarize(text: string): string {
         <span class="entry-source">{{ summarize(entry.source) }}</span>
         <span class="entry-row-meta">
           <span>{{ statusLabels[entry.status] }}</span>
-          <span v-if="entry.status === 'disputed'">争议</span>
+          <span v-if="entry.status === 'disputed'">有争议</span>
           <span v-if="entry.updated_at">有记录</span>
         </span>
       </button>
@@ -87,6 +87,7 @@ function summarize(text: string): string {
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
+  overflow: hidden;
 }
 
 .list-tools {
@@ -143,7 +144,7 @@ select {
 .entry-row:hover,
 .entry-row.selected {
   border-color: #2f6f73;
-  background: #eef7f5;
+  background: #f0f8f6;
 }
 
 .entry-row.disputed {

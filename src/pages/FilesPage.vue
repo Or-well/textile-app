@@ -158,8 +158,8 @@ watch(
 
     <section class="file-toolbar">
       <label>
-        <span>搜索文件</span>
-        <input v-model="searchText" type="search" placeholder="输入文件名" />
+        <span>搜索</span>
+        <input v-model="searchText" type="search" placeholder="搜索文件" />
       </label>
 
       <label>
@@ -173,10 +173,10 @@ watch(
       </label>
 
       <label>
-        <span>状态筛选</span>
+        <span>筛选</span>
         <select v-model="statusFilter">
-          <option value="all">全部文件</option>
-          <option value="needs-work">未完成</option>
+          <option value="all">全部</option>
+          <option value="needs-work">未翻译</option>
           <option value="reviewed">已审核完成</option>
           <option value="disputed">有争议</option>
         </select>
@@ -226,7 +226,7 @@ watch(
 <style scoped>
 .files-page {
   display: grid;
-  gap: 18px;
+  gap: 16px;
 }
 
 .page-title {
@@ -266,7 +266,7 @@ h1 {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) minmax(160px, 220px);
   gap: 12px;
-  padding: 14px;
+  padding: 12px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
@@ -312,12 +312,12 @@ h1 {
 
 .file-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(160px, 0.7fr) minmax(160px, 0.7fr) minmax(160px, 0.6fr);
+  grid-template-columns: minmax(260px, 1.1fr) minmax(150px, 0.55fr) minmax(150px, 0.55fr) minmax(160px, 0.5fr);
   gap: 16px;
   align-items: center;
   width: 100%;
   min-height: 74px;
-  padding: 14px 16px;
+  padding: 14px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
@@ -328,7 +328,7 @@ h1 {
 
 .file-row:hover {
   border-color: #2f6f73;
-  background: #fbfdfc;
+  background: #f8fcfb;
 }
 
 .file-main {
