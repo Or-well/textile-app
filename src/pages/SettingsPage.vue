@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import MemberManagementPanel from "../components/settings/MemberManagementPanel.vue";
 import {
   PERMISSION_ACTIONS,
@@ -12,6 +12,18 @@ import {
   getCurrentUser,
 } from "../services/permissions";
 import { openProject, saveProject } from "../services/project";
+import {
+  checkForUpdates,
+  getAppUpdateState,
+  getCurrentVersion,
+  getUpdateChannel,
+  installUpdate,
+  openDownloadPage,
+  setUpdateChannel,
+  subscribeAppUpdate,
+  type AppUpdateState,
+  type UpdateChannel,
+} from "../services/appUpdate";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
 import { normalizeProgressWeights } from "../services/stats";
 import {
@@ -27,6 +39,7 @@ type SettingsSection =
   | "progress"
   | "export"
   | "sync"
+  | "updates"
   | "danger";
 
 type EditableProjectConfig = ProjectConfig & {
@@ -53,6 +66,7 @@ const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "progress", label: "进度权重" },
   { key: "export", label: "导出设置" },
   { key: "sync", label: "同步与备份" },
+  { key: "updates", label: "关于 / 更新" },
   { key: "danger", label: "危险操作" },
 ];
 
@@ -107,13 +121,17 @@ const weightDraft = ref({
   review: 30,
 });
 const syncStatus = ref<SyncStatus>();
+const updateState = ref<AppUpdateState>(getAppUpdateState());
+const selectedUpdateChannel = ref<UpdateChannel>(getUpdateChannel());
 const isLoading = ref(false);
 const isSavingProject = ref(false);
 const isSavingWeights = ref(false);
 const isRefreshingSync = ref(false);
 const isSyncing = ref(false);
+const isCheckingUpdate = ref(false);
 const message = ref("");
 const errorMessage = ref("");
+let unsubscribeUpdate: (() => void) | null = null;
 
 const hasProjectContext = computed(() => Boolean(props.project));
 const currentUser = computed(
@@ -159,6 +177,34 @@ const syncStateText = computed(() => {
   return `${syncStatus.value.title}：${syncStatus.value.message}`;
 });
 const canSyncProject = computed(() => syncStatus.value?.canSync === true);
+const currentProgramVersion = computed(() => `v${getCurrentVersion()}`);
+const latestProgramVersion = computed(() =>
+  updateState.value.latest ? `v${updateState.value.latest.latest_version}` : "尚未获取",
+);
+const updatePlatformText = computed(() => {
+  const labels = {
+    web: "Web",
+    pwa: "PWA",
+    desktop: "桌面版占位",
+  } satisfies Record<AppUpdateState["platform"], string>;
+
+  return labels[updateState.value.platform];
+});
+const lastUpdateCheckText = computed(() => {
+  if (!updateState.value.checkedAt) {
+    return "尚未检查";
+  }
+
+  return new Date(updateState.value.checkedAt).toLocaleString();
+});
+const updateStatusText = computed(() => {
+  if (updateState.value.pwaRefreshReady) {
+    return "新版本已准备好，刷新后即可使用。";
+  }
+
+  return updateState.value.message;
+});
+const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
 
 function applyProject(project: ProjectConfig): void {
   const editableProject = project as EditableProjectConfig;
@@ -368,6 +414,46 @@ async function handleSyncProject() {
   }
 }
 
+function handleUpdateChannelChange(event: Event) {
+  const nextChannel = (event.target as HTMLSelectElement).value as UpdateChannel;
+
+  setUpdateChannel(nextChannel);
+  selectedUpdateChannel.value = nextChannel;
+  message.value = "更新通道已切换，请手动检查更新。";
+  errorMessage.value = "";
+}
+
+async function handleCheckForUpdates() {
+  isCheckingUpdate.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const result = await checkForUpdates();
+
+    if (result.status === "failed") {
+      errorMessage.value = result.message;
+    } else {
+      message.value = result.message;
+    }
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "检查更新失败。请稍后再试。";
+  } finally {
+    isCheckingUpdate.value = false;
+  }
+}
+
+function handleOpenDownloadPage() {
+  openDownloadPage(updateState.value.latest?.download_url);
+}
+
+async function handleInstallProgramUpdate() {
+  const result = await installUpdate();
+  message.value = result.message;
+  errorMessage.value = "";
+}
+
 function confirmDangerAction(actionName: string): boolean {
   return (
     window.confirm(`确认要执行“${actionName}”吗？`) &&
@@ -412,9 +498,18 @@ watch(
 );
 
 onMounted(() => {
+  unsubscribeUpdate = subscribeAppUpdate((nextState) => {
+    updateState.value = nextState;
+    selectedUpdateChannel.value = nextState.channel;
+  });
+
   if (localProject.value) {
     void refreshSyncStatus();
   }
+});
+
+onBeforeUnmount(() => {
+  unsubscribeUpdate?.();
 });
 </script>
 
@@ -808,6 +903,107 @@ onMounted(() => {
           </div>
         </section>
 
+        <section v-else-if="activeSection === 'updates'" class="settings-card">
+          <header class="card-header">
+            <h2>关于 / 更新</h2>
+            <p>检查程序本体版本。项目数据迁移和格式变更不在这里处理。</p>
+          </header>
+
+          <div class="sync-status">
+            <strong>{{ updateStatusText }}</strong>
+            <p>更新来源：{{ updateState.sourceUrl }}</p>
+          </div>
+
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <span>当前版本</span>
+                <p>来自应用包版本，不读取项目数据。</p>
+              </div>
+              <div class="row-control readonly-control">
+                <strong>{{ currentProgramVersion }}</strong>
+                <span>{{ updatePlatformText }}</span>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <label for="update-channel">更新通道</label>
+                <p>stable 为默认通道，beta 用于提前查看测试版提示。</p>
+              </div>
+              <div class="row-control compact-control">
+                <select
+                  id="update-channel"
+                  :value="selectedUpdateChannel"
+                  @change="handleUpdateChannelChange"
+                >
+                  <option value="stable">stable</option>
+                  <option value="beta">beta</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>手动检查</span>
+                <p>读取固定的版本清单，发现新版本时显示下载入口。</p>
+              </div>
+              <div class="row-control button-control">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="isCheckingUpdate"
+                  @click="handleCheckForUpdates"
+                >
+                  {{ isCheckingUpdate ? "正在检查..." : "检查更新" }}
+                </button>
+                <button
+                  class="primary-button"
+                  type="button"
+                  @click="handleOpenDownloadPage"
+                >
+                  打开下载页
+                </button>
+                <button
+                  class="secondary-button"
+                  type="button"
+                  @click="handleInstallProgramUpdate"
+                >
+                  {{ updateState.pwaRefreshReady ? "立即刷新" : "安装占位" }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>最近一次结果</span>
+                <p>用于确认是否已经检查过当前通道。</p>
+              </div>
+              <div class="row-control update-result">
+                <strong>{{ updateState.message }}</strong>
+                <span>检查时间：{{ lastUpdateCheckText }}</span>
+                <span>最新版本：{{ latestProgramVersion }}</span>
+                <span v-if="updateState.latest">
+                  发布日期：{{ updateState.latest.release_date }} ·
+                  通道：{{ updateState.latest.channel }}
+                </span>
+                <span v-if="updateState.latest?.critical">这是重要更新。</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="releaseNoteRows.length" class="update-notes">
+            <strong>更新内容</strong>
+            <ul>
+              <li v-for="note in releaseNoteRows" :key="note">{{ note }}</li>
+            </ul>
+          </div>
+
+          <p class="notice-text">
+            Web / PWA 版本只提示刷新或打开下载页；桌面自动安装尚未实现。将来接入桌面 updater 时，需要做安装包签名校验。
+          </p>
+        </section>
+
         <section v-else class="settings-card danger-card">
           <header class="card-header">
             <h2>危险操作</h2>
@@ -884,6 +1080,8 @@ onMounted(() => {
 .member-row span,
 .role-card p,
 .sync-status p,
+.update-result span,
+.update-notes,
 .danger-row p {
   color: #5b6472;
 }
@@ -930,6 +1128,8 @@ h3 {
 .success-text,
 .error-inline,
 .sync-status p,
+.update-result,
+.update-notes,
 .danger-row p {
   line-height: 1.6;
 }
@@ -1335,6 +1535,37 @@ code {
 
 .sync-status strong {
   color: #111827;
+}
+
+.readonly-control,
+.update-result {
+  display: grid;
+  gap: 4px;
+}
+
+.readonly-control strong,
+.update-result strong,
+.update-notes strong {
+  color: #111827;
+}
+
+.readonly-control span,
+.update-result span {
+  font-size: 13px;
+}
+
+.update-notes {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+.update-notes ul {
+  margin: 0;
+  padding-left: 18px;
 }
 
 .danger-card {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import ProjectLayout from "./components/ProjectLayout.vue";
+import UpdateNotice from "./components/UpdateNotice.vue";
 import CommentsPage from "./pages/CommentsPage.vue";
 import EntryPage from "./pages/EntryPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
@@ -21,6 +22,7 @@ import { setExporterProjectRoot } from "./services/exporter";
 import { setHistoryProjectRoot } from "./services/history";
 import { loginMember } from "./services/auth";
 import { getCurrentUser, setCurrentUser } from "./services/permissions";
+import { checkForUpdates, setupPwaUpdateListener } from "./services/appUpdate";
 import { openProject, type OpenedProject } from "./services/project";
 import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectRoot } from "./services/tasks";
@@ -307,6 +309,8 @@ function handleOpenFile(fileId: string) {
 
 onMounted(() => {
   window.addEventListener("popstate", handlePopState);
+  setupPwaUpdateListener();
+  void checkForUpdates();
 
   if (window.location.pathname === "/") {
     replace("/projects");
@@ -437,6 +441,8 @@ onBeforeUnmount(() => {
       </button>
     </section>
   </main>
+
+  <UpdateNotice />
 </template>
 
 <style scoped>

@@ -1,0 +1,12 @@
+{
+  "latest_version": "0.2.0",
+  "release_date": "2026-06-20",
+  "channel": "stable",
+  "critical": false,
+  "download_url": "https://github.com/example/patchwork/releases/latest",
+  "notes": [
+    "修复综合进度统计",
+    "增加术语管理",
+    "优化编辑器布局"
+  ]
+}
