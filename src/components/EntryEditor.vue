@@ -27,12 +27,14 @@ const emit = defineEmits<{
   workflowStatus: [entry: Entry];
   markDisputed: [entry: Entry];
   resolveDispute: [entry: Entry];
+  openContext: [];
   previous: [];
   next: [];
   draftTargetChanged: [target: string];
 }>();
 
 const target = ref("");
+const copyMessage = ref("");
 
 const currentUser = computed(() => getCurrentUser());
 const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
@@ -81,6 +83,7 @@ watch(
   () => props.entry,
   (entry) => {
     target.value = entry?.target ?? "";
+    copyMessage.value = "";
     emit("draftTargetChanged", target.value);
   },
   { immediate: true },
@@ -154,6 +157,19 @@ function handleResolveDispute() {
     emit("resolveDispute", draftEntry);
   }
 }
+
+async function copyEntryId() {
+  if (!props.entry) {
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(props.entry.id);
+    copyMessage.value = "已复制";
+  } catch {
+    copyMessage.value = "复制失败";
+  }
+}
 </script>
 
 <template>
@@ -190,20 +206,24 @@ function handleResolveDispute() {
     </header>
 
     <section class="source-panel">
-      <span class="field-label">原文</span>
+      <div class="source-toolbar">
+        <span class="field-label">原文</span>
+        <button
+          class="text-button"
+          type="button"
+          @click="emit('openContext')"
+        >
+          {{ entry.context ? "查看上下文" : "添加上下文" }}
+        </button>
+      </div>
       <p>{{ entry.source }}</p>
-    </section>
-
-    <section class="source-panel compact">
-      <span class="field-label">上下文</span>
-      <p>{{ entry.context || "无" }}</p>
     </section>
 
     <label class="target-panel">
       <span class="field-label">译文</span>
       <textarea
         v-model="target"
-        rows="11"
+        rows="6"
         placeholder="请输入译文"
         :disabled="isSaving || entry.locked || !canSaveEntry"
       />
@@ -212,25 +232,6 @@ function handleResolveDispute() {
     <p v-if="permissionMessage" class="permission-message">
       {{ permissionMessage }}
     </p>
-
-    <dl class="meta-grid">
-      <div>
-        <dt>文件</dt>
-        <dd>{{ fileName }}</dd>
-      </div>
-      <div>
-        <dt>词条 ID</dt>
-        <dd>{{ entry.id }}</dd>
-      </div>
-      <div>
-        <dt>键名</dt>
-        <dd>{{ entry.key }}</dd>
-      </div>
-      <div>
-        <dt>字数</dt>
-        <dd>{{ entry.word_count }}</dd>
-      </div>
-    </dl>
 
     <footer class="actions">
       <button
@@ -318,6 +319,32 @@ function handleResolveDispute() {
         解决争议
       </button>
     </footer>
+
+    <dl class="meta-grid">
+      <div>
+        <dt>键值</dt>
+        <dd>{{ fileName }}:{{ entry.key }}</dd>
+      </div>
+      <div>
+        <dt>文件</dt>
+        <dd>{{ fileName }}</dd>
+      </div>
+      <div>
+        <dt>字数</dt>
+        <dd>{{ entry.word_count }}</dd>
+      </div>
+    </dl>
+
+    <details class="technical-details">
+      <summary>技术详情</summary>
+      <div class="technical-row">
+        <code>{{ entry.id }}</code>
+        <button class="text-button" type="button" @click="copyEntryId">
+          复制 ID
+        </button>
+        <span v-if="copyMessage">{{ copyMessage }}</span>
+      </div>
+    </details>
   </article>
 
   <section v-else class="empty-editor">
@@ -330,7 +357,8 @@ function handleResolveDispute() {
 .entry-editor,
 .empty-editor {
   display: grid;
-  gap: 18px;
+  align-content: start;
+  gap: 12px;
   min-height: 0;
   padding: 20px;
   border: 1px solid #d7dde5;
@@ -407,7 +435,8 @@ h1 {
 }
 
 .workflow-actions {
-  padding-top: 2px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #eef1f5;
 }
 
 .source-panel,
@@ -416,14 +445,17 @@ h1 {
   gap: 8px;
 }
 
+.source-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .source-panel {
   padding: 16px;
   border-radius: 8px;
   background: #f8fafb;
-}
-
-.source-panel.compact {
-  padding: 12px 16px;
 }
 
 .field-label,
@@ -438,14 +470,10 @@ dt {
   line-height: 1.7;
 }
 
-.source-panel.compact p {
-  color: #4b5563;
-  font-size: 14px;
-}
-
 textarea {
   width: 100%;
-  min-height: 230px;
+  min-height: 150px;
+  height: 160px;
   resize: vertical;
   padding: 12px;
   border: 1px solid #c8d0dc;
@@ -471,7 +499,7 @@ textarea:disabled {
 
 .meta-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(88px, 0.45fr);
   gap: 10px;
 }
 
@@ -511,6 +539,40 @@ dd {
 .warning-button {
   border-color: #f0b96a;
   color: #92400e;
+}
+
+.text-button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2f6f73;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.technical-details {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.technical-details summary {
+  cursor: pointer;
+}
+
+.technical-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.technical-row code {
+  overflow-wrap: anywhere;
+  color: #374151;
 }
 
 .primary-button:disabled,

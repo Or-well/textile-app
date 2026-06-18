@@ -8,6 +8,7 @@ import { markDisputed, resolveDispute } from "../services/comments";
 import { getEntryById, loadEntries, saveEntry } from "../services/entries";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
+type AssistTab = "terms" | "comments" | "context" | "history";
 
 const props = defineProps<{
   project: ProjectConfig;
@@ -18,6 +19,7 @@ const entries = ref<Entry[]>([]);
 const selectedEntry = ref<Entry>();
 const searchText = ref("");
 const statusFilter = ref<EntryFilter>("all");
+const assistTab = ref<AssistTab>("terms");
 const draftTarget = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -218,6 +220,10 @@ function handleEntryUpdated(entry: Entry) {
   savedMessage.value = "词条状态已更新。";
 }
 
+function handleOpenContext() {
+  assistTab.value = "context";
+}
+
 watch(
   () => [props.project.project_id, props.fileId],
   () => {
@@ -280,12 +286,15 @@ onMounted(loadFileEntries);
         @workflow-status="handleWorkflowStatus"
         @mark-disputed="handleMarkDisputed"
         @resolve-dispute="handleResolveDispute"
+        @open-context="handleOpenContext"
       />
 
       <EntryAssistPanel
         :entry="selectedEntry"
         :draft-target="draftTarget"
+        :active-tab="assistTab"
         @entry-updated="handleEntryUpdated"
+        @update-active-tab="assistTab = $event"
       />
     </section>
 

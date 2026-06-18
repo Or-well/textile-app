@@ -9,15 +9,17 @@ import { checkTermUsage, type TermUsageResult } from "../services/terms";
 const props = defineProps<{
   entry?: Entry;
   draftTarget: string;
+  activeTab?: AssistTab;
 }>();
 
 const emit = defineEmits<{
   entryUpdated: [entry: Entry];
+  updateActiveTab: [tab: AssistTab];
 }>();
 
-type AssistTab = "history" | "terms" | "comments";
+type AssistTab = "terms" | "comments" | "context" | "history";
 
-const activeTab = ref<AssistTab>("terms");
+const activeTab = ref<AssistTab>(props.activeTab ?? "terms");
 const termResults = ref<TermUsageResult[]>([]);
 const historyEvents = ref<ProjectEvent[]>([]);
 const termErrorMessage = ref("");
@@ -26,10 +28,16 @@ let termRequestId = 0;
 let historyRequestId = 0;
 
 const tabs: Array<{ id: AssistTab; label: string }> = [
-  { id: "history", label: "历史" },
   { id: "terms", label: "术语" },
   { id: "comments", label: "注释" },
+  { id: "context", label: "上下文" },
+  { id: "history", label: "历史" },
 ];
+
+function setActiveTab(tab: AssistTab) {
+  activeTab.value = tab;
+  emit("updateActiveTab", tab);
+}
 
 function describeEvent(event: ProjectEvent): string {
   if (event.type === "entry.updated") {
@@ -49,6 +57,15 @@ function describeEvent(event: ProjectEvent): string {
 
   return "记录已更新";
 }
+
+watch(
+  () => props.activeTab,
+  (tab) => {
+    if (tab) {
+      activeTab.value = tab;
+    }
+  },
+);
 
 watch(
   [() => props.entry?.source, () => props.draftTarget],
@@ -120,13 +137,28 @@ watch(
         class="tab-button"
         :class="{ active: activeTab === tab.id }"
         type="button"
-        @click="activeTab = tab.id"
+        @click="setActiveTab(tab.id)"
       >
         {{ tab.label }}
       </button>
     </div>
 
-    <section v-if="activeTab === 'history'" class="tab-panel">
+    <section v-if="activeTab === 'terms'" class="tab-panel">
+      <p v-if="termErrorMessage" class="error-message">{{ termErrorMessage }}</p>
+      <TermHint v-else :terms="termResults" />
+    </section>
+
+    <section v-else-if="activeTab === 'comments'" class="tab-panel">
+      <CommentPanel :entry="entry" @entry-updated="emit('entryUpdated', $event)" />
+    </section>
+
+    <section v-else-if="activeTab === 'context'" class="tab-panel context-panel">
+      <h3>上下文</h3>
+      <p v-if="entry?.context" class="context-text">{{ entry.context }}</p>
+      <p v-else class="empty-text">暂无上下文</p>
+    </section>
+
+    <section v-else class="tab-panel">
       <p v-if="historyErrorMessage" class="error-message">
         {{ historyErrorMessage }}
       </p>
@@ -141,14 +173,6 @@ watch(
       </ul>
     </section>
 
-    <section v-else-if="activeTab === 'terms'" class="tab-panel">
-      <p v-if="termErrorMessage" class="error-message">{{ termErrorMessage }}</p>
-      <TermHint v-else :terms="termResults" />
-    </section>
-
-    <section v-else class="tab-panel">
-      <CommentPanel :entry="entry" @entry-updated="emit('entryUpdated', $event)" />
-    </section>
   </aside>
 </template>
 
@@ -164,7 +188,7 @@ watch(
 
 .assist-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-bottom: 1px solid #e5e7eb;
 }
 
@@ -194,6 +218,7 @@ watch(
 }
 
 .empty-text,
+.context-text,
 .error-message {
   margin: 0;
   line-height: 1.7;
@@ -205,6 +230,26 @@ watch(
 
 .error-message {
   color: #b42318;
+}
+
+.context-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.context-panel h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+}
+
+.context-text {
+  padding: 12px;
+  border-radius: 6px;
+  background: #f8fafb;
+  color: #1f2937;
+  white-space: pre-wrap;
 }
 
 .history-list {
