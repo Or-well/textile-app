@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import TaskPanel from "../components/TaskPanel.vue";
 import type { Member, ProjectConfig, Task } from "../model/types";
-import { setCurrentUser, getCurrentUser } from "../services/permissions";
+import { getCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 import {
   getTaskProgress,
@@ -16,12 +16,11 @@ import {
 const props = defineProps<{
   project?: ProjectConfig;
   members?: Member[];
+  currentUser?: Member | null;
 }>();
 
-const members = ref<Member[]>([]);
 const allTasks = ref<Task[]>([]);
 const myTasks = ref<Task[]>([]);
-const selectedUserId = ref(getCurrentUser()?.id ?? "");
 const selectedTask = ref<Task>();
 const selectedProgress = ref<TaskProgress>();
 const projectName = ref("");
@@ -30,17 +29,15 @@ const isSubmitting = ref(false);
 const errorMessage = ref("");
 const savedMessage = ref("");
 
-const selectedUser = computed(
-  () => members.value.find((member) => member.id === selectedUserId.value) ?? null,
-);
+const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const hasProjectContext = computed(() => Boolean(props.project));
 const emptyStateText = computed(() =>
   projectName.value ? "当前项目暂无任务。" : "请打开项目文件夹，查看任务。",
 );
 
 async function refreshMyTasks() {
-  myTasks.value = selectedUserId.value
-    ? await getTasksByUser(selectedUserId.value)
+  myTasks.value = currentUser.value?.id
+    ? await getTasksByUser(currentUser.value.id)
     : [];
 }
 
@@ -81,18 +78,7 @@ async function initializeFromProjectContext() {
     return;
   }
 
-  const currentUser = getCurrentUser();
-
   projectName.value = props.project.name;
-  members.value = (props.members ?? []).filter((member) => member.active);
-  selectedUserId.value =
-    members.value.find((member) => member.id === currentUser?.id)?.id ??
-    members.value[0]?.id ??
-    "";
-
-  if (selectedUser.value) {
-    setCurrentUser(selectedUser.value);
-  }
 
   await loadTaskState();
 }
@@ -106,23 +92,12 @@ async function handleOpenProject() {
 
   try {
     const project = await openProject();
-    const currentUser = getCurrentUser();
 
     projectName.value = project.config.name;
-    members.value = project.members.filter((member) => member.active);
-    selectedUserId.value =
-      members.value.find((member) => member.id === currentUser?.id)?.id ??
-      members.value[0]?.id ??
-      "";
-
-    if (selectedUser.value) {
-      setCurrentUser(selectedUser.value);
-    }
 
     setTasksProjectRoot(project.root);
     await loadTaskState();
   } catch (error) {
-    members.value = [];
     allTasks.value = [];
     myTasks.value = [];
 
@@ -135,21 +110,6 @@ async function handleOpenProject() {
     }
   } finally {
     isLoading.value = false;
-  }
-}
-
-async function handleSelectUser() {
-  if (selectedUser.value) {
-    setCurrentUser(selectedUser.value);
-  }
-
-  await refreshMyTasks();
-
-  if (myTasks.value[0]) {
-    await selectTask(myTasks.value[0]);
-  } else {
-    selectedTask.value = undefined;
-    selectedProgress.value = undefined;
   }
 }
 
@@ -176,7 +136,7 @@ async function handleSubmitTask(taskId: string) {
 }
 
 watch(
-  () => [props.project?.project_id, props.members?.length ?? 0],
+  () => [props.project?.project_id, props.members?.length ?? 0, currentUser.value?.id],
   () => {
     void initializeFromProjectContext();
   },
@@ -208,18 +168,10 @@ watch(
 
     <section v-if="allTasks.length > 0" class="tasks-layout">
       <div class="task-lists">
-        <label class="user-field">
-          <span>当前用户</span>
-          <select v-model="selectedUserId" @change="handleSelectUser">
-            <option
-              v-for="member in members"
-              :key="member.id"
-              :value="member.id"
-            >
-              {{ member.name }}
-            </option>
-          </select>
-        </label>
+        <div class="user-field">
+          <span>当前成员</span>
+          <strong>{{ currentUser?.name || "未登录" }}</strong>
+        </div>
 
         <section>
           <h2>我的任务</h2>

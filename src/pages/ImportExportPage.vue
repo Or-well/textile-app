@@ -17,19 +17,18 @@ import {
   type ReadChangePackage,
 } from "../services/changes";
 import { exportProject, setExporterProjectRoot } from "../services/exporter";
-import { getCurrentUser, setCurrentUser } from "../services/permissions";
+import { getCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
 
 const props = defineProps<{
   project?: ProjectConfig;
   members?: Member[];
+  currentUser?: Member | null;
 }>();
 
 const projectName = ref("");
-const members = ref<Member[]>([]);
 const tasks = ref<Task[]>([]);
-const selectedUserId = ref(getCurrentUser()?.id ?? "");
 const selectedTaskId = ref("");
 const isLoading = ref(false);
 const isExporting = ref(false);
@@ -42,9 +41,7 @@ const changePackage = ref<ReadChangePackage>();
 const packagePreview = ref<ChangePackagePreview>();
 const conflicts = ref<ChangeConflict[]>([]);
 
-const selectedUser = computed(
-  () => members.value.find((member) => member.id === selectedUserId.value) ?? null,
-);
+const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const hasProjectContext = computed(() => Boolean(props.project));
 const emptyStateText = computed(() =>
   projectName.value
@@ -92,18 +89,7 @@ async function initializeFromProjectContext() {
     return;
   }
 
-  const currentUser = getCurrentUser();
-
   projectName.value = props.project.name;
-  members.value = (props.members ?? []).filter((member) => member.active);
-  selectedUserId.value =
-    members.value.find((member) => member.id === currentUser?.id)?.id ??
-    members.value[0]?.id ??
-    "";
-
-  if (selectedUser.value) {
-    setCurrentUser(selectedUser.value);
-  }
 
   await loadImportExportState();
 }
@@ -115,18 +101,8 @@ async function handleOpenProject() {
 
   try {
     const project = await openProject();
-    const currentUser = getCurrentUser();
 
     projectName.value = project.config.name;
-    members.value = project.members.filter((member) => member.active);
-    selectedUserId.value =
-      members.value.find((member) => member.id === currentUser?.id)?.id ??
-      members.value[0]?.id ??
-      "";
-
-    if (selectedUser.value) {
-      setCurrentUser(selectedUser.value);
-    }
 
     setChangesProjectRoot(project.root);
     setExporterProjectRoot(project.root);
@@ -134,7 +110,6 @@ async function handleOpenProject() {
     await loadImportExportState();
   } catch (error) {
     projectName.value = "";
-    members.value = [];
     tasks.value = [];
     selectedTaskId.value = "";
     changePackage.value = undefined;
@@ -153,15 +128,9 @@ async function handleOpenProject() {
   }
 }
 
-function handleSelectUser() {
-  if (selectedUser.value) {
-    setCurrentUser(selectedUser.value);
-  }
-}
-
 async function handleExportChanges() {
-  if (!selectedUserId.value || !selectedTaskId.value) {
-    errorMessage.value = "请先选择用户和任务。";
+  if (!currentUser.value || !selectedTaskId.value) {
+    errorMessage.value = "请先登录并选择任务。";
     return;
   }
 
@@ -171,7 +140,7 @@ async function handleExportChanges() {
 
   try {
     const result = await exportChangePackage(
-      selectedUserId.value,
+      currentUser.value.id,
       selectedTaskId.value,
     );
 
@@ -262,7 +231,7 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
 }
 
 watch(
-  () => [props.project?.project_id, props.members?.length ?? 0],
+  () => [props.project?.project_id, props.members?.length ?? 0, currentUser.value?.id],
   () => {
     void initializeFromProjectContext();
   },
@@ -294,18 +263,10 @@ watch(
       <p v-if="message" class="message">{{ message }}</p>
 
       <div v-if="projectName" class="form-grid">
-        <label>
+        <div class="current-user-field">
           <span>当前用户</span>
-          <select v-model="selectedUserId" @change="handleSelectUser">
-            <option
-              v-for="member in members"
-              :key="member.id"
-              :value="member.id"
-            >
-              {{ member.name }}
-            </option>
-          </select>
-        </label>
+          <strong>{{ currentUser?.name || "未登录" }}</strong>
+        </div>
 
         <label>
           <span>任务</span>
@@ -319,7 +280,7 @@ watch(
         <button
           class="export-button"
           type="button"
-          :disabled="isExporting || !selectedUserId || !selectedTaskId"
+          :disabled="isExporting || !currentUser || !selectedTaskId"
           @click="handleExportChanges"
         >
           {{ isExporting ? "正在导出..." : "导出我的修改" }}
@@ -488,9 +449,26 @@ label {
   gap: 8px;
 }
 
-label span {
+label span,
+.current-user-field span {
   color: #5b6472;
   font-size: 14px;
+}
+
+.current-user-field {
+  display: grid;
+  gap: 8px;
+}
+
+.current-user-field strong {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 6px;
+  background: #f8fafb;
+  color: #111827;
 }
 
 select,

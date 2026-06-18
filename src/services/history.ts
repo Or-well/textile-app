@@ -2,6 +2,7 @@ import type { ProjectEvent } from "../model/types";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import {
+  ensureDirectory,
   fileExists,
   readJsonl,
   writeJsonl,
@@ -66,13 +67,24 @@ export async function loadEvents(
 
 export async function appendEvent(event: ProjectEventInput): Promise<ProjectEvent> {
   const root = getProjectRoot();
-  const events = await loadEvents();
+
+  return appendEventToRoot(root, event);
+}
+
+export async function appendEventToRoot(
+  root: ProjectDirectoryHandle,
+  event: ProjectEventInput,
+): Promise<ProjectEvent> {
+  const events = (await fileExists(root, "logs/events.jsonl"))
+    ? await readJsonl<ProjectEvent>(root, "logs/events.jsonl")
+    : [];
   const nextEvent: ProjectEvent = {
     ...event,
     id: event.id ?? createId("event"),
     created_at: event.created_at ?? nowIso(),
   };
 
+  await ensureDirectory(root, "logs");
   await writeJsonl(root, "logs/events.jsonl", [...events, nextEvent]);
 
   return nextEvent;

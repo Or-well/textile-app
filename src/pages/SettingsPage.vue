@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import MemberManagementPanel from "../components/settings/MemberManagementPanel.vue";
 import {
   PERMISSION_ACTIONS,
   ROLE_DEFAULT_PERMISSIONS,
@@ -9,7 +10,6 @@ import {
   can,
   canConfigureStats,
   getCurrentUser,
-  setCurrentUser,
 } from "../services/permissions";
 import { openProject, saveProject } from "../services/project";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
@@ -37,10 +37,12 @@ const props = defineProps<{
   project?: ProjectConfig;
   members?: Member[];
   projectRoot?: ProjectDirectoryHandle;
+  currentUser?: Member | null;
 }>();
 
 const emit = defineEmits<{
   projectUpdated: [project: ProjectConfig];
+  membersUpdated: [members: Member[]];
   openImportExport: [];
 }>();
 
@@ -93,8 +95,6 @@ const activeSection = ref<SettingsSection>("project");
 const localProject = ref<EditableProjectConfig | null>(null);
 const localMembers = ref<Member[]>([]);
 const localRoot = ref<ProjectDirectoryHandle | null>(null);
-const selectedUserId = ref(getCurrentUser()?.id ?? "");
-const currentUser = ref<Member | null>(getCurrentUser());
 const projectDraft = ref({
   name: "",
   description: "",
@@ -116,14 +116,11 @@ const message = ref("");
 const errorMessage = ref("");
 
 const hasProjectContext = computed(() => Boolean(props.project));
-const activeMembers = computed(() =>
-  localMembers.value.filter((member) => member.active),
-);
-const selectedUser = computed(
-  () => localMembers.value.find((member) => member.id === selectedUserId.value) ?? null,
+const currentUser = computed(
+  () => props.currentUser ?? getCurrentUser(),
 );
 const currentRoleText = computed(() =>
-  currentUser.value?.roles.length ? currentUser.value.roles.join(" / ") : "未选择当前用户",
+  currentUser.value?.roles.length ? currentUser.value.roles.join(" / ") : "未登录",
 );
 const canManageProject = computed(() =>
   can(currentUser.value, PERMISSION_ACTIONS.PROJECT_MANAGE),
@@ -184,21 +181,7 @@ function applyProject(project: ProjectConfig): void {
 }
 
 function applyMembers(members: Member[]): void {
-  const storedUser = getCurrentUser();
-
   localMembers.value = members;
-  selectedUserId.value =
-    members.find((member) => member.active && member.id === storedUser?.id)?.id ??
-    members.find((member) => member.active)?.id ??
-    "";
-
-  if (selectedUser.value) {
-    setCurrentUser(selectedUser.value);
-    currentUser.value = selectedUser.value;
-  } else {
-    setCurrentUser(null);
-    currentUser.value = null;
-  }
 }
 
 function getWritableRoot(): ProjectDirectoryHandle {
@@ -250,14 +233,6 @@ async function handleOpenProject() {
   } finally {
     isLoading.value = false;
   }
-}
-
-function handleSelectUser() {
-  setCurrentUser(selectedUser.value);
-  currentUser.value = selectedUser.value;
-  message.value = selectedUser.value
-    ? `当前用户：${selectedUser.value.name}`
-    : "当前没有选中用户。";
 }
 
 async function handleSaveProjectInfo() {
@@ -573,53 +548,15 @@ onMounted(() => {
         <section v-else-if="activeSection === 'members'" class="settings-card">
           <header class="card-header">
             <h2>成员管理</h2>
-            <p>查看项目成员，切换当前使用者。完整成员管理后续接入。</p>
+            <p>管理项目成员、用户组和登录密码。</p>
           </header>
 
-          <div class="form-stack">
-            <div class="form-row">
-              <div class="row-label">
-                <label for="current-user">当前用户</label>
-                <p>影响软权限、任务筛选和操作记录。</p>
-              </div>
-              <div class="row-control compact-control">
-                <select id="current-user" v-model="selectedUserId" @change="handleSelectUser">
-                  <option value="">未选择</option>
-                  <option
-                    v-for="member in activeMembers"
-                    :key="member.id"
-                    :value="member.id"
-                  >
-                    {{ member.name }}
-                  </option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div class="member-table" role="table" aria-label="成员列表">
-            <div class="member-row table-head" role="row">
-              <span>成员</span>
-              <span>用户组</span>
-              <span>状态</span>
-              <span>操作</span>
-            </div>
-            <div
-              v-for="member in localMembers"
-              :key="member.id"
-              class="member-row"
-              role="row"
-            >
-              <strong>{{ member.name }}</strong>
-              <span>{{ member.roles.join(" / ") }}</span>
-              <span>{{ member.active ? "启用" : "停用" }}</span>
-              <span class="table-action">后续支持</span>
-            </div>
-          </div>
-
-          <p class="placeholder-note">
-            成员新增、禁用和密码重置将在项目登录模块中实现。
-          </p>
+          <MemberManagementPanel
+            :members="localMembers"
+            :current-user="currentUser"
+            :project-root="props.projectRoot ?? localRoot ?? undefined"
+            @members-updated="emit('membersUpdated', $event)"
+          />
         </section>
 
         <section v-else-if="activeSection === 'roles'" class="settings-card">

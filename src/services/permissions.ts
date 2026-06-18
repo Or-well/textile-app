@@ -9,6 +9,16 @@ const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 
 let currentUser: Member | null = readStoredUser();
 
+function toSessionMember(user: Member): Member {
+  const sessionMember = { ...user };
+
+  delete sessionMember.password_hash;
+  delete sessionMember.password_salt;
+  delete sessionMember.password_updated_at;
+
+  return sessionMember;
+}
+
 function readStoredUser(): Member | null {
   if (typeof window === "undefined") {
     return null;
@@ -52,8 +62,8 @@ export function getCurrentUser(): Member | null {
 }
 
 export function setCurrentUser(user: Member | null): void {
-  currentUser = user;
-  storeCurrentUser(user);
+  currentUser = user ? toSessionMember(user) : null;
+  storeCurrentUser(currentUser);
 }
 
 export function hasRole(user: Member | null | undefined, role: Role): boolean {

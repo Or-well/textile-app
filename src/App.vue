@@ -6,6 +6,7 @@ import EntryPage from "./pages/EntryPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
 import HomePage from "./pages/HomePage.vue";
 import ImportExportPage from "./pages/ImportExportPage.vue";
+import LoginPage from "./pages/LoginPage.vue";
 import ProjectListPage from "./pages/ProjectListPage.vue";
 import ProjectPage from "./pages/ProjectPage.vue";
 import SettingsPage from "./pages/SettingsPage.vue";
@@ -18,7 +19,8 @@ import { setCommentsProjectRoot } from "./services/comments";
 import { setEntriesProjectRoot } from "./services/entries";
 import { setExporterProjectRoot } from "./services/exporter";
 import { setHistoryProjectRoot } from "./services/history";
-import { setCurrentUser } from "./services/permissions";
+import { loginMember } from "./services/auth";
+import { getCurrentUser, setCurrentUser } from "./services/permissions";
 import { openProject, type OpenedProject } from "./services/project";
 import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectRoot } from "./services/tasks";
@@ -60,10 +62,13 @@ const sectionLabels: Record<ProjectSection, string> = {
 
 const routePath = ref(window.location.pathname);
 const currentProject = ref<OpenedProject | null>(null);
+const currentUser = ref<Member | null>(getCurrentUser());
 const currentStats = ref<BasicProjectStats | null>(null);
 const taskCount = ref(0);
 const isOpeningProject = ref(false);
+const isLoggingIn = ref(false);
 const appErrorMessage = ref("");
+const loginErrorMessage = ref("");
 
 const route = computed(() => parseRoute(routePath.value));
 const currentProjectSummary = computed<ProjectSummary | null>(() => {
@@ -137,7 +142,9 @@ function configureProjectServices(project: OpenedProject) {
   setHistoryProjectRoot(project.root);
   setChangesProjectRoot(project.root);
   setExporterProjectRoot(project.root);
-  setCurrentUser(project.members.find((member) => member.active) ?? null);
+  setCurrentUser(null);
+  currentUser.value = null;
+  loginErrorMessage.value = "";
 }
 
 function buildProjectSummary(
@@ -208,6 +215,64 @@ function handleEnterCurrentProject() {
   navigate(`/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files`);
 }
 
+async function handleLogin(memberName: string, password: string) {
+  if (!currentProject.value) {
+    loginErrorMessage.value = "请先打开项目文件夹。";
+    return;
+  }
+
+  isLoggingIn.value = true;
+  loginErrorMessage.value = "";
+
+  try {
+    const member = await loginMember(
+      currentProject.value.members,
+      memberName,
+      password,
+    );
+
+    if (!member) {
+      loginErrorMessage.value = "成员名或密码不正确。";
+      return;
+    }
+
+    setCurrentUser(member);
+    currentUser.value = getCurrentUser();
+  } catch {
+    loginErrorMessage.value = "登录失败。请稍后再试。";
+  } finally {
+    isLoggingIn.value = false;
+  }
+}
+
+function handleLogout() {
+  setCurrentUser(null);
+  currentUser.value = null;
+  loginErrorMessage.value = "";
+}
+
+function handleMembersUpdated(members: Member[]) {
+  if (!currentProject.value) {
+    return;
+  }
+
+  currentProject.value = {
+    ...currentProject.value,
+    members,
+  };
+
+  const refreshedUser = members.find((member) => member.id === currentUser.value?.id);
+
+  if (refreshedUser?.active) {
+    setCurrentUser(refreshedUser);
+    currentUser.value = getCurrentUser();
+  } else {
+    handleLogout();
+  }
+
+  void refreshProjectSummary();
+}
+
 function handleOpenProjectSection(section: ProjectSection) {
   if (!currentProject.value) {
     navigate("/projects");
@@ -269,13 +334,24 @@ onBeforeUnmount(() => {
     />
   </section>
 
+  <LoginPage
+    v-else-if="route.page === 'project' && currentProject && !currentUser"
+    :project-name="currentProject.config.name"
+    :error-message="loginErrorMessage"
+    :is-submitting="isLoggingIn"
+    @login="handleLogin"
+    @back-to-projects="navigate('/projects')"
+  />
+
   <ProjectLayout
     v-else-if="route.page === 'project'"
     :project="currentProject?.config"
     :active-section="route.section"
     :file-id="route.fileId"
+    :current-user="currentUser"
     @navigate-project-list="navigate('/projects')"
     @navigate-section="handleOpenProjectSection"
+    @logout="handleLogout"
   >
     <template v-if="currentProject">
       <ProjectPage
@@ -302,6 +378,7 @@ onBeforeUnmount(() => {
         v-else-if="route.section === 'tasks'"
         :project="currentProject.config"
         :members="currentProject.members"
+        :current-user="currentUser"
       />
 
       <TermsPage v-else-if="route.section === 'terms'" />
@@ -320,6 +397,7 @@ onBeforeUnmount(() => {
         v-else-if="route.section === 'import-export'"
         :project="currentProject.config"
         :members="currentProject.members"
+        :current-user="currentUser"
       />
 
       <SettingsPage
@@ -327,7 +405,9 @@ onBeforeUnmount(() => {
         :project="currentProject.config"
         :members="currentProject.members"
         :project-root="currentProject.root"
+        :current-user="currentUser"
         @project-updated="handleProjectUpdated"
+        @members-updated="handleMembersUpdated"
         @open-import-export="handleOpenProjectSection('import-export')"
       />
 

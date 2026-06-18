@@ -76,6 +76,11 @@ export interface Member {
   allow_permissions?: string[];
   deny_permissions?: string[];
   active: boolean;
+  password_hash?: string;
+  password_salt?: string;
+  password_updated_at?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Entry {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import ProjectSidebar from "./ProjectSidebar.vue";
-import type { ProjectConfig } from "../model/types";
+import type { Member, ProjectConfig } from "../model/types";
 
 type ProjectSection =
   | "overview"
@@ -15,6 +15,7 @@ type ProjectSection =
 
 const props = defineProps<{
   project?: ProjectConfig;
+  currentUser?: Member | null;
   activeSection: ProjectSection;
   fileId?: string;
 }>();
@@ -22,6 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigateProjectList: [];
   navigateSection: [section: ProjectSection];
+  logout: [];
 }>();
 
 const sectionLabels: Record<ProjectSection, string> = {
@@ -66,6 +68,13 @@ const sectionLabels: Record<ProjectSection, string> = {
         </template>
         <strong v-else>{{ sectionLabels[activeSection] }}</strong>
       </nav>
+
+      <div v-if="props.currentUser" class="user-area">
+        <span>{{ props.currentUser.name }}</span>
+        <button type="button" @click="emit('logout')">
+          退出登录
+        </button>
+      </div>
     </header>
 
     <div class="workspace-body">
@@ -94,6 +103,8 @@ const sectionLabels: Record<ProjectSection, string> = {
   z-index: 10;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 18px;
   min-height: 56px;
   padding: 0 26px;
   border-bottom: 1px solid #d7dde5;
@@ -125,6 +136,32 @@ const sectionLabels: Record<ProjectSection, string> = {
 
 .breadcrumb strong {
   color: #111827;
+}
+
+.user-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #4b5563;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.user-area span {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-area button {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font: inherit;
+  cursor: pointer;
 }
 
 .workspace-body {
