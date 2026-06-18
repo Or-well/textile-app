@@ -4,7 +4,10 @@ import EntryAssistPanel from "../components/EntryAssistPanel.vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntrySideList from "../components/EntrySideList.vue";
 import type { Entry, EntryStatus, ProjectConfig } from "../model/types";
+import { markDisputed, resolveDispute } from "../services/comments";
 import { getEntryById, loadEntries, saveEntry } from "../services/entries";
+
+type EntryFilter = EntryStatus | "all" | "disputed";
 
 const props = defineProps<{
   project: ProjectConfig;
@@ -14,7 +17,7 @@ const props = defineProps<{
 const entries = ref<Entry[]>([]);
 const selectedEntry = ref<Entry>();
 const searchText = ref("");
-const statusFilter = ref<EntryStatus | "all">("all");
+const statusFilter = ref<EntryFilter>("all");
 const draftTarget = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -29,7 +32,15 @@ const filteredEntries = computed(() => {
   const keyword = searchText.value.trim().toLowerCase();
 
   return entries.value.filter((entry) => {
-    if (statusFilter.value !== "all" && entry.status !== statusFilter.value) {
+    if (statusFilter.value === "disputed" && entry.disputed !== true) {
+      return false;
+    }
+
+    if (
+      statusFilter.value !== "all" &&
+      statusFilter.value !== "disputed" &&
+      entry.status !== statusFilter.value
+    ) {
       return false;
     }
 
@@ -115,6 +126,62 @@ async function handleSaveEntry(entry: Entry) {
       error instanceof Error
         ? error.message
         : "保存失败。请确认项目文件夹仍然可以访问。";
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function handleWorkflowStatus(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const savedEntry = await saveEntry(entry);
+
+    replaceEntry(savedEntry);
+    savedMessage.value = "词条状态已更新。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "状态更新失败。请确认项目文件夹仍然可以访问。";
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function handleMarkDisputed(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const updatedEntry = await markDisputed(entry, "");
+
+    replaceEntry(updatedEntry);
+    savedMessage.value = "已标记为争议。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "标记争议失败。请稍后再试。";
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function handleResolveDispute(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const updatedEntry = await resolveDispute(entry, "");
+
+    replaceEntry(updatedEntry);
+    savedMessage.value = "争议已解决。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "解决争议失败。请稍后再试。";
   } finally {
     isSaving.value = false;
   }
@@ -210,6 +277,9 @@ onMounted(loadFileEntries);
         @previous="selectEntryByOffset(-1)"
         @next="selectEntryByOffset(1)"
         @draft-target-changed="draftTarget = $event"
+        @workflow-status="handleWorkflowStatus"
+        @mark-disputed="handleMarkDisputed"
+        @resolve-dispute="handleResolveDispute"
       />
 
       <EntryAssistPanel

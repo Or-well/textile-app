@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
+import type { ProjectConfig } from "../model/types";
 import { getProjectStats, type BasicProjectStats } from "../services/stats";
+
+const props = defineProps<{
+  project?: ProjectConfig;
+}>();
 
 const stats = ref<BasicProjectStats>();
 const isLoading = ref(false);
@@ -26,7 +31,10 @@ async function loadStats() {
   errorMessage.value = "";
 
   try {
-    stats.value = await getProjectStats();
+    stats.value = await getProjectStats(
+      undefined,
+      props.project?.settings.progress_weights,
+    );
   } catch (error) {
     stats.value = undefined;
     errorMessage.value =
@@ -37,6 +45,13 @@ async function loadStats() {
 }
 
 onMounted(loadStats);
+
+watch(
+  () => props.project?.settings.progress_weights,
+  () => {
+    void loadStats();
+  },
+);
 </script>
 
 <template>
@@ -54,8 +69,19 @@ onMounted(loadStats);
 
     <template v-else-if="stats">
       <section class="progress-panel">
-        <h2>总进度</h2>
+        <h2>综合进度</h2>
         <ProgressBar :percent="stats.progressPercent" label="总进度" />
+        <p class="weight-note">
+          权重：翻译 {{ Math.round(stats.progressWeights.translationWeight * 100) }}% /
+          校对 {{ Math.round(stats.progressWeights.proofreadWeight * 100) }}% /
+          审核 {{ Math.round(stats.progressWeights.reviewWeight * 100) }}%
+        </p>
+      </section>
+
+      <section class="progress-panel progress-grid">
+        <ProgressBar :percent="stats.translationProgress" label="翻译进度" />
+        <ProgressBar :percent="stats.proofreadProgress" label="校对进度" />
+        <ProgressBar :percent="stats.reviewProgress" label="审核进度" />
       </section>
 
       <section class="stats-grid">
@@ -115,6 +141,7 @@ onMounted(loadStats);
 
 .eyebrow,
 .summary,
+.weight-note,
 .stats-grid span,
 .status-row span {
   color: #5b6472;
@@ -172,6 +199,14 @@ h2 {
 .distribution-panel {
   display: grid;
   gap: 14px;
+}
+
+.progress-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.weight-note {
+  line-height: 1.6;
 }
 
 .stats-grid {

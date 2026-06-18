@@ -98,3 +98,113 @@ export function canEditEntry(
 
   return can(user, PERMISSION_ACTIONS.ENTRY_EDIT);
 }
+
+function canUseEntryWorkflow(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+  action: PermissionAction,
+): boolean {
+  if (!entry || entry.locked || entry.hidden) {
+    return false;
+  }
+
+  return can(user, action);
+}
+
+export function canTranslateEntry(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  if (!entry || entry.status === "reviewed") {
+    return false;
+  }
+
+  return (
+    canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_TRANSLATE) ||
+    canEditEntry(user, entry)
+  );
+}
+
+export function canProofreadEntry(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  return Boolean(
+    entry &&
+      entry.status === "translated" &&
+      !entry.disputed &&
+      canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_PROOFREAD),
+  );
+}
+
+export function canReviewEntry(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  return Boolean(
+    entry &&
+      entry.status === "proofread" &&
+      !entry.disputed &&
+      canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_REVIEW),
+  );
+}
+
+export function canRollbackEntry(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  return Boolean(
+    entry &&
+      (entry.status === "proofread" || entry.status === "reviewed") &&
+      canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_ROLLBACK),
+  );
+}
+
+export function canMarkDisputed(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  return Boolean(
+    entry &&
+      !entry.disputed &&
+      canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED),
+  );
+}
+
+export function canResolveDispute(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  if (!entry || !entry.disputed || entry.locked || entry.hidden) {
+    return false;
+  }
+
+  return Boolean(
+    canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE) ||
+      can(user, PERMISSION_ACTIONS.COMMENT_RESOLVE),
+  );
+}
+
+export function canManageTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_MANAGE);
+}
+
+export function canResolveComment(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.COMMENT_RESOLVE);
+}
+
+export function canImportChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT);
+}
+
+export function canExportRelease(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.RELEASE_EXPORT);
+}
+
+export function canConfigureStats(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.PROJECT_MANAGE);
+}
+
+export function canManageTerm(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TERM_MANAGE);
+}

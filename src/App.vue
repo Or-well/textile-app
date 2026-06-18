@@ -146,35 +146,23 @@ function buildProjectSummary(
   stats: BasicProjectStats,
   totalTasks: number,
 ): ProjectSummary {
-  const translatedPercent =
-    stats.totalEntries === 0
-      ? 0
-      : Math.round(
-          ((stats.translatedEntries +
-            stats.proofreadEntries +
-            stats.reviewedEntries) /
-            stats.totalEntries) *
-            100,
-        );
-  const reviewedPercent =
-    stats.totalEntries === 0
-      ? 0
-      : Math.round((stats.reviewedEntries / stats.totalEntries) * 100);
-
   return {
     id: config.project_id,
     name: config.name,
     description: `${config.source_language} -> ${config.target_language} 本地汉化项目`,
     totalEntries: stats.totalEntries,
-    translatedPercent,
-    reviewedPercent,
+    translatedPercent: stats.translationProgress,
+    reviewedPercent: stats.reviewProgress,
     memberCount: members.filter((member) => member.active).length,
     taskCount: totalTasks,
   };
 }
 
 async function refreshProjectSummary() {
-  currentStats.value = await getProjectStats();
+  currentStats.value = await getProjectStats(
+    undefined,
+    currentProject.value?.config.settings.progress_weights,
+  );
 
   try {
     taskCount.value = (await loadTasks()).length;
@@ -299,7 +287,10 @@ onBeforeUnmount(() => {
 
       <CommentsPage v-else-if="route.section === 'comments'" />
 
-      <StatsPage v-else-if="route.section === 'stats'" />
+      <StatsPage
+        v-else-if="route.section === 'stats'"
+        :project="currentProject.config"
+      />
 
       <ImportExportPage v-else-if="route.section === 'import-export'" />
 

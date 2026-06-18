@@ -13,8 +13,7 @@ export type EntryStatus =
   | "untranslated"
   | "translated"
   | "proofread"
-  | "reviewed"
-  | "disputed";
+  | "reviewed";
 
 export type TaskStatus =
   | "unassigned"
@@ -49,6 +48,14 @@ export interface ProjectConfig {
     chunk_size: number;
     auto_save: boolean;
     allow_change_package: boolean;
+    progress_weights?: {
+      translation?: number;
+      proofread?: number;
+      review?: number;
+      translationWeight?: number;
+      proofreadWeight?: number;
+      reviewWeight?: number;
+    };
   };
 }
 
@@ -81,6 +88,10 @@ export interface Entry {
   target: string;
   context: string;
   status: EntryStatus;
+  disputed?: boolean;
+  dispute_reason?: string;
+  dispute_resolved_at?: string;
+  dispute_resolved_by?: string;
   assignee: string;
   translated_by: string;
   proofread_by: string;

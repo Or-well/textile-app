@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type { Comment, Entry } from "../model/types";
 import {
   addComment,
@@ -7,6 +7,7 @@ import {
   loadComments,
   markDisputed,
 } from "../services/comments";
+import { canMarkDisputed, getCurrentUser } from "../services/permissions";
 
 const props = defineProps<{
   entry?: Entry;
@@ -23,6 +24,11 @@ const isLoading = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
 const message = ref("");
+
+const currentUser = computed(() => getCurrentUser());
+const canMarkEntryDisputed = computed(() =>
+  canMarkDisputed(currentUser.value, props.entry),
+);
 
 async function refreshComments() {
   if (!props.entry) {
@@ -145,7 +151,7 @@ async function handleMarkDisputed() {
       </button>
     </div>
 
-    <div class="comment-form">
+    <div v-if="canMarkEntryDisputed" class="comment-form">
       <label>
         <span>争议原因</span>
         <textarea

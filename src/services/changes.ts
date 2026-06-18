@@ -5,6 +5,7 @@ import type {
   ProjectEvent,
   Task,
 } from "../model/types";
+import { normalizeEntries, normalizeEntry } from "../model/status";
 import { nowIso } from "../utils/time";
 import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
@@ -126,7 +127,7 @@ async function loadTaskEntries(
 
       return {
         path,
-        entries: entries.filter((entry) => isEntryInTask(entry, task)),
+        entries: normalizeEntries(entries).filter((entry) => isEntryInTask(entry, task)),
       };
     }),
   );
@@ -148,7 +149,7 @@ async function collectChangedEntries(
 
   for (const chunkFile of chunkFiles) {
     const path = `${entryDirectory}/${chunkFile}`;
-    const entries = await readJsonl<Entry>(root, path);
+    const entries = normalizeEntries(await readJsonl<Entry>(root, path));
     const rows = entries.filter(
       (entry) => isEntryInTask(entry, task) && entry.updated_by === userId,
     );
@@ -257,7 +258,7 @@ function findResolution(
 }
 
 async function loadCurrentEntries(path: string): Promise<Entry[]> {
-  return readJsonl<Entry>(getProjectRoot(), path);
+  return normalizeEntries(await readJsonl<Entry>(getProjectRoot(), path));
 }
 
 async function appendImportLog(
@@ -351,7 +352,11 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
     }
 
     const manifest = JSON.parse(manifestText) as ChangePackageManifest;
-    const entries = parsePackageJsonl<Entry>(files, "entries/");
+    const entries = Object.fromEntries(
+      Object.entries(parsePackageJsonl<Entry>(files, "entries/")).map(
+        ([path, rows]) => [path, normalizeEntries(rows)],
+      ),
+    );
     const comments = parsePackageJsonl<Comment>(files, "comments/");
     const events = files["logs/events.jsonl"]
       ? parseJsonl<ProjectEvent>(files["logs/events.jsonl"])
@@ -486,7 +491,7 @@ export async function applyChangePackage(
           updated_by: changePackage.manifest.user_id,
         };
       } else {
-        currentEntries[entryIndex] = packageEntry;
+        currentEntries[entryIndex] = normalizeEntry(packageEntry);
       }
 
       changed = true;

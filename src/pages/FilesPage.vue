@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
-import type { Entry, ProjectConfig, ProjectFile } from "../model/types";
+import type { ProjectConfig, ProjectFile } from "../model/types";
 import { loadEntries } from "../services/entries";
+import { calculateEntryProgress } from "../services/stats";
 
 interface FileSummary {
   file: ProjectFile;
@@ -76,11 +77,7 @@ const visibleFiles = computed(() => {
   });
 });
 
-function count(entries: Entry[], status: Entry["status"]): number {
-  return entries.filter((entry) => entry.status === status).length;
-}
-
-function latestUpdatedAt(entries: Entry[]): string {
+function latestUpdatedAt(entries: { updated_at: string }[]): string {
   const latest = entries
     .map((entry) => entry.updated_at)
     .filter(Boolean)
@@ -97,28 +94,18 @@ async function loadFileSummaries() {
     const summaries = await Promise.all(
       props.project.files.map(async (file) => {
         const entries = await loadEntries(file.id);
-        const totalEntries = entries.length;
-        const untranslatedEntries = count(entries, "untranslated");
-        const disputedEntries = count(entries, "disputed");
-        const translatedEntries =
-          count(entries, "translated") +
-          count(entries, "proofread") +
-          count(entries, "reviewed");
-        const reviewedEntries = count(entries, "reviewed");
+        const progress = calculateEntryProgress(
+          entries,
+          props.project.settings.progress_weights,
+        );
 
         return {
           file,
-          totalEntries,
-          untranslatedEntries,
-          disputedEntries,
-          translatedPercent:
-            totalEntries === 0
-              ? 0
-              : Math.round((translatedEntries / totalEntries) * 100),
-          reviewedPercent:
-            totalEntries === 0
-              ? 0
-              : Math.round((reviewedEntries / totalEntries) * 100),
+          totalEntries: progress.totalEntries,
+          untranslatedEntries: progress.untranslatedEntries,
+          disputedEntries: progress.disputedEntries,
+          translatedPercent: progress.translationProgress,
+          reviewedPercent: progress.reviewProgress,
           updatedAt: latestUpdatedAt(entries),
         };
       }),

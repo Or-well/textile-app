@@ -1,4 +1,5 @@
 import type { Comment, Entry } from "../model/types";
+import { normalizeEntries, normalizeEntry } from "../model/status";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { getCurrentUser } from "./permissions";
@@ -51,15 +52,15 @@ async function loadEntryChunk(fileId: string): Promise<{
 
       return {
         path,
-        entries: await readJsonl<Entry>(root, path),
+        entries: normalizeEntries(await readJsonl<Entry>(root, path)),
       };
     }),
   );
 }
 
-async function updateEntryStatus(
+async function updateEntry(
   entry: Entry,
-  status: Entry["status"],
+  patch: Partial<Entry>,
   userId: string,
 ): Promise<Entry> {
   const root = getProjectRoot();
@@ -73,8 +74,8 @@ async function updateEntryStatus(
     }
 
     const updatedEntry: Entry = {
-      ...chunk.entries[entryIndex],
-      status,
+      ...normalizeEntry(chunk.entries[entryIndex]),
+      ...patch,
       updated_at: nowIso(),
       updated_by: userId,
     };
@@ -176,10 +177,20 @@ export async function markDisputed(
   reason: string,
 ): Promise<Entry> {
   const userId = getCurrentUserId();
-  const updatedEntry = await updateEntryStatus(entry, "disputed", userId);
+  const text = reason.trim();
+  const updatedEntry = await updateEntry(
+    entry,
+    {
+      disputed: true,
+      dispute_reason: text || entry.dispute_reason,
+      dispute_resolved_at: "",
+      dispute_resolved_by: "",
+    },
+    userId,
+  );
 
-  if (reason.trim()) {
-    await addComment(updatedEntry, reason);
+  if (text) {
+    await addComment(updatedEntry, text);
   }
 
   await appendEvent({
@@ -187,7 +198,7 @@ export async function markDisputed(
     user_id: userId,
     entry_id: entry.id,
     file_id: entry.file_id,
-    detail: { reason: reason.trim() },
+    detail: { reason: text, status: updatedEntry.status },
   });
 
   return updatedEntry;
@@ -198,13 +209,19 @@ export async function resolveDispute(
   resolution: string,
 ): Promise<Entry> {
   const userId = getCurrentUserId();
-  const nextStatus: Entry["status"] = entry.target.trim()
-    ? "translated"
-    : "untranslated";
-  const updatedEntry = await updateEntryStatus(entry, nextStatus, userId);
+  const text = resolution.trim();
+  const updatedEntry = await updateEntry(
+    entry,
+    {
+      disputed: false,
+      dispute_resolved_at: nowIso(),
+      dispute_resolved_by: userId,
+    },
+    userId,
+  );
 
-  if (resolution.trim()) {
-    await addComment(updatedEntry, resolution);
+  if (text) {
+    await addComment(updatedEntry, text);
   }
 
   await appendEvent({
@@ -212,7 +229,7 @@ export async function resolveDispute(
     user_id: userId,
     entry_id: entry.id,
     file_id: entry.file_id,
-    detail: { resolution: resolution.trim(), status: nextStatus },
+    detail: { resolution: text, status: updatedEntry.status },
   });
 
   return updatedEntry;
@@ -247,5 +264,5 @@ export async function loadRecentComments(): Promise<Comment[]> {
 export async function loadDisputedEntries(): Promise<Entry[]> {
   const entries = await loadEntriesForAllFiles();
 
-  return entries.filter((entry) => entry.status === "disputed");
+  return entries.filter((entry) => entry.disputed === true);
 }

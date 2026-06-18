@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import type { Comment, Entry } from "../model/types";
 import {
   loadDisputedEntries,
@@ -8,6 +8,7 @@ import {
   setCommentsProjectRoot,
 } from "../services/comments";
 import { setHistoryProjectRoot } from "../services/history";
+import { canResolveDispute, getCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 
 const projectName = ref("");
@@ -19,6 +20,11 @@ const isLoading = ref(false);
 const isResolving = ref(false);
 const errorMessage = ref("");
 const message = ref("");
+
+const currentUser = computed(() => getCurrentUser());
+const canResolveSelectedDispute = computed(() =>
+  canResolveDispute(currentUser.value, selectedEntry.value),
+);
 
 async function refreshCommentsView() {
   disputedEntries.value = await loadDisputedEntries();
@@ -148,6 +154,7 @@ async function handleResolveDispute() {
             />
           </label>
           <button
+            v-if="canResolveSelectedDispute"
             class="resolve-button"
             type="button"
             :disabled="isResolving"
@@ -155,6 +162,7 @@ async function handleResolveDispute() {
           >
             {{ isResolving ? "处理中..." : "解决争议" }}
           </button>
+          <p v-else class="empty-text">当前用户没有解决争议的权限。</p>
         </template>
         <p v-else class="empty-text">请选择一个争议词条。</p>
       </section>

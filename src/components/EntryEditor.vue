@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import type { Entry, EntryStatus } from "../model/types";
-import { canEditEntry, getCurrentUser } from "../services/permissions";
+import { ENTRY_STATUS_LABELS, applyEntryWorkflowStatus } from "../model/status";
+import {
+  canEditEntry,
+  canMarkDisputed,
+  canProofreadEntry,
+  canResolveDispute,
+  canReviewEntry,
+  canRollbackEntry,
+  canTranslateEntry,
+  getCurrentUser,
+} from "../services/permissions";
 
 const props = defineProps<{
   entry?: Entry;
@@ -14,6 +24,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   save: [entry: Entry];
   saveNext: [entry: Entry];
+  workflowStatus: [entry: Entry];
+  markDisputed: [entry: Entry];
+  resolveDispute: [entry: Entry];
   previous: [];
   next: [];
   draftTargetChanged: [target: string];
@@ -21,18 +34,47 @@ const emit = defineEmits<{
 
 const target = ref("");
 
-const statusLabels: Record<EntryStatus, string> = {
-  untranslated: "未翻译",
-  translated: "已翻译",
-  proofread: "已校对",
-  reviewed: "已审核",
-  disputed: "有争议",
-};
-
 const currentUser = computed(() => getCurrentUser());
 const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
+const canSaveAsTranslated = computed(
+  () =>
+    Boolean(target.value.trim()) &&
+    props.entry?.status === "untranslated" &&
+    canTranslateEntry(currentUser.value, props.entry),
+);
+const canProofread = computed(() =>
+  canProofreadEntry(currentUser.value, props.entry),
+);
+const canReview = computed(() => canReviewEntry(currentUser.value, props.entry));
+const canRollback = computed(() =>
+  canRollbackEntry(currentUser.value, props.entry),
+);
+const canRollbackToTranslated = computed(
+  () => props.entry?.status === "proofread" && canRollback.value,
+);
+const canRollbackToProofread = computed(
+  () => props.entry?.status === "reviewed" && canRollback.value,
+);
+const canMarkEntryDisputed = computed(() =>
+  canMarkDisputed(currentUser.value, props.entry),
+);
+const canResolveEntryDispute = computed(() =>
+  canResolveDispute(currentUser.value, props.entry),
+);
+const hasWorkflowActions = computed(
+  () =>
+    canSaveAsTranslated.value ||
+    canProofread.value ||
+    canReview.value ||
+    canRollbackToTranslated.value ||
+    canRollbackToProofread.value ||
+    canMarkEntryDisputed.value ||
+    canResolveEntryDispute.value,
+);
 const permissionMessage = computed(() =>
-  props.entry && !canSaveEntry.value ? "当前用户没有此操作权限" : "",
+  props.entry && !canSaveEntry.value && !hasWorkflowActions.value
+    ? "当前用户没有此操作权限"
+    : "",
 );
 
 watch(
@@ -74,15 +116,56 @@ function handleSaveNext() {
     emit("saveNext", draftEntry);
   }
 }
+
+function buildWorkflowEntry(status: EntryStatus): Entry | undefined {
+  const draftEntry = buildDraftEntry();
+
+  if (!draftEntry) {
+    return undefined;
+  }
+
+  return applyEntryWorkflowStatus(
+    draftEntry,
+    status,
+    currentUser.value?.id ?? draftEntry.updated_by,
+  );
+}
+
+function handleWorkflowStatus(status: EntryStatus) {
+  const workflowEntry = buildWorkflowEntry(status);
+
+  if (workflowEntry) {
+    emit("workflowStatus", workflowEntry);
+  }
+}
+
+function handleMarkDisputed() {
+  const draftEntry = buildDraftEntry();
+
+  if (draftEntry) {
+    emit("markDisputed", draftEntry);
+  }
+}
+
+function handleResolveDispute() {
+  const draftEntry = buildDraftEntry();
+
+  if (draftEntry) {
+    emit("resolveDispute", draftEntry);
+  }
+}
 </script>
 
 <template>
   <article v-if="entry" class="entry-editor">
     <header class="editor-header">
       <div>
-        <span class="status-badge" :class="entry.status">
-          {{ statusLabels[entry.status] }}
-        </span>
+        <div class="status-row">
+          <span class="status-badge" :class="entry.status">
+            {{ ENTRY_STATUS_LABELS[entry.status] }}
+          </span>
+          <span v-if="entry.disputed" class="dispute-badge">有争议</span>
+        </div>
         <h1>{{ entry.speaker || "旁白" }}</h1>
       </div>
 
@@ -151,20 +234,88 @@ function handleSaveNext() {
 
     <footer class="actions">
       <button
+        v-if="canSaveEntry"
         class="secondary-button"
         type="button"
-        :disabled="isSaving || entry.locked || !canSaveEntry"
+        :disabled="isSaving || entry.locked"
         @click="handleSave"
       >
-        {{ isSaving ? "保存中..." : "保存" }}
+        {{ isSaving ? "保存中..." : "保存修改" }}
       </button>
       <button
+        v-if="canSaveEntry"
         class="primary-button"
         type="button"
-        :disabled="isSaving || entry.locked || !canSaveEntry"
+        :disabled="isSaving || entry.locked"
         @click="handleSaveNext"
       >
         保存并下一条
+      </button>
+    </footer>
+
+    <footer v-if="hasWorkflowActions" class="actions workflow-actions">
+      <button
+        v-if="canSaveAsTranslated"
+        class="primary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleWorkflowStatus('translated')"
+      >
+        保存为已翻译
+      </button>
+      <button
+        v-if="canProofread"
+        class="primary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleWorkflowStatus('proofread')"
+      >
+        校对通过
+      </button>
+      <button
+        v-if="canReview"
+        class="primary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleWorkflowStatus('reviewed')"
+      >
+        审核通过
+      </button>
+      <button
+        v-if="canRollbackToTranslated"
+        class="secondary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleWorkflowStatus('translated')"
+      >
+        退回翻译
+      </button>
+      <button
+        v-if="canRollbackToProofread"
+        class="secondary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleWorkflowStatus('proofread')"
+      >
+        退回校对
+      </button>
+      <button
+        v-if="canMarkEntryDisputed"
+        class="secondary-button warning-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleMarkDisputed"
+      >
+        标记争议
+      </button>
+      <button
+        v-if="canResolveEntryDispute"
+        class="secondary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleResolveDispute"
+      >
+        解决争议
       </button>
     </footer>
   </article>
@@ -219,6 +370,12 @@ h1 {
   font-weight: 700;
 }
 
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .status-badge.translated {
   background: #e6f0ef;
   color: #174346;
@@ -230,9 +387,16 @@ h1 {
   color: #445915;
 }
 
-.status-badge.disputed {
+.dispute-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
   background: #fff3dc;
   color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .entry-nav,
@@ -240,6 +404,10 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.workflow-actions {
+  padding-top: 2px;
 }
 
 .source-panel,
@@ -338,6 +506,11 @@ dd {
   border: 1px solid #c8d0dc;
   background: #ffffff;
   color: #1f2937;
+}
+
+.warning-button {
+  border-color: #f0b96a;
+  color: #92400e;
 }
 
 .primary-button:disabled,

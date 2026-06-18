@@ -1,27 +1,22 @@
 <script setup lang="ts">
 import type { Entry, EntryStatus } from "../model/types";
+import { ENTRY_STATUS_LABELS } from "../model/status";
+
+type EntryFilter = EntryStatus | "all" | "disputed";
 
 defineProps<{
   entries: Entry[];
   selectedEntryId?: string;
   searchText: string;
-  statusFilter: EntryStatus | "all";
+  statusFilter: EntryFilter;
   totalCount: number;
 }>();
 
 const emit = defineEmits<{
   select: [entry: Entry];
   updateSearchText: [value: string];
-  updateStatusFilter: [value: EntryStatus | "all"];
+  updateStatusFilter: [value: EntryFilter];
 }>();
-
-const statusLabels: Record<EntryStatus, string> = {
-  untranslated: "未翻译",
-  translated: "已翻译",
-  proofread: "已校对",
-  reviewed: "已审核",
-  disputed: "有争议",
-};
 
 function summarize(text: string): string {
   return text.length > 54 ? `${text.slice(0, 54)}...` : text;
@@ -45,7 +40,7 @@ function summarize(text: string): string {
         <span>筛选</span>
         <select
           :value="statusFilter"
-          @change="emit('updateStatusFilter', ($event.target as HTMLSelectElement).value as EntryStatus | 'all')"
+          @change="emit('updateStatusFilter', ($event.target as HTMLSelectElement).value as EntryFilter)"
         >
           <option value="all">全部</option>
           <option value="untranslated">未翻译</option>
@@ -62,14 +57,14 @@ function summarize(text: string): string {
         v-for="entry in entries"
         :key="entry.id"
         class="entry-row"
-        :class="{ selected: entry.id === selectedEntryId, disputed: entry.status === 'disputed' }"
+        :class="{ selected: entry.id === selectedEntryId, disputed: entry.disputed }"
         type="button"
         @click="emit('select', entry)"
       >
         <span class="entry-source">{{ summarize(entry.source) }}</span>
         <span class="entry-row-meta">
-          <span>{{ statusLabels[entry.status] }}</span>
-          <span v-if="entry.status === 'disputed'">有争议</span>
+          <span>{{ ENTRY_STATUS_LABELS[entry.status] }}</span>
+          <span v-if="entry.disputed">有争议</span>
           <span v-if="entry.updated_at">有记录</span>
         </span>
       </button>

@@ -1,4 +1,5 @@
 import type { Entry, ProjectConfig, ProjectFile, Term } from "../model/types";
+import { normalizeEntries } from "../model/status";
 import { nowIso } from "../utils/time";
 import { createZip, type ZipContent } from "../utils/zip";
 import {
@@ -73,8 +74,7 @@ async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
     ),
   );
 
-  return groups
-    .flat()
+  return normalizeEntries(groups.flat())
     .filter((entry) => !entry.hidden)
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
 }
@@ -138,7 +138,7 @@ export function generateUntranslatedReport(entries: Entry[]): string {
 }
 
 export function generateDisputeReport(entries: Entry[]): string {
-  const rows = entries.filter((entry) => entry.status === "disputed");
+  const rows = entries.filter((entry) => entry.disputed === true);
 
   if (rows.length === 0) {
     return "争议词条：0\n";

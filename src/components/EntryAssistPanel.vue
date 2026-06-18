@@ -36,11 +36,14 @@ function describeEvent(event: ProjectEvent): string {
     return "词条已更新";
   }
 
-  if (event.type === "entry.disputed") {
+  if (event.type === "entry.disputed" || event.type === "entry.mark_disputed") {
     return "标记为有争议";
   }
 
-  if (event.type === "entry.dispute_resolved") {
+  if (
+    event.type === "entry.dispute_resolved" ||
+    event.type === "entry.resolve_dispute"
+  ) {
     return "争议已处理";
   }
 

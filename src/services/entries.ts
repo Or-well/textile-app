@@ -1,4 +1,5 @@
 import type { Entry } from "../model/types";
+import { normalizeEntries, normalizeEntry } from "../model/status";
 import { nowIso } from "../utils/time";
 import {
   listFiles,
@@ -56,8 +57,7 @@ export async function loadEntries(fileId: string): Promise<Entry[]> {
         readJsonl<Entry>(root, `${entryDirectory}/${fileName}`),
       ),
     );
-    const entries = entryGroups
-      .flat()
+    const entries = normalizeEntries(entryGroups.flat())
       .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
 
     cachedEntries = [
@@ -79,8 +79,7 @@ export async function loadAllEntries(): Promise<Entry[]> {
     const entryGroups = await Promise.all(
       fileIds.map((fileId) => loadEntries(fileId)),
     );
-    const entries = entryGroups
-      .flat()
+    const entries = normalizeEntries(entryGroups.flat())
       .sort((a, b) => a.file_id.localeCompare(b.file_id) || a.index - b.index);
 
     cachedEntries = entries;
@@ -112,14 +111,14 @@ export async function saveEntry(entry: Entry): Promise<Entry> {
 
   for (const chunkFile of chunkFiles) {
     const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = await readJsonl<Entry>(root, chunkPath);
+    const entries = normalizeEntries(await readJsonl<Entry>(root, chunkPath));
     const entryIndex = entries.findIndex((row) => row.id === entry.id);
 
     if (entryIndex < 0) {
       continue;
     }
 
-    const originalEntry = entries[entryIndex];
+    const originalEntry = normalizeEntry(entries[entryIndex]);
     const target = entry.target;
     const shouldMarkTranslated =
       target.trim().length > 0 && originalEntry.status === "untranslated";
@@ -130,6 +129,10 @@ export async function saveEntry(entry: Entry): Promise<Entry> {
       updated_at: nowIso(),
       updated_by: entry.updated_by || originalEntry.assignee || originalEntry.updated_by,
     };
+
+    if (shouldMarkTranslated && !savedEntry.translated_by) {
+      savedEntry.translated_by = savedEntry.updated_by;
+    }
 
     entries[entryIndex] = savedEntry;
 

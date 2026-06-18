@@ -1,6 +1,9 @@
-import type { Entry, Task } from "../model/types";
+import type { Entry, ProjectConfig, Task } from "../model/types";
+import { normalizeEntries } from "../model/status";
+import { calculateEntryProgress, type ProgressWeights } from "./stats";
 import {
   listFiles,
+  readJson,
   readJsonl,
   writeJsonl,
   type ProjectDirectoryHandle,
@@ -15,7 +18,11 @@ export interface TaskProgress {
   proofreadEntries: number;
   reviewedEntries: number;
   disputedEntries: number;
+  translationProgress: number;
+  proofreadProgress: number;
+  reviewProgress: number;
   progressPercent: number;
+  progressWeights: ProgressWeights;
 }
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
@@ -47,11 +54,9 @@ async function loadEntriesForFile(fileId: string): Promise<Entry[]> {
     ),
   );
 
-  return chunks.flat().sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
-}
-
-function countEntries(entries: Entry[], status: Entry["status"]): number {
-  return entries.filter((entry) => entry.status === status).length;
+  return normalizeEntries(chunks.flat()).sort(
+    (a, b) => a.index - b.index || a.id.localeCompare(b.id),
+  );
 }
 
 export async function loadTasks(): Promise<Task[]> {
@@ -96,26 +101,18 @@ export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
   const entries = (await loadEntriesForFile(task.file_id)).filter((entry) =>
     isEntryInTask(entry, task),
   );
-  const totalEntries = entries.length;
-  const untranslatedEntries = countEntries(entries, "untranslated");
-  const translatedEntries = countEntries(entries, "translated");
-  const proofreadEntries = countEntries(entries, "proofread");
-  const reviewedEntries = countEntries(entries, "reviewed");
-  const disputedEntries = countEntries(entries, "disputed");
-  const completedEntries = totalEntries - untranslatedEntries;
-  const progressPercent =
-    totalEntries === 0 ? 0 : Math.round((completedEntries / totalEntries) * 100);
+  const project = await readJson<ProjectConfig>(
+    getProjectRoot(),
+    "project.json",
+  );
+  const progress = calculateEntryProgress(
+    entries,
+    project.settings?.progress_weights,
+  );
 
   return {
     taskId,
-    totalEntries,
-    completedEntries,
-    untranslatedEntries,
-    translatedEntries,
-    proofreadEntries,
-    reviewedEntries,
-    disputedEntries,
-    progressPercent,
+    ...progress,
   };
 }
 
