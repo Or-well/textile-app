@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import HomePage from "./pages/HomePage.vue";
+import EntryPage from "./pages/EntryPage.vue";
 </script>
 
 <template>
-  <HomePage />
+  <EntryPage />
 </template>
