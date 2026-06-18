@@ -16,16 +16,19 @@ interface ProjectSummary {
 const props = defineProps<{
   currentProject?: ProjectSummary | null;
   isOpening?: boolean;
+  isOpeningFile?: boolean;
   errorMessage?: string;
 }>();
 
 const emit = defineEmits<{
   openLocalProject: [];
+  openProjectFile: [file: File];
   enterCurrentProject: [];
 }>();
 
 const searchText = ref("");
 const selectedCategory = ref<"mine" | "all">("mine");
+const projectFileInput = ref<HTMLInputElement | null>(null);
 
 const visibleCurrentProject = computed(() => {
   if (!props.currentProject) {
@@ -43,6 +46,17 @@ const visibleCurrentProject = computed(() => {
     ? props.currentProject
     : null;
 });
+
+function handleSelectProjectFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (file) {
+    emit("openProjectFile", file);
+  }
+
+  input.value = "";
+}
 </script>
 
 <template>
@@ -53,14 +67,31 @@ const visibleCurrentProject = computed(() => {
         <h1>我的项目</h1>
       </div>
 
-      <button
-        class="primary-button"
-        type="button"
-        :disabled="isOpening"
-        @click="emit('openLocalProject')"
-      >
-        {{ isOpening ? "正在打开..." : "打开本地项目" }}
-      </button>
+      <div class="header-actions">
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="isOpeningFile"
+          @click="projectFileInput?.click()"
+        >
+          {{ isOpeningFile ? "正在打开..." : "打开项目文件" }}
+        </button>
+        <button
+          class="primary-button"
+          type="button"
+          :disabled="isOpening"
+          @click="emit('openLocalProject')"
+        >
+          {{ isOpening ? "正在打开..." : "打开项目文件夹" }}
+        </button>
+        <input
+          ref="projectFileInput"
+          class="hidden-file-input"
+          type="file"
+          accept=".hproj,application/zip"
+          @change="handleSelectProjectFile"
+        />
+      </div>
     </header>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
@@ -115,13 +146,13 @@ const visibleCurrentProject = computed(() => {
           :member-count="0"
           :task-count="0"
           disabled
-          action-label="请用打开本地项目选择样例目录"
+          action-label="请用打开项目文件夹选择样例目录"
         />
 
         <section v-if="!visibleCurrentProject" class="empty-projects">
           <h2>还没有打开的本地项目</h2>
           <p>
-            点击“打开本地项目”，选择项目根目录后，它会出现在这里，并进入项目工作台。
+            点击“打开项目文件夹”或“打开项目文件”后，它会出现在这里，并进入项目工作台。
           </p>
         </section>
       </section>
@@ -169,21 +200,44 @@ h2 {
   font-size: 20px;
 }
 
-.primary-button {
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.primary-button,
+.secondary-button {
   min-height: 42px;
   padding: 0 16px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
   font: inherit;
   font-size: 15px;
   cursor: pointer;
 }
 
-.primary-button:disabled {
+.primary-button {
+  border-color: #2f6f73;
+  background: #2f6f73;
+  color: #ffffff;
+}
+
+.secondary-button {
+  border-color: #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .error-message {
@@ -280,6 +334,10 @@ input {
   .list-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
   }
 
   .project-list-layout {

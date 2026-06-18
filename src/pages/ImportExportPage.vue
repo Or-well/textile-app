@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
 import type { Member, ProjectConfig, Task } from "../model/types";
+import { exportProjectPackage } from "../services/projectPackage";
 import {
   applyChangePackage,
   detectConflicts,
@@ -28,16 +29,19 @@ import {
   getCurrentUser,
 } from "../services/permissions";
 import { openProject } from "../services/project";
+import type { ProjectDirectoryHandle } from "../services/projectFs";
 import { getSyncStatus, type SyncStatus } from "../services/sync";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
 
 const props = defineProps<{
   project?: ProjectConfig;
   members?: Member[];
+  projectRoot?: ProjectDirectoryHandle;
   currentUser?: Member | null;
 }>();
 
 const projectName = ref("");
+const localRoot = ref<ProjectDirectoryHandle | null>(null);
 const tasks = ref<Task[]>([]);
 const selectedTaskId = ref("");
 const exportMode = ref<ExportChangePackageMode>("user_changes");
@@ -45,6 +49,7 @@ const syncStatus = ref<SyncStatus>();
 const isLoading = ref(false);
 const isExporting = ref(false);
 const isExportingRelease = ref(false);
+const isExportingProjectFile = ref(false);
 const isReadingPackage = ref(false);
 const isApplyingPackage = ref(false);
 const errorMessage = ref("");
@@ -67,6 +72,7 @@ const canDangerousImport = computed(() =>
   canDangerousImportChangePackage(currentUser.value),
 );
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
+const projectRootForExport = computed(() => props.projectRoot ?? localRoot.value);
 const canSelectImportFile = computed(
   () => canImportPackages.value || canImportMaintenance.value,
 );
@@ -194,6 +200,7 @@ async function initializeFromProjectContext() {
   }
 
   projectName.value = props.project.name;
+  localRoot.value = props.projectRoot ?? null;
 
   await loadImportExportState();
 }
@@ -207,6 +214,7 @@ async function handleOpenProject() {
     const project = await openProject();
 
     projectName.value = project.config.name;
+    localRoot.value = project.root;
 
     setChangesProjectRoot(project.root);
     setExporterProjectRoot(project.root);
@@ -214,6 +222,7 @@ async function handleOpenProject() {
     await loadImportExportState();
   } catch (error) {
     projectName.value = "";
+    localRoot.value = null;
     tasks.value = [];
     selectedTaskId.value = "";
     changePackage.value = undefined;
@@ -408,8 +417,36 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
   }
 }
 
+async function handleExportProjectFile() {
+  if (!projectRootForExport.value) {
+    errorMessage.value = "请先打开项目，再导出为项目文件。";
+    return;
+  }
+
+  isExportingProjectFile.value = true;
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    const result = await exportProjectPackage(projectRootForExport.value);
+
+    downloadBlob(result.blob, result.fileName);
+    message.value = `已导出为项目文件：${result.fileName}`;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "导出项目文件失败。请稍后再试。";
+  } finally {
+    isExportingProjectFile.value = false;
+  }
+}
+
 watch(
-  () => [props.project?.project_id, props.members?.length ?? 0, currentUser.value?.id],
+  () => [
+    props.project?.project_id,
+    props.members?.length ?? 0,
+    props.projectRoot?.name,
+    currentUser.value?.id,
+  ],
   () => {
     void initializeFromProjectContext();
   },
@@ -448,6 +485,21 @@ watch(
         <p v-if="syncStatus" class="section-note">
           当前同步状态：{{ syncStatus.title }}
         </p>
+      </section>
+
+      <section v-if="projectName" class="project-file-section">
+        <h2>备份项目</h2>
+        <p class="section-note">
+          导出为 .hproj 项目文件，方便备份或在另一台设备打开。
+        </p>
+        <button
+          class="export-button"
+          type="button"
+          :disabled="isExportingProjectFile"
+          @click="handleExportProjectFile"
+        >
+          {{ isExportingProjectFile ? "正在导出..." : "导出为项目文件" }}
+        </button>
       </section>
 
       <div v-if="projectName" class="form-grid">
@@ -665,6 +717,7 @@ button:disabled {
 
 .form-grid,
 .sync-fallback-section,
+.project-file-section,
 .import-section,
 .release-section {
   display: grid;
@@ -673,6 +726,7 @@ button:disabled {
 }
 
 .sync-fallback-section,
+.project-file-section,
 .import-section,
 .release-section {
   padding-top: 24px;

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { openProject } from "../services/project";
+import { openProject, openProjectFile } from "../services/project";
 
 const projectName = ref("");
 const isOpening = ref(false);
+const isOpeningFile = ref(false);
 const errorMessage = ref("");
+const projectFileInput = ref<HTMLInputElement | null>(null);
 
 async function handleOpenProject() {
   isOpening.value = true;
@@ -25,6 +27,35 @@ async function handleOpenProject() {
     isOpening.value = false;
   }
 }
+
+async function handleOpenProjectFile(file: File) {
+  isOpeningFile.value = true;
+  errorMessage.value = "";
+
+  try {
+    const project = await openProjectFile(file);
+    projectName.value = project.config.name;
+  } catch (error) {
+    if (error instanceof Error) {
+      errorMessage.value = error.message;
+    } else {
+      errorMessage.value = "打开项目文件失败。请确认选择的是 .hproj 项目文件。";
+    }
+  } finally {
+    isOpeningFile.value = false;
+  }
+}
+
+function handleSelectProjectFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (file) {
+    void handleOpenProjectFile(file);
+  }
+
+  input.value = "";
+}
 </script>
 
 <template>
@@ -34,14 +65,31 @@ async function handleOpenProject() {
       <h1>打开项目</h1>
       <p class="summary">选择本地项目文件夹后，可以读取项目配置并继续工作。</p>
 
-      <button
-        class="open-button"
-        type="button"
-        :disabled="isOpening"
-        @click="handleOpenProject"
-      >
-        {{ isOpening ? "正在打开..." : "打开项目文件夹" }}
-      </button>
+      <div class="button-row">
+        <button
+          class="file-button"
+          type="button"
+          :disabled="isOpeningFile"
+          @click="projectFileInput?.click()"
+        >
+          {{ isOpeningFile ? "正在打开..." : "打开项目文件" }}
+        </button>
+        <button
+          class="open-button"
+          type="button"
+          :disabled="isOpening"
+          @click="handleOpenProject"
+        >
+          {{ isOpening ? "正在打开..." : "打开项目文件夹" }}
+        </button>
+        <input
+          ref="projectFileInput"
+          class="hidden-file-input"
+          type="file"
+          accept=".hproj,application/zip"
+          @change="handleSelectProjectFile"
+        />
+      </div>
 
       <a class="back-link" href="/projects">返回项目列表</a>
 
@@ -87,20 +135,42 @@ h1 {
   line-height: 1.7;
 }
 
-.open-button {
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.open-button,
+.file-button {
   min-height: 44px;
   padding: 0 18px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
   font-size: 15px;
   cursor: pointer;
 }
 
-.open-button:disabled {
+.open-button {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.file-button {
+  border-color: #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.open-button:disabled,
+.file-button:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 .back-link {

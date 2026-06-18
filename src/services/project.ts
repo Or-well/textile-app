@@ -1,4 +1,5 @@
 import type { Member, ProjectConfig, ProjectFile } from "../model/types";
+import { createProjectRootFromPackage } from "./projectPackage";
 import {
   fileExists,
   openProjectDirectory,
@@ -16,6 +17,8 @@ export interface OpenedProject {
   root: ProjectDirectoryHandle;
   config: ProjectConfig;
   members: Member[];
+  storageKind: "folder" | "packed";
+  sourceFileName?: string;
 }
 
 export interface ProjectStructureResult {
@@ -110,5 +113,21 @@ export async function openProject(): Promise<OpenedProject> {
     loadMembers(root),
   ]);
 
-  return { root, config, members };
+  return { root, config, members, storageKind: "folder" };
+}
+
+export async function openProjectFile(file: File): Promise<OpenedProject> {
+  const root = await createProjectRootFromPackage(file);
+  const config = await loadProject(root);
+  const members = (await fileExists(root, "members.json"))
+    ? await loadMembers(root)
+    : [];
+
+  return {
+    root,
+    config,
+    members,
+    storageKind: "packed",
+    sourceFileName: file.name,
+  };
 }

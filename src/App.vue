@@ -23,7 +23,7 @@ import { setHistoryProjectRoot } from "./services/history";
 import { loginMember } from "./services/auth";
 import { getCurrentUser, setCurrentUser } from "./services/permissions";
 import { checkForUpdates, setupPwaUpdateListener } from "./services/appUpdate";
-import { openProject, type OpenedProject } from "./services/project";
+import { openProject, openProjectFile, type OpenedProject } from "./services/project";
 import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectRoot } from "./services/tasks";
 import { setTermsProjectRoot } from "./services/terms";
@@ -68,9 +68,11 @@ const currentUser = ref<Member | null>(getCurrentUser());
 const currentStats = ref<BasicProjectStats | null>(null);
 const taskCount = ref(0);
 const isOpeningProject = ref(false);
+const isOpeningProjectFile = ref(false);
 const isLoggingIn = ref(false);
 const appErrorMessage = ref("");
 const loginErrorMessage = ref("");
+const packedProjectNotice = ref("");
 
 const route = computed(() => parseRoute(routePath.value));
 const currentProjectSummary = computed<ProjectSummary | null>(() => {
@@ -136,6 +138,16 @@ function handlePopState() {
   routePath.value = window.location.pathname;
 }
 
+function updatePackedProjectNotice(project: OpenedProject | null) {
+  if (!project || project.storageKind !== "packed") {
+    packedProjectNotice.value = "";
+    return;
+  }
+
+  packedProjectNotice.value =
+    "当前打开的是 .hproj 项目文件。修改会先保存在本次工作内存中，完成后请导出为项目文件。";
+}
+
 function configureProjectServices(project: OpenedProject) {
   setEntriesProjectRoot(project.root);
   setTermsProjectRoot(project.root);
@@ -147,6 +159,7 @@ function configureProjectServices(project: OpenedProject) {
   setCurrentUser(null);
   currentUser.value = null;
   loginErrorMessage.value = "";
+  updatePackedProjectNotice(project);
 }
 
 function buildProjectSummary(
@@ -206,6 +219,28 @@ async function handleOpenLocalProject() {
     }
   } finally {
     isOpeningProject.value = false;
+  }
+}
+
+async function handleOpenProjectFile(file: File) {
+  isOpeningProjectFile.value = true;
+  appErrorMessage.value = "";
+
+  try {
+    const project = await openProjectFile(file);
+
+    currentProject.value = project;
+    configureProjectServices(project);
+    await refreshProjectSummary();
+    navigate(`/projects/${encodeURIComponent(project.config.project_id)}/files`);
+  } catch (error) {
+    if (error instanceof Error) {
+      appErrorMessage.value = error.message;
+    } else {
+      appErrorMessage.value = "打开项目文件失败。请确认选择的是 .hproj 项目文件。";
+    }
+  } finally {
+    isOpeningProjectFile.value = false;
   }
 }
 
@@ -307,8 +342,28 @@ function handleOpenFile(fileId: string) {
   );
 }
 
+function handlePackedProjectDirty() {
+  if (currentProject.value?.storageKind !== "packed") {
+    return;
+  }
+
+  packedProjectNotice.value =
+    "这个 .hproj 项目文件已有未重新导出的修改。离开页面前请导出为项目文件。";
+}
+
+function handlePackedProjectExported() {
+  if (currentProject.value?.storageKind !== "packed") {
+    return;
+  }
+
+  packedProjectNotice.value =
+    "已导出新的 .hproj 项目文件。之后的修改仍需要再次导出为项目文件。";
+}
+
 onMounted(() => {
   window.addEventListener("popstate", handlePopState);
+  window.addEventListener("hproj-project-dirty", handlePackedProjectDirty);
+  window.addEventListener("hproj-project-exported", handlePackedProjectExported);
   setupPwaUpdateListener();
   void checkForUpdates();
 
@@ -319,6 +374,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("popstate", handlePopState);
+  window.removeEventListener("hproj-project-dirty", handlePackedProjectDirty);
+  window.removeEventListener("hproj-project-exported", handlePackedProjectExported);
 });
 </script>
 
@@ -332,8 +389,10 @@ onBeforeUnmount(() => {
     <ProjectListPage
       :current-project="currentProjectSummary"
       :is-opening="isOpeningProject"
+      :is-opening-file="isOpeningProjectFile"
       :error-message="appErrorMessage"
       @open-local-project="handleOpenLocalProject"
+      @open-project-file="handleOpenProjectFile"
       @enter-current-project="handleEnterCurrentProject"
     />
   </section>
@@ -401,6 +460,7 @@ onBeforeUnmount(() => {
         v-else-if="route.section === 'import-export'"
         :project="currentProject.config"
         :members="currentProject.members"
+        :project-root="currentProject.root"
         :current-user="currentUser"
       />
 
@@ -443,6 +503,9 @@ onBeforeUnmount(() => {
   </main>
 
   <UpdateNotice />
+  <aside v-if="packedProjectNotice" class="packed-project-notice">
+    {{ packedProjectNotice }}
+  </aside>
 </template>
 
 <style scoped>
@@ -469,5 +532,23 @@ onBeforeUnmount(() => {
     position: static;
     margin: 18px 18px 0;
   }
+}
+
+.packed-project-notice {
+  position: fixed;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  z-index: 20;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 12px 14px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  background: #eef2ff;
+  color: #1e3a8a;
+  font-size: 14px;
+  line-height: 1.6;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.16);
 }
 </style>

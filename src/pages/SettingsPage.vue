@@ -11,6 +11,7 @@ import {
   canConfigureStats,
   getCurrentUser,
 } from "../services/permissions";
+import { exportProjectPackage } from "../services/projectPackage";
 import { openProject, saveProject } from "../services/project";
 import {
   checkForUpdates,
@@ -128,6 +129,7 @@ const isSavingProject = ref(false);
 const isSavingWeights = ref(false);
 const isRefreshingSync = ref(false);
 const isSyncing = ref(false);
+const isExportingProjectFile = ref(false);
 const isCheckingUpdate = ref(false);
 const message = ref("");
 const errorMessage = ref("");
@@ -234,10 +236,22 @@ function getWritableRoot(): ProjectDirectoryHandle {
   const root = props.projectRoot ?? localRoot.value;
 
   if (!root) {
-    throw new Error("请先打开项目文件夹，才能保存项目设置。");
+    throw new Error("请先打开项目，才能保存项目设置。");
   }
 
   return root;
+}
+
+function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 async function persistProject(
@@ -411,6 +425,31 @@ async function handleSyncProject() {
       error instanceof Error ? error.message : "同步项目失败。请导出修改包作为备用。";
   } finally {
     isSyncing.value = false;
+  }
+}
+
+async function handleExportProjectFile() {
+  const root = props.projectRoot ?? localRoot.value;
+
+  if (!root) {
+    errorMessage.value = "请先打开项目，再导出为项目文件。";
+    return;
+  }
+
+  isExportingProjectFile.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const result = await exportProjectPackage(root);
+
+    downloadBlob(result.blob, result.fileName);
+    message.value = `已导出为项目文件：${result.fileName}`;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "导出项目文件失败。请稍后再试。";
+  } finally {
+    isExportingProjectFile.value = false;
   }
 }
 
@@ -891,12 +930,17 @@ onBeforeUnmount(() => {
 
             <div class="form-row">
               <div class="row-label">
-                <span>备份 / .hproj</span>
-                <p>后续用于项目打包、导入和离线备份。</p>
+                <span>备份项目</span>
+                <p>导出为 .hproj 项目文件，方便备份或交给其他成员打开。</p>
               </div>
               <div class="row-control button-control">
-                <button class="secondary-button" type="button" disabled>
-                  后续支持
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="isExportingProjectFile"
+                  @click="handleExportProjectFile"
+                >
+                  {{ isExportingProjectFile ? "正在导出..." : "导出为项目文件" }}
                 </button>
               </div>
             </div>

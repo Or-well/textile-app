@@ -29,3 +29,16 @@ export async function readZip(file: Blob): Promise<Record<string, string>> {
 
   return entries;
 }
+
+export async function readZipBytes(file: Blob): Promise<Record<string, Uint8Array>> {
+  const zip = await JSZip.loadAsync(file);
+  const entries: Record<string, Uint8Array> = {};
+
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (!entry.dir) {
+      entries[path] = await entry.async("uint8array");
+    }
+  }
+
+  return entries;
+}
