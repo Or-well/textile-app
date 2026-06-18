@@ -1,19 +1,33 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
+import SyncStatusPanel from "../components/SyncStatusPanel.vue";
 import { setEntriesProjectRoot } from "../services/entries";
 import { openProject } from "../services/project";
 import { getProjectStats, type BasicProjectStats } from "../services/stats";
+import {
+  generateChangeSummary,
+  getSyncStatus,
+  submitTaskWithSync,
+  syncLatestProject,
+  uploadMyChanges,
+  type SyncStatus,
+} from "../services/sync";
 
 const projectName = ref("");
 const stats = ref<BasicProjectStats>();
+const syncStatus = ref<SyncStatus>();
 const isLoading = ref(false);
+const isSyncBusy = ref(false);
 const errorMessage = ref("");
+const message = ref("");
 
 async function handleOpenProject() {
   isLoading.value = true;
   errorMessage.value = "";
+  message.value = "";
   stats.value = undefined;
+  syncStatus.value = undefined;
 
   try {
     const project = await openProject();
@@ -21,6 +35,7 @@ async function handleOpenProject() {
     projectName.value = project.config.name;
     setEntriesProjectRoot(project.root);
     stats.value = await getProjectStats();
+    syncStatus.value = await getSyncStatus();
   } catch (error) {
     projectName.value = "";
 
@@ -34,6 +49,44 @@ async function handleOpenProject() {
   } finally {
     isLoading.value = false;
   }
+}
+
+async function runSyncAction(action: () => Promise<{ message: string; fallbackMessage?: string }>) {
+  isSyncBusy.value = true;
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    const result = await action();
+
+    message.value = result.fallbackMessage
+      ? `${result.message}${result.fallbackMessage}`
+      : result.message;
+    syncStatus.value = await getSyncStatus();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "同步操作失败。你可以先导出修改包，交给负责人合并。";
+  } finally {
+    isSyncBusy.value = false;
+  }
+}
+
+function handleSyncProject() {
+  void runSyncAction(syncLatestProject);
+}
+
+function handleUploadChanges() {
+  void runSyncAction(uploadMyChanges);
+}
+
+function handleSubmitTask() {
+  void runSyncAction(() => submitTaskWithSync("current_task"));
+}
+
+async function handleGenerateSummary() {
+  message.value = await generateChangeSummary();
 }
 </script>
 
@@ -57,9 +110,22 @@ async function handleOpenProject() {
       </div>
 
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+      <p v-if="message" class="message">{{ message }}</p>
 
       <div v-if="stats" class="stats-panel">
         <ProgressBar :percent="stats.progressPercent" label="项目进度" />
+
+        <SyncStatusPanel
+          :status="syncStatus"
+          :is-busy="isSyncBusy"
+          @sync="handleSyncProject"
+          @upload="handleUploadChanges"
+          @submit-task="handleSubmitTask"
+        />
+
+        <button class="summary-button" type="button" @click="handleGenerateSummary">
+          查看修改摘要
+        </button>
 
         <dl class="stats-grid">
           <div>
@@ -150,6 +216,7 @@ h1 {
 }
 
 .error-message,
+.message,
 .empty-state {
   margin: 22px 0 0;
   line-height: 1.7;
@@ -157,6 +224,10 @@ h1 {
 
 .error-message {
   color: #b42318;
+}
+
+.message {
+  color: #166534;
 }
 
 .empty-state {
@@ -167,6 +238,18 @@ h1 {
   display: grid;
   gap: 22px;
   margin-top: 24px;
+}
+
+.summary-button {
+  justify-self: start;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 .stats-grid {
