@@ -1,14 +1,36 @@
 <script setup lang="ts">
+import { computed } from "vue";
+import type { Term } from "../model/types";
+import { canManageTerm, getCurrentUser } from "../services/permissions";
 import type { TermUsageResult } from "../services/terms";
 
-defineProps<{
+const props = defineProps<{
   terms: TermUsageResult[];
+  sourceText: string;
 }>();
+
+const emit = defineEmits<{
+  requestAddTerm: [sourceText: string];
+  requestEditTerm: [term: Term];
+}>();
+
+const currentUser = computed(() => getCurrentUser());
+const canManageTerms = computed(() => canManageTerm(currentUser.value));
 </script>
 
 <template>
   <section class="term-hint">
-    <h3>术语提示</h3>
+    <div class="hint-header">
+      <h3>术语提示</h3>
+      <button
+        v-if="canManageTerms && terms.length === 0 && sourceText"
+        class="text-button"
+        type="button"
+        @click="emit('requestAddTerm', sourceText)"
+      >
+        添加为术语
+      </button>
+    </div>
 
     <p v-if="terms.length === 0" class="empty-text">无命中术语</p>
 
@@ -22,6 +44,14 @@ defineProps<{
         <p v-if="!item.isRecommendedUsed" class="term-warning">
           译文中尚未使用推荐译名
         </p>
+        <button
+          v-if="canManageTerms"
+          class="text-button"
+          type="button"
+          @click="emit('requestEditTerm', item.term)"
+        >
+          编辑术语
+        </button>
       </li>
     </ul>
   </section>
@@ -35,9 +65,17 @@ defineProps<{
 }
 
 h3 {
-  margin: 0 0 12px;
+  margin: 0;
   font-size: 16px;
   line-height: 1.3;
+}
+
+.hint-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .empty-text,
@@ -94,5 +132,18 @@ h3 {
   margin-top: 6px;
   color: #b45309;
   font-size: 14px;
+}
+
+.text-button {
+  justify-self: start;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2f6f73;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
 }
 </style>

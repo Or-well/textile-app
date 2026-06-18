@@ -2,7 +2,7 @@
 import { ref, watch } from "vue";
 import CommentPanel from "./CommentPanel.vue";
 import TermHint from "./TermHint.vue";
-import type { Entry, ProjectEvent } from "../model/types";
+import type { Entry, ProjectEvent, Term } from "../model/types";
 import { getEntryHistory } from "../services/history";
 import { checkTermUsage, type TermUsageResult } from "../services/terms";
 
@@ -23,6 +23,7 @@ const activeTab = ref<AssistTab>(props.activeTab ?? "terms");
 const termResults = ref<TermUsageResult[]>([]);
 const historyEvents = ref<ProjectEvent[]>([]);
 const termErrorMessage = ref("");
+const termActionMessage = ref("");
 const historyErrorMessage = ref("");
 let termRequestId = 0;
 let historyRequestId = 0;
@@ -58,6 +59,14 @@ function describeEvent(event: ProjectEvent): string {
   return "记录已更新";
 }
 
+function handleRequestAddTerm(sourceText: string) {
+  termActionMessage.value = `请到术语页新增术语：${sourceText}`;
+}
+
+function handleRequestEditTerm(term: Term) {
+  termActionMessage.value = `请到术语页编辑术语：${term.source}`;
+}
+
 watch(
   () => props.activeTab,
   (tab) => {
@@ -75,6 +84,7 @@ watch(
     if (!sourceText) {
       termResults.value = [];
       termErrorMessage.value = "";
+      termActionMessage.value = "";
       return;
     }
 
@@ -84,6 +94,7 @@ watch(
       if (requestId === termRequestId) {
         termResults.value = results;
         termErrorMessage.value = "";
+        termActionMessage.value = "";
       }
     } catch (error) {
       if (requestId === termRequestId) {
@@ -145,7 +156,17 @@ watch(
 
     <section v-if="activeTab === 'terms'" class="tab-panel">
       <p v-if="termErrorMessage" class="error-message">{{ termErrorMessage }}</p>
-      <TermHint v-else :terms="termResults" />
+      <template v-else>
+        <TermHint
+          :terms="termResults"
+          :source-text="entry?.source ?? ''"
+          @request-add-term="handleRequestAddTerm"
+          @request-edit-term="handleRequestEditTerm"
+        />
+        <p v-if="termActionMessage" class="term-action-message">
+          {{ termActionMessage }}
+        </p>
+      </template>
     </section>
 
     <section v-else-if="activeTab === 'comments'" class="tab-panel">
@@ -219,6 +240,7 @@ watch(
 
 .empty-text,
 .context-text,
+.term-action-message,
 .error-message {
   margin: 0;
   line-height: 1.7;
@@ -230,6 +252,11 @@ watch(
 
 .error-message {
   color: #b42318;
+}
+
+.term-action-message {
+  margin-top: 12px;
+  color: #2f6f73;
 }
 
 .context-panel {
