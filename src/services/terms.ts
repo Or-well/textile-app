@@ -53,12 +53,28 @@ function getProjectRoot(): ProjectDirectoryHandle {
   return currentProjectRoot;
 }
 
+function includesTermText(text: string, termText: string, caseSensitive?: boolean): boolean {
+  if (!termText) {
+    return false;
+  }
+
+  if (caseSensitive) {
+    return text.includes(termText);
+  }
+
+  return text.toLowerCase().includes(termText.toLowerCase());
+}
+
 function findMatchedText(term: Term, sourceText: string): string | undefined {
-  if (sourceText.includes(term.source)) {
+  const isCaseSensitive = term.case_sensitive === true;
+
+  if (includesTermText(sourceText, term.source, isCaseSensitive)) {
     return term.source;
   }
 
-  return term.variants.find((variant) => sourceText.includes(variant));
+  return term.variants.find((variant) =>
+    includesTermText(sourceText, variant, isCaseSensitive),
+  );
 }
 
 function normalizeVariants(variants: string[]): string[] {
@@ -298,6 +314,28 @@ export async function matchTerms(sourceText: string): Promise<Term[]> {
       (a, b) =>
         b.source.length - a.source.length || a.source.localeCompare(b.source),
     );
+}
+
+export async function searchTerms(keyword: string): Promise<Term[]> {
+  const query = keyword.trim().toLowerCase();
+
+  if (!query) {
+    return [];
+  }
+
+  const terms = await loadTerms();
+
+  return terms.filter((term) => {
+    const values = [
+      term.source,
+      term.target,
+      term.part_of_speech,
+      term.note,
+      ...term.variants,
+    ].map((value) => value.toLowerCase());
+
+    return values.some((value) => value.includes(query));
+  });
 }
 
 export async function checkTermUsage(

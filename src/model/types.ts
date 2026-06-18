@@ -86,7 +86,7 @@ export interface Entry {
   speaker: string;
   source: string;
   target: string;
-  context: string;
+  context?: string;
   status: EntryStatus;
   disputed?: boolean;
   dispute_reason?: string;

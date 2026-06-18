@@ -75,7 +75,7 @@ const hasWorkflowActions = computed(
 );
 const permissionMessage = computed(() =>
   props.entry && !canSaveEntry.value && !hasWorkflowActions.value
-    ? "当前用户没有此操作权限"
+    ? "当前用户没有此操作权限。"
     : "",
 );
 
@@ -206,16 +206,7 @@ async function copyEntryId() {
     </header>
 
     <section class="source-panel">
-      <div class="source-toolbar">
-        <span class="field-label">原文</span>
-        <button
-          class="text-button"
-          type="button"
-          @click="emit('openContext')"
-        >
-          {{ entry.context ? "查看上下文" : "添加上下文" }}
-        </button>
-      </div>
+      <span class="field-label">原文</span>
       <p>{{ entry.source }}</p>
     </section>
 
@@ -386,22 +377,26 @@ h1 {
   line-height: 1.25;
 }
 
-.status-badge {
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-badge,
+.dispute-badge {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
   padding: 0 9px;
   border-radius: 999px;
-  background: #eef2f7;
-  color: #374151;
   font-size: 13px;
   font-weight: 700;
 }
 
-.status-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.status-badge {
+  background: #eef2f7;
+  color: #374151;
 }
 
 .status-badge.translated {
@@ -416,15 +411,8 @@ h1 {
 }
 
 .dispute-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 9px;
-  border-radius: 999px;
   background: #fff3dc;
   color: #92400e;
-  font-size: 13px;
-  font-weight: 700;
 }
 
 .entry-nav,
@@ -443,13 +431,6 @@ h1 {
 .target-panel {
   display: grid;
   gap: 8px;
-}
-
-.source-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .source-panel {
@@ -479,6 +460,7 @@ textarea {
   border: 1px solid #c8d0dc;
   border-radius: 8px;
   color: #1f2937;
+  font: inherit;
   line-height: 1.7;
 }
 
@@ -521,6 +503,7 @@ dd {
   min-height: 38px;
   padding: 0 14px;
   border-radius: 6px;
+  font: inherit;
   cursor: pointer;
 }
 

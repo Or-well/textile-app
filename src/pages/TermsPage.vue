@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import TermEditDialog from "../components/TermEditDialog.vue";
 import type { Term } from "../model/types";
-import { canManageTerm, getCurrentUser } from "../services/permissions";
+import {
+  canCreateTerm,
+  canDeleteTerm,
+  canExportTerm,
+  canImportTerm,
+  canUpdateTerm,
+  getCurrentUser,
+} from "../services/permissions";
 import {
   addTerm,
   deleteTerm,
@@ -12,35 +20,69 @@ import {
   type TermInput,
 } from "../services/terms";
 
-interface TermDraft {
-  source: string;
-  target: string;
-  part_of_speech: string;
-  note: string;
-  variantsText: string;
-}
+type SortMode = "alphabetical" | "created_at" | "updated_at";
+
+const partOfSpeechOptions = [
+  "全部词性",
+  "名词",
+  "动词",
+  "形容词",
+  "副词",
+  "人名",
+  "地名",
+  "组织名",
+  "专有名词",
+  "短语",
+  "其他",
+];
+
+const sortOptions: Array<{ value: SortMode; label: string }> = [
+  { value: "alphabetical", label: "按字母顺序" },
+  { value: "created_at", label: "按创建时间" },
+  { value: "updated_at", label: "按更新时间" },
+];
 
 const terms = ref<Term[]>([]);
 const searchText = ref("");
-const editingTermId = ref("");
-const draft = ref<TermDraft>(createEmptyDraft());
+const partOfSpeechFilter = ref("全部词性");
+const sortMode = ref<SortMode>("alphabetical");
+const editingTerm = ref<Term>();
+const isDialogOpen = ref(false);
 const isLoading = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
 const message = ref("");
+const fileInput = ref<HTMLInputElement | null>(null);
 const currentUser = ref(getCurrentUser());
 
-const canManageTerms = computed(() => canManageTerm(currentUser.value));
-const isEditing = computed(() => Boolean(editingTermId.value));
+const canCreate = computed(() => canCreateTerm(currentUser.value));
+const canUpdate = computed(() => canUpdateTerm(currentUser.value));
+const canDelete = computed(() => canDeleteTerm(currentUser.value));
+const canImport = computed(() => canImportTerm(currentUser.value));
+const canExport = computed(() => canExportTerm(currentUser.value));
+const hasManagementActions = computed(
+  () =>
+    canCreate.value ||
+    canUpdate.value ||
+    canDelete.value ||
+    canImport.value ||
+    canExport.value,
+);
 
 const filteredTerms = computed(() => {
   const keyword = searchText.value.trim().toLowerCase();
+  const filtered = terms.value.filter((term) => {
+    if (
+      partOfSpeechFilter.value !== "全部词性" &&
+      term.part_of_speech !== partOfSpeechFilter.value
+    ) {
+      return false;
+    }
 
-  if (!keyword) {
-    return terms.value;
-  }
+    if (!keyword) {
+      return true;
+    }
 
-  return terms.value.filter((term) => {
     const values = [
       term.source,
       term.target,
@@ -51,37 +93,26 @@ const filteredTerms = computed(() => {
 
     return values.some((value) => value.includes(keyword));
   });
+
+  return [...filtered].sort((a, b) => {
+    if (sortMode.value === "created_at") {
+      return getTimeValue(b.created_at) - getTimeValue(a.created_at);
+    }
+
+    if (sortMode.value === "updated_at") {
+      return getTimeValue(b.updated_at) - getTimeValue(a.updated_at);
+    }
+
+    return (
+      a.source.localeCompare(b.source) ||
+      a.target.localeCompare(b.target) ||
+      a.id.localeCompare(b.id)
+    );
+  });
 });
 
-function createEmptyDraft(): TermDraft {
-  return {
-    source: "",
-    target: "",
-    part_of_speech: "",
-    note: "",
-    variantsText: "",
-  };
-}
-
-function splitVariants(text: string): string[] {
-  return Array.from(
-    new Set(
-      text
-        .split(/\r?\n|,/)
-        .map((variant) => variant.trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
-function createInputFromDraft(): TermInput {
-  return {
-    source: draft.value.source,
-    target: draft.value.target,
-    part_of_speech: draft.value.part_of_speech,
-    note: draft.value.note,
-    variants: splitVariants(draft.value.variantsText),
-  };
+function getTimeValue(value: string | undefined): number {
+  return value ? Date.parse(value) || 0 : 0;
 }
 
 function getCurrentUserId(): string {
@@ -115,26 +146,40 @@ async function loadTermRows() {
   }
 }
 
-function resetDraft() {
-  editingTermId.value = "";
-  draft.value = createEmptyDraft();
-}
+function openCreateDialog() {
+  if (!canCreate.value) {
+    return;
+  }
 
-function startEdit(term: Term) {
-  editingTermId.value = term.id;
-  draft.value = {
-    source: term.source,
-    target: term.target,
-    part_of_speech: term.part_of_speech,
-    note: term.note,
-    variantsText: term.variants.join("\n"),
-  };
+  editingTerm.value = undefined;
   message.value = "";
   errorMessage.value = "";
+  isDialogOpen.value = true;
 }
 
-async function handleSaveTerm() {
-  if (!canManageTerms.value) {
+function openEditDialog(term: Term) {
+  if (!canUpdate.value) {
+    return;
+  }
+
+  editingTerm.value = term;
+  message.value = "";
+  errorMessage.value = "";
+  isDialogOpen.value = true;
+}
+
+function closeDialog() {
+  if (!isSaving.value) {
+    isDialogOpen.value = false;
+  }
+}
+
+async function handleSaveTerm(input: TermInput) {
+  if (editingTerm.value && !canUpdate.value) {
+    return;
+  }
+
+  if (!editingTerm.value && !canCreate.value) {
     return;
   }
 
@@ -143,15 +188,16 @@ async function handleSaveTerm() {
   message.value = "";
 
   try {
-    if (isEditing.value) {
-      await updateTerm(editingTermId.value, createInputFromDraft());
+    if (editingTerm.value) {
+      await updateTerm(editingTerm.value.id, input);
       message.value = "术语已更新。";
     } else {
-      await addTerm(createInputFromDraft(), getCurrentUserId());
-      message.value = "术语已新增。";
+      await addTerm(input, getCurrentUserId());
+      message.value = "术语已创建。";
     }
 
-    resetDraft();
+    isDialogOpen.value = false;
+    editingTerm.value = undefined;
     terms.value = await loadTerms();
   } catch (error) {
     errorMessage.value =
@@ -162,7 +208,7 @@ async function handleSaveTerm() {
 }
 
 async function handleDeleteTerm(term: Term) {
-  if (!canManageTerms.value) {
+  if (!canDelete.value) {
     return;
   }
 
@@ -177,11 +223,6 @@ async function handleDeleteTerm(term: Term) {
   try {
     await deleteTerm(term.id);
     terms.value = await loadTerms();
-
-    if (editingTermId.value === term.id) {
-      resetDraft();
-    }
-
     message.value = "术语已删除。";
   } catch (error) {
     errorMessage.value =
@@ -191,8 +232,16 @@ async function handleDeleteTerm(term: Term) {
   }
 }
 
+function triggerImport() {
+  if (!canImport.value || isSaving.value) {
+    return;
+  }
+
+  fileInput.value?.click();
+}
+
 async function handleImportTerms(event: Event) {
-  if (!canManageTerms.value) {
+  if (!canImport.value) {
     return;
   }
 
@@ -222,6 +271,10 @@ async function handleImportTerms(event: Event) {
 }
 
 async function handleExportTerms() {
+  if (!canExport.value) {
+    return;
+  }
+
   errorMessage.value = "";
   message.value = "";
 
@@ -252,87 +305,69 @@ onMounted(loadTermRows);
     </header>
 
     <section class="toolbar">
-      <label>
-        <span>搜索</span>
-        <input
-          v-model="searchText"
-          type="search"
-          placeholder="搜索原文、译名、词性、备注或变体"
-        />
-      </label>
+      <select v-model="partOfSpeechFilter" aria-label="词性筛选">
+        <option v-for="option in partOfSpeechOptions" :key="option" :value="option">
+          {{ option }}
+        </option>
+      </select>
 
-      <div class="toolbar-actions">
-        <button type="button" :disabled="isLoading" @click="handleExportTerms">
+      <select v-model="sortMode" aria-label="排序">
+        <option v-for="option in sortOptions" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
+
+      <input
+        v-model="searchText"
+        class="search-input"
+        type="search"
+        placeholder="输入术语或翻译进行搜索"
+      />
+
+      <div v-if="hasManagementActions" class="toolbar-actions">
+        <button
+          v-if="canImport"
+          class="secondary-button"
+          type="button"
+          :disabled="isSaving"
+          @click="triggerImport"
+        >
+          导入术语
+        </button>
+        <input
+          v-if="canImport"
+          ref="fileInput"
+          class="hidden-file-input"
+          type="file"
+          accept=".jsonl,.json,application/json"
+          @change="handleImportTerms"
+        />
+        <button
+          v-if="canExport"
+          class="secondary-button"
+          type="button"
+          :disabled="isLoading"
+          @click="handleExportTerms"
+        >
           导出术语
         </button>
-        <label v-if="canManageTerms" class="import-button">
-          <span>导入术语</span>
-          <input
-            type="file"
-            accept=".jsonl,.json,application/json"
-            :disabled="isSaving"
-            @change="handleImportTerms"
-          />
-        </label>
+        <button
+          v-if="canCreate"
+          class="primary-button"
+          type="button"
+          :disabled="isSaving"
+          @click="openCreateDialog"
+        >
+          创建术语
+        </button>
       </div>
     </section>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="message" class="message">{{ message }}</p>
 
-    <section v-if="canManageTerms" class="term-form-panel">
-      <h2>{{ isEditing ? "编辑术语" : "新增术语" }}</h2>
-
-      <div class="term-form-grid">
-        <label>
-          <span>原文</span>
-          <input v-model="draft.source" type="text" placeholder="例如 魔術回路" />
-        </label>
-        <label>
-          <span>推荐译名</span>
-          <input v-model="draft.target" type="text" placeholder="例如 魔术回路" />
-        </label>
-        <label>
-          <span>词性</span>
-          <input v-model="draft.part_of_speech" type="text" placeholder="名词 / 人名 / 地名" />
-        </label>
-        <label>
-          <span>变体</span>
-          <textarea
-            v-model="draft.variantsText"
-            rows="4"
-            placeholder="每行一个变体，也可用逗号分隔"
-          />
-        </label>
-      </div>
-
-      <label>
-        <span>备注</span>
-        <textarea v-model="draft.note" rows="3" placeholder="补充使用范围、禁用译名或注意事项" />
-      </label>
-
-      <div class="form-actions">
-        <button
-          class="primary-button"
-          type="button"
-          :disabled="isSaving"
-          @click="handleSaveTerm"
-        >
-          {{ isSaving ? "保存中..." : isEditing ? "保存修改" : "新增术语" }}
-        </button>
-        <button
-          v-if="isEditing"
-          type="button"
-          :disabled="isSaving"
-          @click="resetDraft"
-        >
-          取消编辑
-        </button>
-      </div>
-    </section>
-
-    <p v-else class="readonly-note">
-      当前用户只能查看术语。新增、编辑、删除和导入需要术语管理权限。
+    <p v-if="!hasManagementActions" class="readonly-note">
+      当前用户只能查看术语。
     </p>
 
     <p v-if="isLoading" class="empty-state">正在加载术语...</p>
@@ -345,7 +380,7 @@ onMounted(loadTermRows);
             <strong>{{ term.source }}</strong>
           </div>
           <div>
-            <span class="field-label">推荐译名</span>
+            <span class="field-label">译文</span>
             <strong class="target-text">{{ term.target }}</strong>
           </div>
         </div>
@@ -363,6 +398,10 @@ onMounted(loadTermRows);
             <dt>更新时间</dt>
             <dd>{{ term.updated_at || "暂无记录" }}</dd>
           </div>
+          <div>
+            <dt>匹配规则</dt>
+            <dd>{{ term.case_sensitive ? "大小写敏感" : "忽略大小写" }}</dd>
+          </div>
         </dl>
 
         <p v-if="term.note" class="term-note">{{ term.note }}</p>
@@ -373,11 +412,18 @@ onMounted(loadTermRows);
           </span>
         </div>
 
-        <div v-if="canManageTerms" class="card-actions">
-          <button type="button" :disabled="isSaving" @click="startEdit(term)">
+        <div v-if="canUpdate || canDelete" class="card-actions">
+          <button
+            v-if="canUpdate"
+            class="secondary-button"
+            type="button"
+            :disabled="isSaving"
+            @click="openEditDialog(term)"
+          >
             编辑
           </button>
           <button
+            v-if="canDelete"
             class="danger-button"
             type="button"
             :disabled="isSaving"
@@ -392,13 +438,22 @@ onMounted(loadTermRows);
     <section v-else-if="!errorMessage" class="empty-state">
       <p>{{ terms.length === 0 ? "暂无术语。" : "没有找到匹配的术语。" }}</p>
       <button
-        v-if="canManageTerms && terms.length === 0"
+        v-if="canCreate && terms.length === 0"
+        class="primary-button"
         type="button"
-        @click="resetDraft"
+        @click="openCreateDialog"
       >
-        新增第一条术语
+        创建第一条术语
       </button>
     </section>
+
+    <TermEditDialog
+      v-if="isDialogOpen"
+      :term="editingTerm"
+      :is-saving="isSaving"
+      @cancel="closeDialog"
+      @save="handleSaveTerm"
+    />
   </section>
 </template>
 
@@ -419,14 +474,12 @@ onMounted(loadTermRows);
 .summary,
 .field-label,
 dt,
-label span,
 .readonly-note {
   color: #5b6472;
 }
 
 .eyebrow,
 h1,
-h2,
 .summary,
 p,
 dl,
@@ -443,11 +496,6 @@ h1 {
   color: #111827;
   font-size: 28px;
   line-height: 1.2;
-}
-
-h2 {
-  color: #111827;
-  font-size: 18px;
 }
 
 .summary,
@@ -467,10 +515,9 @@ h2 {
 }
 
 .toolbar,
-.term-form-panel,
+.term-card,
 .empty-state,
 .readonly-note {
-  padding: 12px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
@@ -478,32 +525,26 @@ h2 {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
-  gap: 12px;
-  align-items: end;
+  grid-template-columns: 150px 150px minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
 }
 
 .toolbar-actions,
-.form-actions,
 .card-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-label {
-  display: grid;
-  gap: 6px;
+.toolbar-actions {
+  justify-content: flex-end;
 }
 
-label span,
-.field-label,
-dt {
-  font-size: 13px;
-}
-
-input,
-textarea {
+select,
+input {
+  width: 100%;
   min-height: 38px;
   padding: 0 10px;
   border: 1px solid #c8d0dc;
@@ -511,68 +552,51 @@ textarea {
   background: #ffffff;
   color: #1f2937;
   font: inherit;
+  font-size: 14px;
 }
 
-textarea {
-  min-height: 86px;
-  padding-top: 8px;
-  resize: vertical;
-  line-height: 1.6;
+select:focus,
+input:focus {
+  outline: none;
+  border-color: #2f6f73;
+  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.14);
 }
 
-button,
-.import-button {
+.hidden-file-input {
+  display: none;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
   min-height: 38px;
   padding: 0 12px;
-  border: 1px solid #c8d0dc;
   border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
   font: inherit;
   cursor: pointer;
 }
 
 .primary-button {
-  border-color: #2f6f73;
+  border: 1px solid #2f6f73;
   background: #2f6f73;
   color: #ffffff;
 }
 
+.secondary-button {
+  border: 1px solid #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
+}
+
 .danger-button {
-  border-color: #f0b8aa;
+  border: 1px solid #f0b8aa;
+  background: #ffffff;
   color: #b42318;
 }
 
-button:disabled,
-.import-button:has(input:disabled) {
-  cursor: wait;
-  opacity: 0.68;
-}
-
-.import-button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  overflow: hidden;
-}
-
-.import-button input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.term-form-panel {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-}
-
-.term-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
 }
 
 .error-message,
@@ -589,10 +613,15 @@ button:disabled,
   color: #166534;
 }
 
+.empty-state,
+.readonly-note {
+  padding: 16px;
+  color: #4b5563;
+}
+
 .empty-state {
   display: grid;
   gap: 10px;
-  color: #4b5563;
 }
 
 .empty-state button {
@@ -608,9 +637,6 @@ button:disabled,
   display: grid;
   gap: 12px;
   padding: 16px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
 }
 
 .term-main {
@@ -626,6 +652,11 @@ button:disabled,
   min-width: 0;
 }
 
+.field-label,
+dt {
+  font-size: 13px;
+}
+
 strong,
 dd {
   overflow-wrap: anywhere;
@@ -638,7 +669,7 @@ dd {
 
 .term-meta {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -665,17 +696,39 @@ dd {
   font-size: 13px;
 }
 
+@media (max-width: 980px) {
+  .toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .search-input,
+  .toolbar-actions {
+    grid-column: 1 / -1;
+  }
+
+  .toolbar-actions {
+    justify-content: flex-start;
+  }
+}
+
 @media (max-width: 760px) {
   .page-header,
-  .toolbar,
   .term-main,
-  .term-meta,
-  .term-form-grid {
+  .term-meta {
     grid-template-columns: 1fr;
   }
 
   .page-header {
     display: grid;
+  }
+
+  .toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .search-input,
+  .toolbar-actions {
+    grid-column: auto;
   }
 }
 </style>

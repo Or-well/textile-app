@@ -103,6 +103,52 @@ export async function getEntryById(entryId: string): Promise<Entry | undefined> 
   return entries.find((entry) => entry.id === entryId);
 }
 
+export async function updateEntryContext(
+  entryId: string,
+  context: string,
+  userId: string,
+): Promise<Entry> {
+  const root = getProjectRoot();
+  const fileId = getFileIdFromEntryId(entryId);
+  const entryDirectory = `entries/${fileId}`;
+  const chunkFiles = await listEntryChunkFiles(root, fileId);
+  const nextContext = context.trim();
+
+  for (const chunkFile of chunkFiles) {
+    const chunkPath = `${entryDirectory}/${chunkFile}`;
+    const entries = normalizeEntries(await readJsonl<Entry>(root, chunkPath));
+    const entryIndex = entries.findIndex((row) => row.id === entryId);
+
+    if (entryIndex < 0) {
+      continue;
+    }
+
+    const originalEntry = normalizeEntry(entries[entryIndex]);
+    const savedEntry: Entry = {
+      ...originalEntry,
+      context: nextContext,
+      updated_at: nowIso(),
+      updated_by: userId || originalEntry.updated_by,
+    };
+
+    entries[entryIndex] = savedEntry;
+
+    await writeJsonl(root, chunkPath, entries);
+
+    cachedEntries = cachedEntries.map((cachedEntry) =>
+      cachedEntry.id === savedEntry.id ? savedEntry : cachedEntry,
+    );
+
+    if (!cachedEntries.some((cachedEntry) => cachedEntry.id === savedEntry.id)) {
+      cachedEntries.push(savedEntry);
+    }
+
+    return savedEntry;
+  }
+
+  throw new Error("没有找到要更新上下文的词条。请重新打开项目后再试。");
+}
+
 export async function saveEntry(entry: Entry): Promise<Entry> {
   const root = getProjectRoot();
   const fileId = getFileIdFromEntryId(entry.id);

@@ -208,3 +208,46 @@ export function canConfigureStats(user: Member | null | undefined): boolean {
 export function canManageTerm(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.TERM_MANAGE);
 }
+
+function canUseTermPermission(
+  user: Member | null | undefined,
+  action: PermissionAction,
+): boolean {
+  return can(user, action) || canManageTerm(user);
+}
+
+export function canCreateTerm(user: Member | null | undefined): boolean {
+  return canUseTermPermission(user, PERMISSION_ACTIONS.TERM_CREATE);
+}
+
+export function canUpdateTerm(user: Member | null | undefined): boolean {
+  return canUseTermPermission(user, PERMISSION_ACTIONS.TERM_UPDATE);
+}
+
+export function canDeleteTerm(user: Member | null | undefined): boolean {
+  return canUseTermPermission(user, PERMISSION_ACTIONS.TERM_DELETE);
+}
+
+export function canImportTerm(user: Member | null | undefined): boolean {
+  return canUseTermPermission(user, PERMISSION_ACTIONS.TERM_IMPORT);
+}
+
+export function canExportTerm(user: Member | null | undefined): boolean {
+  return canUseTermPermission(user, PERMISSION_ACTIONS.TERM_EXPORT);
+}
+
+export function canViewContext(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CONTEXT_VIEW);
+}
+
+export function canCreateContext(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CONTEXT_CREATE);
+}
+
+export function canUpdateContext(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CONTEXT_UPDATE);
+}
+
+export function canDeleteContext(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CONTEXT_DELETE);
+}
