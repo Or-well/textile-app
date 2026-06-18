@@ -6,11 +6,11 @@ import type { ProjectConfig } from "../model/types";
 import type { BasicProjectStats } from "../services/stats";
 import {
   getSyncStatus,
-  submitTaskWithSync,
   syncLatestProject,
   uploadMyChanges,
   type SyncStatus,
 } from "../services/sync";
+import { getCurrentUser } from "../services/permissions";
 
 defineProps<{
   project: ProjectConfig;
@@ -28,7 +28,7 @@ const syncMessage = ref("");
 const syncErrorMessage = ref("");
 
 async function refreshSyncStatus() {
-  syncStatus.value = await getSyncStatus();
+  syncStatus.value = await getSyncStatus(getCurrentUser());
 }
 
 async function runSyncAction(action: () => Promise<{ message: string; fallbackMessage?: string }>) {
@@ -40,7 +40,7 @@ async function runSyncAction(action: () => Promise<{ message: string; fallbackMe
     const result = await action();
 
     syncMessage.value = result.fallbackMessage
-      ? `${result.message}${result.fallbackMessage}`
+      ? `${result.message} ${result.fallbackMessage}`
       : result.message;
     await refreshSyncStatus();
   } catch (error) {
@@ -51,6 +51,22 @@ async function runSyncAction(action: () => Promise<{ message: string; fallbackMe
   } finally {
     isSyncBusy.value = false;
   }
+}
+
+function handleExportFallback() {
+  syncMessage.value = "请到导入 / 导出页导出修改包，交给负责人合并。";
+  syncErrorMessage.value = "";
+}
+
+function handleViewConflict() {
+  if (syncStatus.value?.state === "conflict") {
+    syncMessage.value = "请在导入 / 导出页处理内容冲突。";
+    syncErrorMessage.value = "";
+    return;
+  }
+
+  syncMessage.value = "";
+  syncErrorMessage.value = "当前没有需要处理的内容冲突。";
 }
 
 onMounted(() => {
@@ -86,9 +102,10 @@ onMounted(() => {
         <SyncStatusPanel
           :status="syncStatus"
           :is-busy="isSyncBusy"
-          @sync="runSyncAction(syncLatestProject)"
-          @upload="runSyncAction(uploadMyChanges)"
-          @submit-task="runSyncAction(() => submitTaskWithSync('current_task'))"
+          @sync="runSyncAction(() => syncLatestProject(getCurrentUser()))"
+          @upload="runSyncAction(() => uploadMyChanges(getCurrentUser()))"
+          @export-change-package="handleExportFallback"
+          @view-conflict="handleViewConflict"
         />
         <p v-if="syncMessage" class="sync-message">{{ syncMessage }}</p>
         <p v-if="syncErrorMessage" class="sync-error">{{ syncErrorMessage }}</p>

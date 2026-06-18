@@ -233,6 +233,18 @@ export function canExportRelease(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.RELEASE_EXPORT);
 }
 
+export function canViewSync(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.SYNC_VIEW);
+}
+
+export function canUseProjectSync(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.SYNC_USE);
+}
+
+export function canConfigureSync(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.SYNC_CONFIGURE);
+}
+
 export function canConfigureStats(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.PROJECT_MANAGE);
 }

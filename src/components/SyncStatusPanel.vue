@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { SyncStatus } from "../services/sync";
 
-defineProps<{
+const props = defineProps<{
   status?: SyncStatus;
   isBusy?: boolean;
 }>();
@@ -9,8 +10,17 @@ defineProps<{
 const emit = defineEmits<{
   sync: [];
   upload: [];
-  submitTask: [];
+  exportChangePackage: [];
+  viewConflict: [];
 }>();
+
+const lastSyncText = computed(() => {
+  if (!props.status?.lastSyncAt) {
+    return "暂无记录";
+  }
+
+  return new Date(props.status.lastSyncAt).toLocaleString();
+});
 </script>
 
 <template>
@@ -20,9 +30,32 @@ const emit = defineEmits<{
     <template v-if="status">
       <p class="sync-title">{{ status.title }}</p>
       <p class="sync-message">{{ status.message }}</p>
-      <p v-if="status.fallbackMessage" class="fallback-message">
+
+      <p v-if="status.state === 'disabled'" class="fallback-message">
+        当前环境暂不支持自动同步。你可以导出修改包交给负责人合并。
+      </p>
+      <p v-else-if="status.fallbackMessage" class="fallback-message">
         {{ status.fallbackMessage }}
       </p>
+
+      <dl class="sync-details">
+        <div>
+          <dt>最近同步时间</dt>
+          <dd>{{ lastSyncText }}</dd>
+        </div>
+        <div>
+          <dt>本地修改</dt>
+          <dd>{{ status.hasLocalChanges ? "有本地修改" : "暂无本地修改" }}</dd>
+        </div>
+        <div>
+          <dt>项目新内容</dt>
+          <dd>{{ status.hasRemoteChanges ? "有新内容" : "暂无新内容" }}</dd>
+        </div>
+        <div v-if="status.failureMessage">
+          <dt>失败原因</dt>
+          <dd>{{ status.failureMessage }}</dd>
+        </div>
+      </dl>
 
       <div class="sync-actions">
         <button
@@ -39,10 +72,20 @@ const emit = defineEmits<{
         >
           上传修改
         </button>
-        <button type="button" :disabled="isBusy" @click="emit('submitTask')">
-          提交任务
+        <button
+          type="button"
+          :disabled="isBusy || !status.canExportChangePackage"
+          @click="emit('exportChangePackage')"
+        >
+          导出修改包
         </button>
-        <button type="button" disabled>导出修改包</button>
+        <button
+          type="button"
+          :disabled="isBusy || !status.canResolveConflict"
+          @click="emit('viewConflict')"
+        >
+          查看冲突
+        </button>
       </div>
     </template>
 
@@ -61,7 +104,9 @@ const emit = defineEmits<{
 }
 
 h2,
-p {
+p,
+dl,
+dd {
   margin: 0;
 }
 
@@ -81,6 +126,32 @@ h2 {
 .fallback-message {
   color: #b45309;
   line-height: 1.6;
+}
+
+.sync-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.sync-details div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+dt {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+dd {
+  margin-top: 4px;
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .sync-actions {

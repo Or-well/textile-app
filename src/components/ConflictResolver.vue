@@ -73,12 +73,21 @@ function handleApply() {
     })),
   );
 }
+
+function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
+  const labels: Record<ChangeConflict["reasons"][number], string> = {
+    target: "译文",
+    status: "状态",
+  };
+
+  return reasons.map((reason) => labels[reason]).join("、");
+}
 </script>
 
 <template>
   <section v-if="conflicts.length > 0" class="conflict-resolver">
     <div class="header-row">
-      <h2>处理冲突</h2>
+      <h2>发现内容冲突</h2>
       <button
         type="button"
         :disabled="isApplying || !canApply"
@@ -99,17 +108,17 @@ function handleApply() {
     >
       <div class="conflict-title">
         <strong>{{ conflict.entryId }}</strong>
-        <span>{{ conflict.reasons.join("、") }} 不一致</span>
+        <span>{{ formatConflictReasons(conflict.reasons) }} 不一致</span>
       </div>
 
       <div class="compare-grid">
         <section>
-          <h3>主项目</h3>
+          <h3>主项目版本</h3>
           <p>{{ conflict.mainEntry.target || "未填写译文" }}</p>
           <small>状态：{{ conflict.mainEntry.status }}</small>
         </section>
         <section>
-          <h3>修改包</h3>
+          <h3>我的修改</h3>
           <p>{{ conflict.packageEntry.target || "未填写译文" }}</p>
           <small>状态：{{ conflict.packageEntry.status }}</small>
         </section>
@@ -127,7 +136,7 @@ function handleApply() {
             @change="updateAction(conflict.entryId, draft.action)"
           >
             <option value="keep_main">保留主项目</option>
-            <option value="use_package">使用修改包</option>
+            <option value="use_package">使用我的修改</option>
             <option value="manual_merge">手动合并</option>
             <option value="skip">跳过</option>
           </select>

@@ -28,6 +28,7 @@ import {
   getCurrentUser,
 } from "../services/permissions";
 import { openProject } from "../services/project";
+import { getSyncStatus, type SyncStatus } from "../services/sync";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
 
 const props = defineProps<{
@@ -40,6 +41,7 @@ const projectName = ref("");
 const tasks = ref<Task[]>([]);
 const selectedTaskId = ref("");
 const exportMode = ref<ExportChangePackageMode>("user_changes");
+const syncStatus = ref<SyncStatus>();
 const isLoading = ref(false);
 const isExporting = ref(false);
 const isExportingRelease = ref(false);
@@ -72,6 +74,15 @@ const canExportSelectedMode = computed(() =>
   exportMode.value === "maintenance_changes"
     ? canExportMaintenance.value
     : canExportChanges.value,
+);
+const showSyncFallback = computed(() =>
+  Boolean(
+    syncStatus.value &&
+      (syncStatus.value.state === "disabled" ||
+        syncStatus.value.state === "error" ||
+        syncStatus.value.state === "conflict" ||
+        !syncStatus.value.canUpload),
+  ),
 );
 const emptyStateText = computed(() =>
   projectName.value
@@ -148,6 +159,10 @@ function downloadBlob(blob: Blob, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
+async function refreshSyncStatus() {
+  syncStatus.value = await getSyncStatus(currentUser.value);
+}
+
 async function loadImportExportState() {
   isLoading.value = true;
   errorMessage.value = "";
@@ -155,8 +170,10 @@ async function loadImportExportState() {
   changePackage.value = undefined;
   packagePreview.value = undefined;
   conflicts.value = [];
+  syncStatus.value = undefined;
 
   try {
+    await refreshSyncStatus();
     tasks.value = await loadTasks();
     selectedTaskId.value = tasks.value[0]?.id ?? "";
   } catch (error) {
@@ -202,6 +219,7 @@ async function handleOpenProject() {
     changePackage.value = undefined;
     packagePreview.value = undefined;
     conflicts.value = [];
+    syncStatus.value = undefined;
 
     if (error instanceof DOMException && error.name === "AbortError") {
       errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
@@ -422,6 +440,16 @@ watch(
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
       <p v-if="message" class="message">{{ message }}</p>
 
+      <section v-if="projectName && showSyncFallback" class="sync-fallback-section">
+        <h2>同步失败兜底</h2>
+        <p class="section-note">
+          同步失败时，你可以先导出修改包。
+        </p>
+        <p v-if="syncStatus" class="section-note">
+          当前同步状态：{{ syncStatus.title }}
+        </p>
+      </section>
+
       <div v-if="projectName" class="form-grid">
         <div class="current-user-field">
           <span>当前用户</span>
@@ -636,6 +664,7 @@ button:disabled {
 }
 
 .form-grid,
+.sync-fallback-section,
 .import-section,
 .release-section {
   display: grid;
@@ -643,6 +672,7 @@ button:disabled {
   margin-top: 24px;
 }
 
+.sync-fallback-section,
 .import-section,
 .release-section {
   padding-top: 24px;

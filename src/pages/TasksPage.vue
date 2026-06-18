@@ -2,8 +2,17 @@
 import { computed, ref, watch } from "vue";
 import TaskPanel from "../components/TaskPanel.vue";
 import type { Member, ProjectConfig, Task } from "../model/types";
-import { getCurrentUser } from "../services/permissions";
+import {
+  canExportChangePackage,
+  getCurrentUser,
+} from "../services/permissions";
 import { openProject } from "../services/project";
+import {
+  getSyncFallbackAction,
+  getSyncStatus,
+  submitTaskWithSync,
+  type SyncStatus,
+} from "../services/sync";
 import {
   getTaskProgress,
   getTasksByUser,
@@ -23,6 +32,7 @@ const allTasks = ref<Task[]>([]);
 const myTasks = ref<Task[]>([]);
 const selectedTask = ref<Task>();
 const selectedProgress = ref<TaskProgress>();
+const syncStatus = ref<SyncStatus>();
 const projectName = ref("");
 const isLoading = ref(false);
 const isSubmitting = ref(false);
@@ -31,9 +41,38 @@ const savedMessage = ref("");
 
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const hasProjectContext = computed(() => Boolean(props.project));
+const canExportFallback = computed(() =>
+  canExportChangePackage(currentUser.value),
+);
+const canSubmitWithSync = computed(() =>
+  Boolean(
+    syncStatus.value &&
+      syncStatus.value.state !== "disabled" &&
+      syncStatus.value.state !== "error" &&
+      (syncStatus.value.canSync || syncStatus.value.canUpload),
+  ),
+);
+const submitActionLabel = computed(() =>
+  canSubmitWithSync.value ? "同步提交" : "导出修改包",
+);
+const submitActionHint = computed(() => {
+  if (canSubmitWithSync.value) {
+    return "提交任务后会尝试自动同步修改。";
+  }
+
+  if (!canExportFallback.value) {
+    return "当前成员不能自动同步，也没有导出修改包的权限。";
+  }
+
+  return getSyncFallbackAction().message;
+});
 const emptyStateText = computed(() =>
   projectName.value ? "当前项目暂无任务。" : "请打开项目文件夹，查看任务。",
 );
+
+async function refreshSyncStatus() {
+  syncStatus.value = await getSyncStatus(currentUser.value);
+}
 
 async function refreshMyTasks() {
   myTasks.value = currentUser.value?.id
@@ -56,6 +95,7 @@ async function loadTaskState() {
 
   try {
     allTasks.value = await loadTasks();
+    await refreshSyncStatus();
     await refreshMyTasks();
 
     if (myTasks.value[0]) {
@@ -126,7 +166,19 @@ async function handleSubmitTask(taskId: string) {
     );
     await refreshMyTasks();
     await selectTask(submittedTask);
-    savedMessage.value = "任务已提交。";
+
+    if (canSubmitWithSync.value) {
+      const syncResult = await submitTaskWithSync(taskId, currentUser.value);
+      savedMessage.value = syncResult.ok
+        ? syncResult.message
+        : `${syncResult.message} ${syncResult.fallbackMessage ?? ""}`.trim();
+      await refreshSyncStatus();
+      return;
+    }
+
+    savedMessage.value = canExportFallback.value
+      ? "任务已提交。请导出修改包交给负责人合并。"
+      : "任务已提交，但当前成员不能导出修改包，请联系负责人处理。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "任务提交失败。请稍后再试。";
@@ -205,12 +257,20 @@ watch(
         </section>
       </div>
 
-      <TaskPanel
-        :task="selectedTask"
-        :progress="selectedProgress"
-        :is-submitting="isSubmitting"
-        @submit-task="handleSubmitTask"
-      />
+      <div class="task-side">
+        <TaskPanel
+          :task="selectedTask"
+          :progress="selectedProgress"
+          :is-submitting="isSubmitting"
+          @submit-task="handleSubmitTask"
+        />
+
+        <aside class="submit-mode-card">
+          <span>当前提交方式</span>
+          <strong>{{ submitActionLabel }}</strong>
+          <p>{{ submitActionHint }}</p>
+        </aside>
+      </div>
     </section>
 
     <p v-else-if="!isLoading && !errorMessage" class="empty-state">
@@ -310,6 +370,38 @@ h2 {
 .task-lists {
   display: grid;
   gap: 22px;
+}
+
+.task-side {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.submit-mode-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.submit-mode-card span {
+  color: #5b6472;
+  font-size: 14px;
+}
+
+.submit-mode-card strong {
+  color: #111827;
+  font-size: 18px;
+}
+
+.submit-mode-card p {
+  margin: 0;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .user-field {
