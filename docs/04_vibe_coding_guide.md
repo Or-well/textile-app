@@ -859,6 +859,40 @@ statistics remain correct
 
 Do not claim a feature is complete if it has not been tested or cannot be tested.
 
+### Test Time And Token Saving Notes
+
+Use these shortcuts to avoid wasting time and tokens:
+
+```text
+On Windows PowerShell, prefer npm.cmd run build.
+Plain npm run build may fail because npm.ps1 is blocked by execution policy.
+npm.cmd run build already runs vue-tsc -b and Vite build.
+Use npm.cmd run build as the default final verification after code changes.
+Do not start the dev server unless browser or manual UI verification is actually needed.
+Do not run npm install unless package.json or dependencies must change.
+For small Vue / TypeScript changes, inspect only directly related files first, then build once after edits settle.
+For docs-only changes, no build is needed; say that no runtime code changed.
+Use rg / rg --files for search, and targeted Get-Content reads.
+Avoid broad full-repo dumps.
+If a build fails, fix the first TypeScript or Vite error, then rerun build.
+Avoid repeated unrelated commands.
+Keep final reports short: changed files, behavior, test command, known limits.
+```
+
+Prefer this verification ladder:
+
+```text
+Docs only
+  -> no build
+
+Type / service / Vue code changed
+  -> npm.cmd run build
+
+UI layout or browser-only behavior changed
+  -> npm.cmd run build
+  -> dev server / browser check only when visual behavior must be verified
+```
+
 ---
 
 ## 18. Git Commit Guidance

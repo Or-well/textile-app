@@ -268,6 +268,42 @@ export function canConfigureStats(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.PROJECT_MANAGE);
 }
 
+export function canViewFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_VIEW);
+}
+
+export function canCreateFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_CREATE);
+}
+
+export function canUpdateFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_UPDATE);
+}
+
+export function canImportFileTranslation(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION);
+}
+
+export function canRenameFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_RENAME);
+}
+
+export function canLockFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_LOCK);
+}
+
+export function canHideFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_HIDE);
+}
+
+export function canDeleteFile(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_DELETE);
+}
+
+export function canManageFileFolder(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.FILE_MANAGE_FOLDER);
+}
+
 export function canManageTerm(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.TERM_MANAGE);
 }

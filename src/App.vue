@@ -629,7 +629,10 @@ onBeforeUnmount(() => {
       <FilesPage
         v-else-if="route.section === 'files'"
         :project="currentProject.config"
+        :project-root="currentProject.root"
+        :current-user="currentUser"
         @open-file="handleOpenFile"
+        @project-updated="handleProjectUpdated"
       />
 
       <EntryPage

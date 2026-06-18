@@ -1,15 +1,41 @@
 import type { Entry } from "../model/types";
 import { normalizeEntries, normalizeEntry } from "../model/status";
+import { parseJsonl } from "../utils/jsonl";
 import { nowIso } from "../utils/time";
 import {
+  ensureDirectory,
   listFiles,
   readJsonl,
+  writeTextFile,
   writeJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 let cachedEntries: Entry[] = [];
+
+export interface SourceImportResult {
+  entries: Entry[];
+  supported: boolean;
+  formatLabel: string;
+}
+
+export interface TranslationImportResult {
+  matched: number;
+  skipped: number;
+}
+
+interface ImportEntryRow {
+  key?: string;
+  source?: string;
+  original?: string;
+  target?: string;
+  translation?: string;
+  context?: string;
+  speaker?: string;
+  index?: number;
+  status?: Entry["status"];
+}
 
 export function setEntriesProjectRoot(root: ProjectDirectoryHandle): void {
   currentProjectRoot = root;
@@ -32,6 +58,351 @@ function getFileIdFromEntryId(entryId: string): string {
   }
 
   return fileId;
+}
+
+function getSupportedTextFormat(fileName: string): string {
+  const extension = fileName.split(".").pop()?.toLowerCase() ?? "";
+
+  if (extension === "jsonl" || extension === "json" || extension === "csv") {
+    return extension;
+  }
+
+  if (extension === "txt" || extension === "ks") {
+    return extension;
+  }
+
+  throw new Error("当前仅支持导入 .txt、.ks、.jsonl、.json、.csv 文本文件。");
+}
+
+function padEntryIndex(index: number): string {
+  return String(index).padStart(6, "0");
+}
+
+function countTextWords(text: string): number {
+  return Array.from(text.trim()).length;
+}
+
+function normalizeHeaderName(value: string): string {
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "original" || normalized === "source" || normalized === "原文") {
+    return "source";
+  }
+
+  if (
+    normalized === "translation" ||
+    normalized === "target" ||
+    normalized === "译文"
+  ) {
+    return "target";
+  }
+
+  if (normalized === "上下文" || normalized.startsWith("context")) {
+    return "context";
+  }
+
+  if (normalized === "键值") {
+    return "key";
+  }
+
+  return normalized;
+}
+
+function isHeaderRow(columns: string[]): boolean {
+  const names = columns.map(normalizeHeaderName);
+
+  return names.includes("key") && (names.includes("source") || names.includes("target"));
+}
+
+function parseCsvLine(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const nextChar = line[index + 1];
+
+    if (char === "\"" && inQuotes && nextChar === "\"") {
+      current += "\"";
+      index += 1;
+      continue;
+    }
+
+    if (char === "\"") {
+      inQuotes = !inQuotes;
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  cells.push(current);
+
+  return cells.map((cell) => cell.trim());
+}
+
+function parseCsvRows(text: string): ImportEntryRow[] {
+  const rows = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map(parseCsvLine);
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  if (isHeaderRow(rows[0])) {
+    const headers = rows[0].map(normalizeHeaderName);
+
+    return rows.slice(1).map((columns, rowIndex) => {
+      const row: ImportEntryRow = { index: rowIndex + 1 };
+
+      headers.forEach((header, columnIndex) => {
+        const value = columns[columnIndex] ?? "";
+
+        if (header === "key") {
+          row.key = value;
+        } else if (header === "source") {
+          row.source = value;
+        } else if (header === "target") {
+          row.target = value;
+        } else if (header === "context") {
+          row.context = value;
+        } else if (header === "speaker") {
+          row.speaker = value;
+        } else if (header === "index") {
+          row.index = Number(value) || row.index;
+        }
+      });
+
+      return row;
+    });
+  }
+
+  return rows.map((columns, rowIndex) => ({
+    key: columns[0] ?? "",
+    source: columns[1] ?? "",
+    target: columns[2] ?? "",
+    context: columns[3] ?? "",
+    index: rowIndex + 1,
+  }));
+}
+
+function parseJsonRows(text: string): ImportEntryRow[] {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("JSON 文件格式有问题，无法读取。");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("JSON 文件必须是词条数组。");
+  }
+
+  return parsed.map((row, index) => {
+    if (!row || typeof row !== "object") {
+      throw new Error(`JSON 第 ${index + 1} 条不是对象，无法读取。`);
+    }
+
+    return row as ImportEntryRow;
+  });
+}
+
+function getSourceText(row: ImportEntryRow): string {
+  return row.source ?? row.original ?? "";
+}
+
+function getTargetText(row: ImportEntryRow): string {
+  return row.target ?? row.translation ?? "";
+}
+
+function normalizeSourceEntry(
+  row: ImportEntryRow,
+  fileId: string,
+  index: number,
+): Entry {
+  const key = row.key?.trim() || `line_${padEntryIndex(index)}`;
+  const source = getSourceText(row).trim();
+  const target = getTargetText(row);
+  const now = nowIso();
+
+  return normalizeEntry({
+    id: `${fileId}:${padEntryIndex(index)}`,
+    file_id: fileId,
+    index,
+    key,
+    speaker: row.speaker ?? "",
+    source,
+    target,
+    context: row.context ?? "",
+    status: row.status ?? (target.trim() ? "translated" : "untranslated"),
+    disputed: false,
+    assignee: "",
+    translated_by: "",
+    proofread_by: "",
+    reviewed_by: "",
+    word_count: countTextWords(source),
+    hidden: false,
+    locked: false,
+    updated_at: now,
+    updated_by: "",
+  });
+}
+
+function parseSourceText(fileId: string, fileName: string, text: string): SourceImportResult {
+  const format = getSupportedTextFormat(fileName);
+
+  if (format === "jsonl" || format === "json") {
+    const rows =
+      format === "jsonl" ? parseJsonl<ImportEntryRow>(text) : parseJsonRows(text);
+
+    return {
+      entries: rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1)),
+      supported: true,
+      formatLabel: format === "jsonl" ? "JSONL 词条" : "JSON 词条",
+    };
+  }
+
+  if (format === "csv") {
+    const rows = parseCsvRows(text);
+
+    return {
+      entries: rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1)),
+      supported: true,
+      formatLabel: "CSV 词条",
+    };
+  }
+
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const entries = lines.map((line, index) =>
+    normalizeSourceEntry(
+      {
+        key: `line_${padEntryIndex(index + 1)}`,
+        source: line,
+      },
+      fileId,
+      index + 1,
+    ),
+  );
+
+  return {
+    entries,
+    supported: true,
+    formatLabel: format === "ks" ? "KS 文本" : "纯文本",
+  };
+}
+
+function findReusableEntry(
+  sourceEntry: Entry,
+  existingByKey: Map<string, Entry>,
+  existingByIndex: Map<number, Entry>,
+): Entry | undefined {
+  return existingByKey.get(sourceEntry.key) ?? existingByIndex.get(sourceEntry.index);
+}
+
+function mergeSourceEntries(newEntries: Entry[], existingEntries: Entry[]): Entry[] {
+  const existingByKey = new Map(
+    existingEntries.filter((entry) => entry.key).map((entry) => [entry.key, entry]),
+  );
+  const existingByIndex = new Map(existingEntries.map((entry) => [entry.index, entry]));
+  const now = nowIso();
+
+  return newEntries.map((sourceEntry) => {
+    const existingEntry = findReusableEntry(sourceEntry, existingByKey, existingByIndex);
+
+    if (!existingEntry) {
+      return sourceEntry;
+    }
+
+    return {
+      ...sourceEntry,
+      target: existingEntry.target,
+      status: existingEntry.status,
+      disputed: existingEntry.disputed,
+      dispute_reason: existingEntry.dispute_reason,
+      dispute_resolved_at: existingEntry.dispute_resolved_at,
+      dispute_resolved_by: existingEntry.dispute_resolved_by,
+      assignee: existingEntry.assignee,
+      translated_by: existingEntry.translated_by,
+      proofread_by: existingEntry.proofread_by,
+      reviewed_by: existingEntry.reviewed_by,
+      hidden: existingEntry.hidden,
+      locked: existingEntry.locked,
+      updated_at: now,
+      updated_by: existingEntry.updated_by,
+    };
+  });
+}
+
+function parseTranslationRows(text: string, fileName: string): Array<{
+  key?: string;
+  index?: number;
+  target: string;
+}> {
+  const format = getSupportedTextFormat(fileName);
+
+  if (format === "jsonl") {
+    return parseJsonl<ImportEntryRow>(text)
+      .map((row) => ({
+        key: row.key,
+        index: row.index,
+        target: getTargetText(row),
+      }))
+      .filter((row) => Boolean(row.key || row.index));
+  }
+
+  if (format === "json") {
+    return parseJsonRows(text)
+      .map((row, index) => ({
+        key: row.key,
+        index: row.index ?? index + 1,
+        target: getTargetText(row),
+      }))
+      .filter((row) => Boolean(row.key || row.index));
+  }
+
+  if (format === "csv") {
+    return parseCsvRows(text)
+      .map((row) => ({
+        key: row.key,
+        index: row.index,
+        target: getTargetText(row),
+      }))
+      .filter((row) => Boolean(row.key || row.index));
+  }
+
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((target, index) => ({
+      index: index + 1,
+      target,
+    }));
+}
+
+async function writeFileEntries(fileId: string, entries: Entry[]): Promise<void> {
+  const root = getProjectRoot();
+
+  await ensureDirectory(root, `entries/${fileId}`);
+  await writeJsonl(root, `entries/${fileId}/chunk_0001.jsonl`, entries);
+
+  cachedEntries = [
+    ...cachedEntries.filter((entry) => entry.file_id !== fileId),
+    ...entries,
+  ];
 }
 
 async function listEntryChunkFiles(
@@ -69,6 +440,81 @@ export async function loadEntries(fileId: string): Promise<Entry[]> {
   } catch {
     throw new Error("词条数据无法读取。请确认项目文件夹和词条文件没有损坏。");
   }
+}
+
+export async function createEntriesFromSourceFile(
+  fileId: string,
+  fileName: string,
+  text: string,
+): Promise<Entry[]> {
+  const result = parseSourceText(fileId, fileName, text);
+
+  await writeFileEntries(fileId, result.entries);
+
+  return result.entries;
+}
+
+export async function updateEntriesFromSourceFile(
+  fileId: string,
+  fileName: string,
+  text: string,
+): Promise<Entry[]> {
+  const result = parseSourceText(fileId, fileName, text);
+  let existingEntries: Entry[] = [];
+
+  try {
+    existingEntries = await loadEntries(fileId);
+  } catch {
+    existingEntries = [];
+  }
+
+  const mergedEntries = mergeSourceEntries(result.entries, existingEntries);
+
+  await writeFileEntries(fileId, mergedEntries);
+
+  return mergedEntries;
+}
+
+export async function importEntryTranslations(
+  fileId: string,
+  fileName: string,
+  text: string,
+): Promise<TranslationImportResult> {
+  const entries = await loadEntries(fileId);
+  const rows = parseTranslationRows(text, fileName);
+  const entriesByKey = new Map(entries.map((entry) => [entry.key, entry]));
+  const entriesByIndex = new Map(entries.map((entry) => [entry.index, entry]));
+  let matched = 0;
+  let skipped = 0;
+  const now = nowIso();
+
+  for (const row of rows) {
+    const entry =
+      (row.key ? entriesByKey.get(row.key) : undefined) ??
+      (row.index ? entriesByIndex.get(row.index) : undefined);
+
+    if (!entry) {
+      skipped += 1;
+      continue;
+    }
+
+    entry.target = row.target;
+    entry.updated_at = now;
+
+    if (row.target.trim() && entry.status === "untranslated") {
+      entry.status = "translated";
+    }
+
+    matched += 1;
+  }
+
+  await writeFileEntries(fileId, entries);
+
+  return { matched, skipped };
+}
+
+export async function saveSourceText(path: string, text: string): Promise<void> {
+  await writeTextFile(getProjectRoot(), path, text);
 }
 
 export async function loadAllEntries(): Promise<Entry[]> {

@@ -32,6 +32,7 @@ export interface ProjectDirectoryHandle {
     name: string,
     options?: { create?: boolean },
   ): Promise<ProjectDirectoryHandle>;
+  removeEntry?(name: string, options?: { recursive?: boolean }): Promise<void>;
   keys(): AsyncIterableIterator<string>;
 }
 
@@ -260,6 +261,41 @@ class PackedProjectDirectoryHandle implements ProjectDirectoryHandle {
     }
 
     return new PackedProjectDirectoryHandle(this.state, directoryPath);
+  }
+
+  async removeEntry(
+    name: string,
+    options: { recursive?: boolean } = {},
+  ): Promise<void> {
+    const entryPath = joinProjectPath(this.path, name);
+    const childPrefix = `${entryPath}/`;
+    const hasChildren =
+      Array.from(this.state.files.keys()).some((filePath) =>
+        filePath.startsWith(childPrefix),
+      ) ||
+      Array.from(this.state.directories).some((directoryPath) =>
+        directoryPath.startsWith(childPrefix),
+      );
+
+    if (hasChildren && !options.recursive) {
+      throw new Error("项目目录不是空目录，无法删除。");
+    }
+
+    this.state.files.delete(entryPath);
+
+    for (const filePath of Array.from(this.state.files.keys())) {
+      if (filePath.startsWith(childPrefix)) {
+        this.state.files.delete(filePath);
+      }
+    }
+
+    for (const directoryPath of Array.from(this.state.directories)) {
+      if (directoryPath === entryPath || directoryPath.startsWith(childPrefix)) {
+        this.state.directories.delete(directoryPath);
+      }
+    }
+
+    notifyPackedProjectWrite(this.state);
   }
 
   async *keys(): AsyncIterableIterator<string> {
@@ -497,4 +533,25 @@ export async function fileExists(
   } catch {
     return false;
   }
+}
+
+export async function deleteEntry(
+  root: ProjectDirectoryHandle,
+  path: string,
+  options: { recursive?: boolean } = {},
+): Promise<void> {
+  const parts = assertSafePath(path);
+  const name = parts.pop();
+
+  if (!name) {
+    throw new Error("文件路径不正确，无法删除项目文件。");
+  }
+
+  const directory = await getDirectoryByPath(root, parts.join("/"));
+
+  if (!directory.removeEntry) {
+    throw new Error("当前浏览器不支持删除项目文件。");
+  }
+
+  await directory.removeEntry(name, options);
 }

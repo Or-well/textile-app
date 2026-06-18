@@ -77,7 +77,13 @@ async function loadFileEntries() {
   draftTarget.value = "";
 
   try {
-    entries.value = await loadEntries(props.fileId);
+    const file = currentFile.value;
+    const loadedEntries = await loadEntries(props.fileId);
+    entries.value = loadedEntries.map((entry) => ({
+      ...entry,
+      locked: entry.locked || Boolean(file?.locked),
+      hidden: entry.hidden || Boolean(file?.hidden),
+    }));
     selectedEntry.value = entries.value[0];
     draftTarget.value = selectedEntry.value?.target ?? "";
   } catch (error) {

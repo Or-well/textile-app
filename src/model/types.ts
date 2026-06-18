@@ -84,8 +84,10 @@ export interface ProjectFile {
   source_path: string;
   entries_path: string;
   type: string;
+  folder?: string;
   hidden: boolean;
   locked: boolean;
+  updated_at?: string;
 }
 
 export interface Member {
