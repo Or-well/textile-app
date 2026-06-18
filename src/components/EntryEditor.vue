@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import CommentPanel from "./CommentPanel.vue";
 import TermHint from "./TermHint.vue";
 import type { Entry } from "../model/types";
 import { canEditEntry, getCurrentUser } from "../services/permissions";
@@ -13,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   save: [entry: Entry];
   saveNext: [entry: Entry];
+  entryUpdated: [entry: Entry];
 }>();
 
 const target = ref("");
@@ -127,6 +129,8 @@ function handleSaveNext() {
     <p v-if="permissionMessage" class="permission-message">
       {{ permissionMessage }}
     </p>
+
+    <CommentPanel :entry="entry" @entry-updated="emit('entryUpdated', $event)" />
 
     <div class="actions">
       <button

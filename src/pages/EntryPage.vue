@@ -5,6 +5,8 @@ import EntryList from "../components/EntryList.vue";
 import ProgressBar from "../components/ProgressBar.vue";
 import TaskPanel from "../components/TaskPanel.vue";
 import type { Entry, Task } from "../model/types";
+import { setCommentsProjectRoot } from "../services/comments";
+import { setHistoryProjectRoot } from "../services/history";
 import { openProject } from "../services/project";
 import {
   getEntryById,
@@ -69,6 +71,8 @@ async function handleOpenProject() {
     setEntriesProjectRoot(project.root);
     setTermsProjectRoot(project.root);
     setTasksProjectRoot(project.root);
+    setCommentsProjectRoot(project.root);
+    setHistoryProjectRoot(project.root);
 
     entries.value = await loadEntries("script_001");
     tasks.value = await loadTasks();
@@ -170,6 +174,13 @@ async function handleSaveAndNext(entry: Entry) {
   }
 }
 
+async function handleEntryUpdated(entry: Entry) {
+  replaceEntry(entry);
+  await refreshStats();
+  await refreshTaskProgress();
+  savedMessage.value = "词条状态已更新。";
+}
+
 async function handleSubmitTask(taskId: string) {
   isSubmittingTask.value = true;
   errorMessage.value = "";
@@ -258,6 +269,7 @@ async function handleSubmitTask(taskId: string) {
         :is-saving="isSaving"
         @save="handleSaveEntry"
         @save-next="handleSaveAndNext"
+        @entry-updated="handleEntryUpdated"
       />
     </section>
 
