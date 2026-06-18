@@ -3,7 +3,8 @@ import { computed, ref } from "vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntryList from "../components/EntryList.vue";
 import ProgressBar from "../components/ProgressBar.vue";
-import type { Entry } from "../model/types";
+import TaskPanel from "../components/TaskPanel.vue";
+import type { Entry, Task } from "../model/types";
 import { openProject } from "../services/project";
 import {
   getEntryById,
@@ -12,21 +13,49 @@ import {
   setEntriesProjectRoot,
 } from "../services/entries";
 import { getProjectStats, type BasicProjectStats } from "../services/stats";
+import {
+  getTaskProgress,
+  isEntryInTask,
+  loadTasks,
+  setTasksProjectRoot,
+  submitTask,
+  type TaskProgress,
+} from "../services/tasks";
 import { setTermsProjectRoot } from "../services/terms";
 
 const entries = ref<Entry[]>([]);
+const tasks = ref<Task[]>([]);
 const selectedEntry = ref<Entry>();
+const selectedTaskId = ref("");
 const stats = ref<BasicProjectStats>();
+const taskProgress = ref<TaskProgress>();
 const projectName = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
+const isSubmittingTask = ref(false);
 const errorMessage = ref("");
 const savedMessage = ref("");
 
-const hasEntries = computed(() => entries.value.length > 0);
+const selectedTask = computed(
+  () => tasks.value.find((task) => task.id === selectedTaskId.value),
+);
+const visibleEntries = computed(() => {
+  if (!selectedTask.value) {
+    return entries.value;
+  }
+
+  return entries.value.filter((entry) => isEntryInTask(entry, selectedTask.value!));
+});
+const hasEntries = computed(() => visibleEntries.value.length > 0);
 
 async function refreshStats() {
   stats.value = await getProjectStats(entries.value);
+}
+
+async function refreshTaskProgress() {
+  taskProgress.value = selectedTask.value
+    ? await getTaskProgress(selectedTask.value.id)
+    : undefined;
 }
 
 async function handleOpenProject() {
@@ -39,14 +68,21 @@ async function handleOpenProject() {
     projectName.value = project.config.name;
     setEntriesProjectRoot(project.root);
     setTermsProjectRoot(project.root);
+    setTasksProjectRoot(project.root);
 
     entries.value = await loadEntries("script_001");
-    selectedEntry.value = entries.value[0];
+    tasks.value = await loadTasks();
+    selectedTaskId.value = "";
+    selectedEntry.value = visibleEntries.value[0];
     await refreshStats();
+    await refreshTaskProgress();
   } catch (error) {
     entries.value = [];
+    tasks.value = [];
     selectedEntry.value = undefined;
+    selectedTaskId.value = "";
     stats.value = undefined;
+    taskProgress.value = undefined;
 
     if (error instanceof DOMException && error.name === "AbortError") {
       errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
@@ -65,6 +101,12 @@ async function handleSelectEntry(entry: Entry) {
   savedMessage.value = "";
 }
 
+async function handleSelectTask() {
+  selectedEntry.value = visibleEntries.value[0];
+  savedMessage.value = "";
+  await refreshTaskProgress();
+}
+
 function replaceEntry(savedEntry: Entry) {
   entries.value = entries.value.map((entry) =>
     entry.id === savedEntry.id ? savedEntry : entry,
@@ -73,8 +115,10 @@ function replaceEntry(savedEntry: Entry) {
 }
 
 function selectNextEntry(currentEntryId: string) {
-  const currentIndex = entries.value.findIndex((entry) => entry.id === currentEntryId);
-  const nextEntry = entries.value[currentIndex + 1];
+  const currentIndex = visibleEntries.value.findIndex(
+    (entry) => entry.id === currentEntryId,
+  );
+  const nextEntry = visibleEntries.value[currentIndex + 1];
 
   if (nextEntry) {
     selectedEntry.value = nextEntry;
@@ -91,6 +135,7 @@ async function handleSaveEntry(entry: Entry) {
 
     replaceEntry(savedEntry);
     await refreshStats();
+    await refreshTaskProgress();
     savedMessage.value = "已保存译文。";
   } catch (error) {
     errorMessage.value =
@@ -112,6 +157,7 @@ async function handleSaveAndNext(entry: Entry) {
 
     replaceEntry(savedEntry);
     await refreshStats();
+    await refreshTaskProgress();
     selectNextEntry(savedEntry.id);
     savedMessage.value = "已保存译文。";
   } catch (error) {
@@ -121,6 +167,27 @@ async function handleSaveAndNext(entry: Entry) {
         : "保存失败。请确认项目文件夹仍然可以访问。";
   } finally {
     isSaving.value = false;
+  }
+}
+
+async function handleSubmitTask(taskId: string) {
+  isSubmittingTask.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const submittedTask = await submitTask(taskId);
+
+    tasks.value = tasks.value.map((task) =>
+      task.id === submittedTask.id ? submittedTask : task,
+    );
+    await refreshTaskProgress();
+    savedMessage.value = "任务已提交。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "任务提交失败。请稍后再试。";
+  } finally {
+    isSubmittingTask.value = false;
   }
 }
 </script>
@@ -146,6 +213,25 @@ async function handleSaveAndNext(entry: Entry) {
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
 
+    <section v-if="tasks.length > 0" class="task-filter">
+      <label>
+        <span>任务筛选</span>
+        <select v-model="selectedTaskId" @change="handleSelectTask">
+          <option value="">全部词条</option>
+          <option v-for="task in tasks" :key="task.id" :value="task.id">
+            {{ task.title }}
+          </option>
+        </select>
+      </label>
+
+      <TaskPanel
+        :task="selectedTask"
+        :progress="taskProgress"
+        :is-submitting="isSubmittingTask"
+        @submit-task="handleSubmitTask"
+      />
+    </section>
+
     <section v-if="stats" class="stats-summary">
       <ProgressBar :percent="stats.progressPercent" label="当前文件进度" />
       <div class="stats-counts">
@@ -161,7 +247,7 @@ async function handleSaveAndNext(entry: Entry) {
     <section v-if="hasEntries" class="entry-workspace">
       <EntryList
         class="list-pane"
-        :entries="entries"
+        :entries="visibleEntries"
         :selected-entry-id="selectedEntry?.id"
         @select="handleSelectEntry"
       />
@@ -258,6 +344,38 @@ h2 {
   color: #4b5563;
 }
 
+.task-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+  max-width: 1180px;
+  margin: 0 auto 20px;
+}
+
+.task-filter label {
+  display: grid;
+  gap: 8px;
+  align-self: start;
+  padding: 16px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.task-filter span {
+  color: #5b6472;
+  font-size: 14px;
+}
+
+.task-filter select {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+}
+
 .stats-summary {
   display: grid;
   gap: 12px;
@@ -300,6 +418,7 @@ h2 {
   }
 
   .page-header,
+  .task-filter,
   .entry-workspace {
     grid-template-columns: 1fr;
   }

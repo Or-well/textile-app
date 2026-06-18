@@ -1,0 +1,368 @@
+<script setup lang="ts">
+import { computed, ref } from "vue";
+import TaskPanel from "../components/TaskPanel.vue";
+import type { Member, Task } from "../model/types";
+import { setCurrentUser, getCurrentUser } from "../services/permissions";
+import { openProject } from "../services/project";
+import {
+  getTaskProgress,
+  getTasksByUser,
+  loadTasks,
+  setTasksProjectRoot,
+  submitTask,
+  type TaskProgress,
+} from "../services/tasks";
+
+const members = ref<Member[]>([]);
+const allTasks = ref<Task[]>([]);
+const myTasks = ref<Task[]>([]);
+const selectedUserId = ref(getCurrentUser()?.id ?? "");
+const selectedTask = ref<Task>();
+const selectedProgress = ref<TaskProgress>();
+const projectName = ref("");
+const isLoading = ref(false);
+const isSubmitting = ref(false);
+const errorMessage = ref("");
+const savedMessage = ref("");
+
+const selectedUser = computed(
+  () => members.value.find((member) => member.id === selectedUserId.value) ?? null,
+);
+
+async function refreshMyTasks() {
+  myTasks.value = selectedUserId.value
+    ? await getTasksByUser(selectedUserId.value)
+    : [];
+}
+
+async function selectTask(task: Task) {
+  selectedTask.value = task;
+  selectedProgress.value = await getTaskProgress(task.id);
+  savedMessage.value = "";
+}
+
+async function handleOpenProject() {
+  isLoading.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+  selectedTask.value = undefined;
+  selectedProgress.value = undefined;
+
+  try {
+    const project = await openProject();
+    const currentUser = getCurrentUser();
+
+    projectName.value = project.config.name;
+    members.value = project.members.filter((member) => member.active);
+    selectedUserId.value =
+      members.value.find((member) => member.id === currentUser?.id)?.id ??
+      members.value[0]?.id ??
+      "";
+
+    if (selectedUser.value) {
+      setCurrentUser(selectedUser.value);
+    }
+
+    setTasksProjectRoot(project.root);
+    allTasks.value = await loadTasks();
+    await refreshMyTasks();
+
+    if (myTasks.value[0]) {
+      await selectTask(myTasks.value[0]);
+    }
+  } catch (error) {
+    members.value = [];
+    allTasks.value = [];
+    myTasks.value = [];
+
+    if (error instanceof DOMException && error.name === "AbortError") {
+      errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
+    } else if (error instanceof Error) {
+      errorMessage.value = error.message;
+    } else {
+      errorMessage.value = "任务列表加载失败。请确认选择的是项目根目录。";
+    }
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function handleSelectUser() {
+  if (selectedUser.value) {
+    setCurrentUser(selectedUser.value);
+  }
+
+  await refreshMyTasks();
+
+  if (myTasks.value[0]) {
+    await selectTask(myTasks.value[0]);
+  } else {
+    selectedTask.value = undefined;
+    selectedProgress.value = undefined;
+  }
+}
+
+async function handleSubmitTask(taskId: string) {
+  isSubmitting.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const submittedTask = await submitTask(taskId);
+
+    allTasks.value = allTasks.value.map((task) =>
+      task.id === submittedTask.id ? submittedTask : task,
+    );
+    await refreshMyTasks();
+    await selectTask(submittedTask);
+    savedMessage.value = "任务已提交。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "任务提交失败。请稍后再试。";
+  } finally {
+    isSubmitting.value = false;
+  }
+}
+</script>
+
+<template>
+  <main class="tasks-page">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">任务管理</p>
+        <h1>{{ projectName || "打开项目" }}</h1>
+      </div>
+
+      <button
+        class="open-button"
+        type="button"
+        :disabled="isLoading"
+        @click="handleOpenProject"
+      >
+        {{ isLoading ? "正在加载..." : "打开项目文件夹" }}
+      </button>
+    </header>
+
+    <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+    <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
+
+    <section v-if="allTasks.length > 0" class="tasks-layout">
+      <div class="task-lists">
+        <label class="user-field">
+          <span>当前用户</span>
+          <select v-model="selectedUserId" @change="handleSelectUser">
+            <option
+              v-for="member in members"
+              :key="member.id"
+              :value="member.id"
+            >
+              {{ member.name }}
+            </option>
+          </select>
+        </label>
+
+        <section>
+          <h2>我的任务</h2>
+          <button
+            v-for="task in myTasks"
+            :key="task.id"
+            class="task-row"
+            :class="{ selected: task.id === selectedTask?.id }"
+            type="button"
+            @click="selectTask(task)"
+          >
+            <span>{{ task.title }}</span>
+            <small>{{ task.status }}</small>
+          </button>
+          <p v-if="myTasks.length === 0" class="empty-text">当前用户没有任务。</p>
+        </section>
+
+        <section>
+          <h2>全部任务</h2>
+          <button
+            v-for="task in allTasks"
+            :key="task.id"
+            class="task-row"
+            :class="{ selected: task.id === selectedTask?.id }"
+            type="button"
+            @click="selectTask(task)"
+          >
+            <span>{{ task.title }}</span>
+            <small>{{ task.assignee }} · {{ task.status }}</small>
+          </button>
+        </section>
+      </div>
+
+      <TaskPanel
+        :task="selectedTask"
+        :progress="selectedProgress"
+        :is-submitting="isSubmitting"
+        @submit-task="handleSubmitTask"
+      />
+    </section>
+
+    <p v-else-if="!isLoading && !errorMessage" class="empty-state">
+      请打开项目文件夹，查看任务。
+    </p>
+  </main>
+</template>
+
+<style scoped>
+.tasks-page {
+  min-height: 100vh;
+  padding: 28px;
+  background: #f6f7f9;
+  color: #1f2937;
+}
+
+.page-header,
+.tasks-layout,
+.error-message,
+.saved-message,
+.empty-state {
+  max-width: 1080px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #5b6472;
+  font-size: 14px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+h1 {
+  font-size: 30px;
+}
+
+h2 {
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+
+.open-button {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.open-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.error-message,
+.saved-message,
+.empty-state {
+  line-height: 1.7;
+}
+
+.error-message {
+  color: #b42318;
+}
+
+.saved-message {
+  color: #166534;
+}
+
+.empty-state,
+.empty-text {
+  color: #4b5563;
+}
+
+.tasks-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 20px;
+}
+
+.task-lists {
+  display: grid;
+  gap: 22px;
+}
+
+.user-field {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.user-field span {
+  color: #5b6472;
+  font-size: 14px;
+}
+
+select {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
+}
+
+section {
+  min-width: 0;
+}
+
+.task-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-row:hover,
+.task-row.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.task-row small {
+  color: #5b6472;
+  white-space: nowrap;
+}
+
+@media (max-width: 860px) {
+  .page-header,
+  .tasks-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+</style>
