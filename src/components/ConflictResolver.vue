@@ -1,0 +1,272 @@
+<script setup lang="ts">
+import { ref, watch } from "vue";
+import type {
+  ChangeConflict,
+  ConflictResolution,
+  ConflictResolutionAction,
+} from "../services/changes";
+import type { EntryStatus } from "../model/types";
+import { ENTRY_STATUSES } from "../model/status";
+
+interface ConflictDraft {
+  entryId: string;
+  action: ConflictResolutionAction;
+  target: string;
+  status: EntryStatus;
+}
+
+const props = defineProps<{
+  conflicts: ChangeConflict[];
+  isApplying?: boolean;
+}>();
+
+const emit = defineEmits<{
+  apply: [resolutions: ConflictResolution[]];
+}>();
+
+const drafts = ref<ConflictDraft[]>([]);
+
+watch(
+  () => props.conflicts,
+  (conflicts) => {
+    drafts.value = conflicts.map((conflict) => ({
+      entryId: conflict.entryId,
+      action: "keep_main",
+      target: conflict.mainEntry.target,
+      status: conflict.mainEntry.status,
+    }));
+  },
+  { immediate: true },
+);
+
+function updateAction(entryId: string, action: ConflictResolutionAction) {
+  const draft = drafts.value.find((item) => item.entryId === entryId);
+  const conflict = props.conflicts.find((item) => item.entryId === entryId);
+
+  if (!draft || !conflict) {
+    return;
+  }
+
+  draft.action = action;
+
+  if (action === "use_package") {
+    draft.target = conflict.packageEntry.target;
+    draft.status = conflict.packageEntry.status;
+  }
+
+  if (action === "keep_main" || action === "skip") {
+    draft.target = conflict.mainEntry.target;
+    draft.status = conflict.mainEntry.status;
+  }
+}
+
+function handleApply() {
+  emit(
+    "apply",
+    drafts.value.map((draft) => ({
+      entryId: draft.entryId,
+      action: draft.action,
+      target: draft.target,
+      status: draft.status,
+    })),
+  );
+}
+</script>
+
+<template>
+  <section v-if="conflicts.length > 0" class="conflict-resolver">
+    <div class="header-row">
+      <h2>处理冲突</h2>
+      <button type="button" :disabled="isApplying" @click="handleApply">
+        {{ isApplying ? "正在应用..." : "应用处理结果" }}
+      </button>
+    </div>
+
+    <article
+      v-for="conflict in conflicts"
+      :key="conflict.entryId"
+      class="conflict-card"
+    >
+      <div class="conflict-title">
+        <strong>{{ conflict.entryId }}</strong>
+        <span>{{ conflict.reasons.join("、") }} 不一致</span>
+      </div>
+
+      <div class="compare-grid">
+        <section>
+          <h3>主项目</h3>
+          <p>{{ conflict.mainEntry.target || "未填写译文" }}</p>
+          <small>状态：{{ conflict.mainEntry.status }}</small>
+        </section>
+        <section>
+          <h3>修改包</h3>
+          <p>{{ conflict.packageEntry.target || "未填写译文" }}</p>
+          <small>状态：{{ conflict.packageEntry.status }}</small>
+        </section>
+      </div>
+
+      <div
+        v-for="draft in drafts.filter((item) => item.entryId === conflict.entryId)"
+        :key="draft.entryId"
+        class="resolution-form"
+      >
+        <label>
+          <span>处理方式</span>
+          <select
+            v-model="draft.action"
+            @change="updateAction(conflict.entryId, draft.action)"
+          >
+            <option value="keep_main">保留主项目</option>
+            <option value="use_package">使用修改包</option>
+            <option value="manual_merge">手动合并</option>
+            <option value="skip">跳过</option>
+          </select>
+        </label>
+
+        <label v-if="draft.action === 'manual_merge'">
+          <span>合并后的译文</span>
+          <textarea v-model="draft.target" rows="4" />
+        </label>
+
+        <label v-if="draft.action === 'manual_merge'">
+          <span>合并后的状态</span>
+          <select v-model="draft.status">
+            <option
+              v-for="status in ENTRY_STATUSES"
+              :key="status"
+              :value="status"
+            >
+              {{ status }}
+            </option>
+          </select>
+        </label>
+      </div>
+    </article>
+  </section>
+</template>
+
+<style scoped>
+.conflict-resolver {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.header-row,
+.conflict-title,
+.compare-grid {
+  display: flex;
+  gap: 12px;
+}
+
+.header-row {
+  align-items: center;
+  justify-content: space-between;
+}
+
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h2 {
+  font-size: 18px;
+}
+
+h3 {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.conflict-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #eef1f5;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.conflict-title {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.conflict-title span,
+small,
+label span {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.compare-grid {
+  align-items: stretch;
+}
+
+.compare-grid section {
+  flex: 1;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.compare-grid p {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.resolution-form {
+  display: grid;
+  gap: 10px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+}
+
+select,
+textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+
+@media (max-width: 720px) {
+  .header-row,
+  .compare-grid {
+    flex-direction: column;
+  }
+}
+</style>

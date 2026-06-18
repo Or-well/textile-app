@@ -1,7 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import ChangePreview from "../components/ChangePreview.vue";
+import ConflictResolver from "../components/ConflictResolver.vue";
 import type { Member, Task } from "../model/types";
-import { exportChangePackage, setChangesProjectRoot } from "../services/changes";
+import {
+  applyChangePackage,
+  detectConflicts,
+  exportChangePackage,
+  previewChangePackage,
+  readChangePackage,
+  setChangesProjectRoot,
+  validateChangePackage,
+  type ChangeConflict,
+  type ChangePackagePreview,
+  type ConflictResolution,
+  type ReadChangePackage,
+} from "../services/changes";
 import { getCurrentUser, setCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
@@ -13,8 +27,13 @@ const selectedUserId = ref(getCurrentUser()?.id ?? "");
 const selectedTaskId = ref("");
 const isLoading = ref(false);
 const isExporting = ref(false);
+const isReadingPackage = ref(false);
+const isApplyingPackage = ref(false);
 const errorMessage = ref("");
 const message = ref("");
+const changePackage = ref<ReadChangePackage>();
+const packagePreview = ref<ChangePackagePreview>();
+const conflicts = ref<ChangeConflict[]>([]);
 
 const selectedUser = computed(
   () => members.value.find((member) => member.id === selectedUserId.value) ?? null,
@@ -61,6 +80,9 @@ async function handleOpenProject() {
     members.value = [];
     tasks.value = [];
     selectedTaskId.value = "";
+    changePackage.value = undefined;
+    packagePreview.value = undefined;
+    conflicts.value = [];
 
     if (error instanceof DOMException && error.name === "AbortError") {
       errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
@@ -103,6 +125,64 @@ async function handleExportChanges() {
       error instanceof Error ? error.message : "导出修改包失败。请稍后再试。";
   } finally {
     isExporting.value = false;
+  }
+}
+
+async function handleSelectChangePackage(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  isReadingPackage.value = true;
+  errorMessage.value = "";
+  message.value = "";
+  changePackage.value = undefined;
+  packagePreview.value = undefined;
+  conflicts.value = [];
+
+  try {
+    const nextPackage = await readChangePackage(file);
+
+    await validateChangePackage(nextPackage);
+    changePackage.value = nextPackage;
+    packagePreview.value = previewChangePackage(nextPackage);
+    conflicts.value = await detectConflicts(nextPackage);
+    message.value =
+      conflicts.value.length > 0
+        ? "修改包已读取，请先处理冲突。"
+        : "修改包已读取，未发现冲突。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "修改包读取失败。请重新选择文件。";
+  } finally {
+    isReadingPackage.value = false;
+    input.value = "";
+  }
+}
+
+async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
+  if (!changePackage.value) {
+    errorMessage.value = "请先选择修改包。";
+    return;
+  }
+
+  isApplyingPackage.value = true;
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    const result = await applyChangePackage(changePackage.value, resolutions);
+
+    conflicts.value = [];
+    message.value = `导入完成：应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论。`;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "导入修改包失败。请检查冲突处理。";
+  } finally {
+    isApplyingPackage.value = false;
   }
 }
 </script>
@@ -161,6 +241,40 @@ async function handleExportChanges() {
           {{ isExporting ? "正在导出..." : "导出我的修改" }}
         </button>
       </div>
+
+      <section v-if="projectName" class="import-section">
+        <h2>导入修改包</h2>
+        <label class="file-field">
+          <span>选择修改包</span>
+          <input
+            type="file"
+            accept=".zip,application/zip"
+            :disabled="isReadingPackage || isApplyingPackage"
+            @change="handleSelectChangePackage"
+          />
+        </label>
+
+        <ChangePreview
+          :preview="packagePreview"
+          :conflict-count="conflicts.length"
+        />
+
+        <button
+          v-if="packagePreview && conflicts.length === 0"
+          class="export-button"
+          type="button"
+          :disabled="isApplyingPackage"
+          @click="handleApplyPackage()"
+        >
+          {{ isApplyingPackage ? "正在导入..." : "应用修改包" }}
+        </button>
+
+        <ConflictResolver
+          :conflicts="conflicts"
+          :is-applying="isApplyingPackage"
+          @apply="handleApplyPackage"
+        />
+      </section>
 
       <p v-else-if="!isLoading && !errorMessage" class="empty-state">
         请打开项目文件夹，选择用户和任务后导出修改。
@@ -246,10 +360,21 @@ button:disabled {
   color: #4b5563;
 }
 
-.form-grid {
+.form-grid,
+.import-section {
   display: grid;
   gap: 16px;
   margin-top: 24px;
+}
+
+.import-section {
+  padding-top: 24px;
+  border-top: 1px solid #e5e7eb;
+}
+
+h2 {
+  margin: 0;
+  font-size: 20px;
 }
 
 label {
@@ -262,7 +387,8 @@ label span {
   font-size: 14px;
 }
 
-select {
+select,
+input {
   min-height: 42px;
   padding: 0 12px;
   border: 1px solid #c8d0dc;
