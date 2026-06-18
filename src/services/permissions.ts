@@ -207,6 +207,16 @@ export function canImportChangePackage(user: Member | null | undefined): boolean
   return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT);
 }
 
+export function canExportChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT);
+}
+
+export function canDangerousImportChangePackage(
+  user: Member | null | undefined,
+): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT);
+}
+
 export function canExportRelease(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.RELEASE_EXPORT);
 }

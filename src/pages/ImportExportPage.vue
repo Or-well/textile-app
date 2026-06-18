@@ -17,7 +17,13 @@ import {
   type ReadChangePackage,
 } from "../services/changes";
 import { exportProject, setExporterProjectRoot } from "../services/exporter";
-import { getCurrentUser } from "../services/permissions";
+import {
+  canDangerousImportChangePackage,
+  canExportChangePackage,
+  canExportRelease,
+  canImportChangePackage,
+  getCurrentUser,
+} from "../services/permissions";
 import { openProject } from "../services/project";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
 
@@ -43,11 +49,59 @@ const conflicts = ref<ChangeConflict[]>([]);
 
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const hasProjectContext = computed(() => Boolean(props.project));
+const canExportChanges = computed(() => canExportChangePackage(currentUser.value));
+const canImportPackages = computed(() => canImportChangePackage(currentUser.value));
+const canDangerousImport = computed(() =>
+  canDangerousImportChangePackage(currentUser.value),
+);
+const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
 const emptyStateText = computed(() =>
   projectName.value
     ? "当前项目暂无可导出的任务。"
     : "请打开项目文件夹，选择用户和任务后导出修改。",
 );
+const packageValidation = computed(() => packagePreview.value?.validation);
+const needsDangerousImport = computed(
+  () => packageValidation.value?.requiresDangerousImport ?? false,
+);
+const canApplySelectedPackage = computed(() => {
+  const validation = packageValidation.value;
+
+  if (!validation || !canImportPackages.value) {
+    return false;
+  }
+
+  if (validation.projectMatch !== "matched") {
+    return false;
+  }
+
+  if (validation.requiresDangerousImport) {
+    return canDangerousImport.value;
+  }
+
+  return validation.canImportNormally;
+});
+const applyDisabledReason = computed(() => {
+  const validation = packageValidation.value;
+
+  if (!canImportPackages.value) {
+    return "当前成员没有导入修改包的权限。";
+  }
+
+  if (!validation) {
+    return "";
+  }
+
+  if (validation.projectMatch !== "matched") {
+    return "修改包不属于当前项目，不能导入。";
+  }
+
+  if (validation.requiresDangerousImport && !canDangerousImport.value) {
+    return "内容完整性未通过，当前成员没有危险导入权限。";
+  }
+
+  return "";
+});
 
 function downloadBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
@@ -134,6 +188,11 @@ async function handleExportChanges() {
     return;
   }
 
+  if (!canExportChanges.value) {
+    errorMessage.value = "当前成员没有导出修改包的权限。";
+    return;
+  }
+
   isExporting.value = true;
   errorMessage.value = "";
   message.value = "";
@@ -145,7 +204,9 @@ async function handleExportChanges() {
     );
 
     downloadBlob(result.blob, result.fileName);
-    message.value = `已导出修改包：${result.fileName}`;
+    message.value = result.signature
+      ? `已导出已签名修改包：${result.fileName}`
+      : `已导出未签名修改包：${result.fileName}。当前成员未配置签名私钥。`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导出修改包失败。请稍后再试。";
@@ -155,6 +216,11 @@ async function handleExportChanges() {
 }
 
 async function handleExportRelease() {
+  if (!canExportFinalRelease.value) {
+    errorMessage.value = "当前成员没有导出成品的权限。";
+    return;
+  }
+
   isExportingRelease.value = true;
   errorMessage.value = "";
   message.value = "";
@@ -180,6 +246,12 @@ async function handleSelectChangePackage(event: Event) {
     return;
   }
 
+  if (!canImportPackages.value) {
+    errorMessage.value = "当前成员没有导入修改包的权限。";
+    input.value = "";
+    return;
+  }
+
   isReadingPackage.value = true;
   errorMessage.value = "";
   message.value = "";
@@ -189,15 +261,20 @@ async function handleSelectChangePackage(event: Event) {
 
   try {
     const nextPackage = await readChangePackage(file);
+    const validation = await validateChangePackage(nextPackage);
 
-    await validateChangePackage(nextPackage);
     changePackage.value = nextPackage;
     packagePreview.value = previewChangePackage(nextPackage);
-    conflicts.value = await detectConflicts(nextPackage);
+    conflicts.value =
+      validation.projectMatch === "matched"
+        ? await detectConflicts(nextPackage)
+        : [];
     message.value =
-      conflicts.value.length > 0
-        ? "修改包已读取，请先处理冲突。"
-        : "修改包已读取，未发现冲突。";
+      validation.projectMatch !== "matched"
+        ? "修改包已读取，但不属于当前项目，不能导入。"
+        : conflicts.value.length > 0
+          ? "修改包已读取，请先处理冲突。"
+          : "修改包已读取，未发现冲突。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "修改包读取失败。请重新选择文件。";
@@ -213,15 +290,34 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
     return;
   }
 
+  if (!canApplySelectedPackage.value) {
+    errorMessage.value = applyDisabledReason.value || "当前修改包不能导入。";
+    return;
+  }
+
+  if (
+    needsDangerousImport.value &&
+    !window.confirm(
+      "修改包内容完整性未通过。危险导入可能覆盖被篡改的内容，确认继续吗？",
+    )
+  ) {
+    return;
+  }
+
   isApplyingPackage.value = true;
   errorMessage.value = "";
   message.value = "";
 
   try {
-    const result = await applyChangePackage(changePackage.value, resolutions);
+    const result = await applyChangePackage(changePackage.value, resolutions, {
+      allowDangerous: needsDangerousImport.value,
+      actor: currentUser.value,
+    });
 
     conflicts.value = [];
-    message.value = `导入完成：应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论。`;
+    message.value = needsDangerousImport.value
+      ? `危险导入完成：应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论。`
+      : `导入完成：应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论。`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导入修改包失败。请检查冲突处理。";
@@ -278,6 +374,7 @@ watch(
         </label>
 
         <button
+          v-if="canExportChanges"
           class="export-button"
           type="button"
           :disabled="isExporting || !currentUser || !selectedTaskId"
@@ -285,11 +382,12 @@ watch(
         >
           {{ isExporting ? "正在导出..." : "导出我的修改" }}
         </button>
+        <p v-else class="section-note">当前成员没有导出修改包的权限。</p>
       </div>
 
       <section v-if="projectName" class="import-section">
         <h2>导入修改包</h2>
-        <label class="file-field">
+        <label v-if="canImportPackages" class="file-field">
           <span>选择修改包</span>
           <input
             type="file"
@@ -298,6 +396,7 @@ watch(
             @change="handleSelectChangePackage"
           />
         </label>
+        <p v-else class="section-note">当前成员没有导入修改包的权限。</p>
 
         <ChangePreview
           :preview="packagePreview"
@@ -305,18 +404,29 @@ watch(
         />
 
         <button
-          v-if="packagePreview && conflicts.length === 0"
-          class="export-button"
+          v-if="packagePreview && conflicts.length === 0 && canImportPackages"
+          :class="['export-button', { 'danger-button': needsDangerousImport }]"
           type="button"
-          :disabled="isApplyingPackage"
+          :disabled="isApplyingPackage || !canApplySelectedPackage"
           @click="handleApplyPackage()"
         >
-          {{ isApplyingPackage ? "正在导入..." : "应用修改包" }}
+          {{
+            isApplyingPackage
+              ? "正在导入..."
+              : needsDangerousImport
+                ? "危险导入修改包"
+                : "应用修改包"
+          }}
         </button>
+        <p v-if="packagePreview && applyDisabledReason" class="section-note">
+          {{ applyDisabledReason }}
+        </p>
 
         <ConflictResolver
           :conflicts="conflicts"
           :is-applying="isApplyingPackage"
+          :can-apply="canApplySelectedPackage"
+          :disabled-reason="applyDisabledReason"
           @apply="handleApplyPackage"
         />
       </section>
@@ -327,6 +437,7 @@ watch(
           暂时导出为简单文本格式，并包含 manifest 和检查报告。
         </p>
         <button
+          v-if="canExportFinalRelease"
           class="export-button"
           type="button"
           :disabled="isExportingRelease"
@@ -334,6 +445,7 @@ watch(
         >
           {{ isExportingRelease ? "正在导出..." : "导出成品" }}
         </button>
+        <p v-else class="section-note">当前成员没有导出成品的权限。</p>
       </section>
 
       <p v-else-if="!isLoading && !errorMessage" class="empty-state">
@@ -484,6 +596,10 @@ input {
 
 .export-button {
   justify-self: start;
+}
+
+.danger-button {
+  background: #b42318;
 }
 
 @media (max-width: 680px) {

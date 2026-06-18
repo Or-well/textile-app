@@ -1,7 +1,10 @@
 import type {
   ChangePackageManifest,
+  ChangePackageSignature,
   Comment,
   Entry,
+  Member,
+  ProjectConfig,
   ProjectEvent,
   Task,
 } from "../model/types";
@@ -20,19 +23,32 @@ import {
   writeJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
+import { getSigningPrivateKeyForMember } from "./auth";
+import {
+  CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
+  sha256Hex,
+  shortHash,
+  signTextWithPrivateKey,
+  stableStringify,
+  verifyTextSignature,
+} from "./crypto";
+import { canDangerousImportChangePackage } from "./permissions";
 
 export interface ExportedChangePackage {
   fileName: string;
   blob: Blob;
   manifest: ChangePackageManifest;
+  signature?: ChangePackageSignature;
 }
 
 export interface ReadChangePackage {
   manifest: ChangePackageManifest;
+  signature?: ChangePackageSignature;
   files: Record<string, string>;
   entries: Record<string, Entry[]>;
   comments: Record<string, Comment[]>;
   events: ProjectEvent[];
+  validation?: ChangePackageValidation;
 }
 
 export interface ChangePackagePreview {
@@ -41,6 +57,34 @@ export interface ChangePackagePreview {
   commentCount: number;
   logCount: number;
   entryPaths: string[];
+  validation: ChangePackageValidation;
+  contentHashShort: string;
+  isLegacyPackage: boolean;
+}
+
+export type ProjectMatchStatus = "matched" | "mismatched" | "unknown";
+export type ContentIntegrityStatus =
+  | "passed"
+  | "failed"
+  | "legacy_unchecked";
+export type SignatureStatus =
+  | "valid"
+  | "invalid"
+  | "unsigned"
+  | "missing_public_key";
+
+export interface ChangePackageValidation {
+  projectMatch: ProjectMatchStatus;
+  expectedProjectId?: string;
+  packageProjectId?: string;
+  contentIntegrity: ContentIntegrityStatus;
+  declaredContentHash?: string;
+  calculatedContentHash?: string;
+  signatureStatus: SignatureStatus;
+  signerName?: string;
+  riskMessages: string[];
+  canImportNormally: boolean;
+  requiresDangerousImport: boolean;
 }
 
 export interface ChangeConflict {
@@ -70,6 +114,13 @@ export interface ApplyChangePackageResult {
   importedEvents: number;
 }
 
+export interface ApplyChangePackageOptions {
+  allowDangerous?: boolean;
+  actor?: Member | null;
+}
+
+const CHANGE_PACKAGE_APP_VERSION = "0.2.0";
+
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 
 export function setChangesProjectRoot(root: ProjectDirectoryHandle): void {
@@ -82,6 +133,192 @@ function getProjectRoot(): ProjectDirectoryHandle {
   }
 
   return currentProjectRoot;
+}
+
+function compareText(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
+function getStableRowKey(row: {
+  id?: string;
+  entry_id?: string;
+  created_at?: string;
+  index?: number;
+}): string {
+  return [
+    row.id ?? "",
+    row.entry_id ?? "",
+    typeof row.index === "number" ? String(row.index).padStart(8, "0") : "",
+    row.created_at ?? "",
+  ].join("|");
+}
+
+function sortRows<T extends { id?: string; entry_id?: string; created_at?: string; index?: number }>(
+  rows: T[],
+): T[] {
+  return [...rows].sort((left, right) =>
+    compareText(getStableRowKey(left), getStableRowKey(right)),
+  );
+}
+
+function normalizeRecordRows<T extends {
+  id?: string;
+  entry_id?: string;
+  created_at?: string;
+  index?: number;
+}>(rowsByPath: Record<string, T[]>): { path: string; rows: T[] }[] {
+  return Object.entries(rowsByPath)
+    .sort(([leftPath], [rightPath]) => compareText(leftPath, rightPath))
+    .map(([path, rows]) => ({
+      path,
+      rows: sortRows(rows),
+    }));
+}
+
+function buildContentHashPayload(
+  entries: Record<string, Entry[]>,
+  comments: Record<string, Comment[]>,
+  events: ProjectEvent[],
+) {
+  return {
+    entries: normalizeRecordRows(entries),
+    comments: normalizeRecordRows(comments),
+    logs: sortRows(events),
+  };
+}
+
+async function calculateContentHash(
+  entries: Record<string, Entry[]>,
+  comments: Record<string, Comment[]>,
+  events: ProjectEvent[],
+): Promise<string> {
+  return sha256Hex(stableStringify(buildContentHashPayload(entries, comments, events)));
+}
+
+function buildSignaturePayload(manifest: ChangePackageManifest): string {
+  return stableStringify({ manifest });
+}
+
+function buildPackageId(userId: string, taskId: string, createdAt: string): string {
+  const date = createdAt.slice(0, 10).replace(/-/g, "");
+
+  return createId(`change_${date}_${userId}_${taskId}`);
+}
+
+function readSignature(files: Record<string, string>): ChangePackageSignature | undefined {
+  const text = files["signature.json"];
+
+  if (!text) {
+    return undefined;
+  }
+
+  return JSON.parse(text) as ChangePackageSignature;
+}
+
+async function loadProjectMembers(root: ProjectDirectoryHandle): Promise<Member[]> {
+  const file = await readJson<{ members: Member[] }>(root, "members.json");
+
+  return file.members;
+}
+
+function createBaseValidation(
+  changePackage: ReadChangePackage,
+): ChangePackageValidation {
+  const isLegacyPackage = !changePackage.manifest.content_hash;
+
+  return {
+    projectMatch: "unknown",
+    packageProjectId: changePackage.manifest.project_id,
+    contentIntegrity: isLegacyPackage ? "legacy_unchecked" : "failed",
+    declaredContentHash: changePackage.manifest.content_hash,
+    signatureStatus: changePackage.signature ? "invalid" : "unsigned",
+    riskMessages: [],
+    canImportNormally: false,
+    requiresDangerousImport: false,
+  };
+}
+
+function buildRiskMessages(
+  validation: Omit<ChangePackageValidation, "riskMessages">,
+): string[] {
+  const messages: string[] = [];
+
+  if (validation.projectMatch === "mismatched") {
+    messages.push("修改包不属于当前项目，不能导入。");
+  }
+
+  if (validation.contentIntegrity === "failed") {
+    messages.push("内容完整性未通过，修改包可能已被改动。默认拒绝导入。");
+  }
+
+  if (validation.contentIntegrity === "legacy_unchecked") {
+    messages.push("这是旧格式修改包，无法校验内容完整性。");
+  }
+
+  if (validation.signatureStatus === "invalid") {
+    messages.push("成员签名无效，请联系负责人核对来源。");
+  }
+
+  if (validation.signatureStatus === "unsigned") {
+    messages.push("修改包未签名，只能依赖内容校验和人工确认来源。");
+  }
+
+  if (validation.signatureStatus === "missing_public_key") {
+    messages.push("项目成员未配置公钥，无法验证签名。");
+  }
+
+  return messages;
+}
+
+async function verifySignatureStatus(
+  changePackage: ReadChangePackage,
+  members: Member[],
+): Promise<Pick<ChangePackageValidation, "signatureStatus" | "signerName">> {
+  if (!changePackage.signature) {
+    return { signatureStatus: "unsigned" };
+  }
+
+  const signer = members.find((member) => member.id === changePackage.manifest.user_id);
+
+  if (!signer?.public_key) {
+    return {
+      signatureStatus: "missing_public_key",
+      signerName: signer?.name,
+    };
+  }
+
+  const isValid =
+    changePackage.signature.user_id === changePackage.manifest.user_id &&
+    changePackage.signature.algorithm === CHANGE_PACKAGE_SIGNATURE_ALGORITHM &&
+    (await verifyTextSignature(
+      signer.public_key,
+      buildSignaturePayload(changePackage.manifest),
+      changePackage.signature.signature,
+    ));
+
+  return {
+    signatureStatus: isValid ? "valid" : "invalid",
+    signerName: signer.name,
+  };
+}
+
+async function createSignature(
+  manifest: ChangePackageManifest,
+): Promise<ChangePackageSignature | undefined> {
+  const privateKey = getSigningPrivateKeyForMember(manifest.user_id);
+
+  if (!privateKey) {
+    return undefined;
+  }
+
+  return {
+    schema_version: 1,
+    package_id: manifest.package_id,
+    user_id: manifest.user_id,
+    algorithm: CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
+    signed_at: nowIso(),
+    signature: await signTextWithPrivateKey(privateKey, buildSignaturePayload(manifest)),
+  };
 }
 
 function isEntryInTask(entry: Entry, task: Task): boolean {
@@ -264,6 +501,8 @@ async function loadCurrentEntries(path: string): Promise<Entry[]> {
 async function appendImportLog(
   manifest: ChangePackageManifest,
   result: ApplyChangePackageResult,
+  validation: ChangePackageValidation,
+  options: ApplyChangePackageOptions,
 ): Promise<void> {
   const root = getProjectRoot();
   const events = (await fileExists(root, "logs/events.jsonl"))
@@ -276,9 +515,15 @@ async function appendImportLog(
     task_id: manifest.task_id,
     created_at: nowIso(),
     detail: {
+      package_id: manifest.package_id ?? "",
       applied_entries: result.appliedEntries,
       imported_comments: result.importedComments,
       imported_events: result.importedEvents,
+      content_integrity: validation.contentIntegrity,
+      content_hash: manifest.content_hash ?? "",
+      signature_status: validation.signatureStatus,
+      dangerous_import: Boolean(options.allowDangerous),
+      imported_by: options.actor?.id ?? "",
     },
   };
 
@@ -291,7 +536,7 @@ export async function exportChangePackage(
   taskId: string,
 ): Promise<ExportedChangePackage> {
   const root = getProjectRoot();
-  const project = await readJson<{ project_id: string }>(root, "project.json");
+  const project = await readJson<ProjectConfig>(root, "project.json");
   const task = await loadTask(root, taskId);
   const taskEntries = await loadTaskEntries(root, task);
   const changedEntries = await collectChangedEntries(root, task, userId);
@@ -305,17 +550,30 @@ export async function exportChangePackage(
     (total, rows) => total + rows.length,
     0,
   );
+
+  if (changedEntryCount + newCommentCount + events.length === 0) {
+    throw new Error(
+      "当前成员在所选任务范围内没有可导出的修改。请确认登录的是完成该任务的成员，或先保存译文后再导出。",
+    );
+  }
+
   const createdAt = nowIso();
+  const contentHash = await calculateContentHash(changedEntries, comments, events);
   const manifest: ChangePackageManifest = {
     schema_version: 1,
     project_id: project.project_id,
+    package_id: buildPackageId(userId, taskId, createdAt),
     user_id: userId,
     user_name: userId,
     task_id: taskId,
     created_at: createdAt,
     changed_entries: changedEntryCount,
     new_comments: newCommentCount,
+    content_hash: contentHash,
+    app_version: CHANGE_PACKAGE_APP_VERSION,
+    source_project_version: String(project.schema_version),
   };
+  const signature = await createSignature(manifest);
   const files: ZipContent = {
     "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
     "entries/": null,
@@ -335,10 +593,15 @@ export async function exportChangePackage(
     files["logs/events.jsonl"] = stringifyJsonl(events);
   }
 
+  if (signature) {
+    files["signature.json"] = `${JSON.stringify(signature, null, 2)}\n`;
+  }
+
   return {
     fileName: buildFileName(userId, taskId, createdAt),
     blob: await createZip(files),
     manifest,
+    signature,
   };
 }
 
@@ -352,6 +615,7 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
     }
 
     const manifest = JSON.parse(manifestText) as ChangePackageManifest;
+    const signature = readSignature(files);
     const entries = Object.fromEntries(
       Object.entries(parsePackageJsonl<Entry>(files, "entries/")).map(
         ([path, rows]) => [path, normalizeEntries(rows)],
@@ -364,6 +628,7 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
 
     return {
       manifest,
+      signature,
       files,
       entries,
       comments,
@@ -380,20 +645,54 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
 
 export async function validateChangePackage(
   changePackage: ReadChangePackage,
-): Promise<void> {
-  const project = await readJson<{ project_id: string }>(
-    getProjectRoot(),
-    "project.json",
+): Promise<ChangePackageValidation> {
+  const root = getProjectRoot();
+  const project = await readJson<ProjectConfig>(root, "project.json");
+  const members = await loadProjectMembers(root);
+  const packageProjectId = changePackage.manifest.project_id;
+  const calculatedContentHash = await calculateContentHash(
+    changePackage.entries,
+    changePackage.comments,
+    changePackage.events,
   );
+  const contentIntegrity: ContentIntegrityStatus = changePackage.manifest.content_hash
+    ? changePackage.manifest.content_hash === calculatedContentHash
+      ? "passed"
+      : "failed"
+    : "legacy_unchecked";
+  const signatureResult = await verifySignatureStatus(changePackage, members);
+  const baseValidation = {
+    projectMatch:
+      packageProjectId === project.project_id
+        ? ("matched" as const)
+        : ("mismatched" as const),
+    expectedProjectId: project.project_id,
+    packageProjectId,
+    contentIntegrity,
+    declaredContentHash: changePackage.manifest.content_hash,
+    calculatedContentHash,
+    signatureStatus: signatureResult.signatureStatus,
+    signerName: signatureResult.signerName,
+    canImportNormally:
+      packageProjectId === project.project_id && contentIntegrity !== "failed",
+    requiresDangerousImport:
+      packageProjectId === project.project_id && contentIntegrity === "failed",
+  };
+  const validation: ChangePackageValidation = {
+    ...baseValidation,
+    riskMessages: buildRiskMessages(baseValidation),
+  };
 
-  if (changePackage.manifest.project_id !== project.project_id) {
-    throw new Error("修改包不属于当前项目，无法导入。");
-  }
+  changePackage.validation = validation;
+
+  return validation;
 }
 
 export function previewChangePackage(
   changePackage: ReadChangePackage,
 ): ChangePackagePreview {
+  const validation = changePackage.validation ?? createBaseValidation(changePackage);
+
   return {
     manifest: changePackage.manifest,
     changedEntries: flattenEntries(changePackage.entries).length,
@@ -403,6 +702,10 @@ export function previewChangePackage(
     ),
     logCount: changePackage.events.length,
     entryPaths: Object.keys(changePackage.entries),
+    validation,
+    contentHashShort: shortHash(changePackage.manifest.content_hash),
+    isLegacyPackage:
+      !changePackage.manifest.package_id || !changePackage.manifest.content_hash,
   };
 }
 
@@ -441,8 +744,23 @@ export async function detectConflicts(
 export async function applyChangePackage(
   changePackage: ReadChangePackage,
   resolutions: ConflictResolution[] = [],
+  options: ApplyChangePackageOptions = {},
 ): Promise<ApplyChangePackageResult> {
-  await validateChangePackage(changePackage);
+  const validation = await validateChangePackage(changePackage);
+
+  if (validation.projectMatch !== "matched") {
+    throw new Error("修改包不属于当前项目，无法导入。");
+  }
+
+  if (validation.contentIntegrity === "failed") {
+    if (!options.allowDangerous) {
+      throw new Error("修改包内容完整性未通过，默认拒绝导入。");
+    }
+
+    if (!canDangerousImportChangePackage(options.actor)) {
+      throw new Error("当前成员没有危险导入权限。");
+    }
+  }
 
   const root = getProjectRoot();
   const conflicts = await detectConflicts(changePackage);
@@ -544,7 +862,7 @@ export async function applyChangePackage(
     importedEvents,
   };
 
-  await appendImportLog(changePackage.manifest, result);
+  await appendImportLog(changePackage.manifest, result, validation, options);
 
   return result;
 }

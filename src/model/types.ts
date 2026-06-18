@@ -76,6 +76,7 @@ export interface Member {
   allow_permissions?: string[];
   deny_permissions?: string[];
   active: boolean;
+  public_key?: JsonWebKey | string;
   password_hash?: string;
   password_salt?: string;
   password_updated_at?: string;
@@ -164,12 +165,26 @@ export interface ProjectEvent {
 export interface ChangePackageManifest {
   schema_version: number;
   project_id: string;
+  package_id?: string;
   user_id: string;
-  user_name: string;
+  user_name?: string;
   task_id: string;
   created_at: string;
   changed_entries: number;
-  new_comments: number;
+  new_comments?: number;
+  content_hash?: string;
+  app_version?: string;
+  source_project_version?: string;
+}
+
+export interface ChangePackageSignature {
+  schema_version: number;
+  package_id?: string;
+  user_id: string;
+  algorithm: string;
+  signed_at: string;
+  signature: string;
+  key_id?: string;
 }
 
 export interface ProjectStats {

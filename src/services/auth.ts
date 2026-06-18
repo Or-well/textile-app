@@ -22,6 +22,7 @@ const PASSWORD_ITERATIONS = 120000;
 const PASSWORD_KEY_LENGTH = 256;
 const ROLE_FALLBACK: Role = "readonly";
 const MANAGER_ROLES: Role[] = ["owner", "admin"];
+const SIGNING_PRIVATE_KEY_STORAGE_PREFIX = "textile.signingPrivateKey.";
 
 function getCrypto(): Crypto {
   if (typeof crypto === "undefined" || !crypto.subtle) {
@@ -248,6 +249,18 @@ export async function loginMember(
   }
 
   return (await verifyMemberPassword(member, password)) ? member : null;
+}
+
+export function getSigningPrivateKeyForMember(
+  memberId: string,
+): JsonWebKey | string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.sessionStorage.getItem(
+    `${SIGNING_PRIVATE_KEY_STORAGE_PREFIX}${memberId}`,
+  );
 }
 
 export async function changeOwnPassword(

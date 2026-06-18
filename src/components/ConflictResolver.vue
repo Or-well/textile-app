@@ -18,6 +18,8 @@ interface ConflictDraft {
 const props = defineProps<{
   conflicts: ChangeConflict[];
   isApplying?: boolean;
+  canApply?: boolean;
+  disabledReason?: string;
 }>();
 
 const emit = defineEmits<{
@@ -77,10 +79,18 @@ function handleApply() {
   <section v-if="conflicts.length > 0" class="conflict-resolver">
     <div class="header-row">
       <h2>处理冲突</h2>
-      <button type="button" :disabled="isApplying" @click="handleApply">
+      <button
+        type="button"
+        :disabled="isApplying || !canApply"
+        @click="handleApply"
+      >
         {{ isApplying ? "正在应用..." : "应用处理结果" }}
       </button>
     </div>
+
+    <p v-if="!canApply && disabledReason" class="disabled-reason">
+      {{ disabledReason }}
+    </p>
 
     <article
       v-for="conflict in conflicts"
@@ -214,9 +224,15 @@ button:disabled {
 
 .conflict-title span,
 small,
-label span {
+label span,
+.disabled-reason {
   color: #5b6472;
   font-size: 13px;
+}
+
+.disabled-reason {
+  margin: 0;
+  line-height: 1.6;
 }
 
 .compare-grid {
