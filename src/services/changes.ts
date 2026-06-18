@@ -1,12 +1,15 @@
 import type {
   ChangePackageManifest,
   ChangePackageSignature,
+  ChangePackageSummary,
+  ChangePackageType,
   Comment,
   Entry,
   Member,
   ProjectConfig,
   ProjectEvent,
   Task,
+  Term,
 } from "../model/types";
 import { normalizeEntries, normalizeEntry } from "../model/status";
 import { nowIso } from "../utils/time";
@@ -20,6 +23,8 @@ import {
   listFiles,
   readJson,
   readJsonl,
+  readTextFile,
+  writeTextFile,
   writeJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
@@ -32,7 +37,21 @@ import {
   stableStringify,
   verifyTextSignature,
 } from "./crypto";
-import { canDangerousImportChangePackage } from "./permissions";
+import {
+  canDangerousImportChangePackage,
+  canImportChangePackage,
+  canImportMaintenanceChangePackage,
+} from "./permissions";
+
+export type ExportChangePackageMode =
+  | "user_changes"
+  | "task_changes"
+  | "maintenance_changes";
+
+export interface ExportChangePackageOptions {
+  mode: ExportChangePackageMode;
+  taskId?: string;
+}
 
 export interface ExportedChangePackage {
   fileName: string;
@@ -47,6 +66,11 @@ export interface ReadChangePackage {
   files: Record<string, string>;
   entries: Record<string, Entry[]>;
   comments: Record<string, Comment[]>;
+  terms: Record<string, Term[]>;
+  contexts: Record<string, string>;
+  tasks: Record<string, Task[]>;
+  projectFiles: Record<string, string>;
+  memberFiles: Record<string, string>;
   events: ProjectEvent[];
   validation?: ChangePackageValidation;
 }
@@ -55,11 +79,19 @@ export interface ChangePackagePreview {
   manifest: ChangePackageManifest;
   changedEntries: number;
   commentCount: number;
+  termCount: number;
+  contextCount: number;
+  taskCount: number;
+  memberChangeCount: number;
+  credentialChangeCount: number;
+  hasProjectSettingsChange: boolean;
   logCount: number;
   entryPaths: string[];
   validation: ChangePackageValidation;
   contentHashShort: string;
   isLegacyPackage: boolean;
+  packageType: ChangePackageType;
+  riskLevel: ChangePackageRiskLevel;
 }
 
 export type ProjectMatchStatus = "matched" | "mismatched" | "unknown";
@@ -72,6 +104,7 @@ export type SignatureStatus =
   | "invalid"
   | "unsigned"
   | "missing_public_key";
+export type ChangePackageRiskLevel = "normal" | "maintenance" | "danger";
 
 export interface ChangePackageValidation {
   projectMatch: ProjectMatchStatus;
@@ -82,9 +115,14 @@ export interface ChangePackageValidation {
   calculatedContentHash?: string;
   signatureStatus: SignatureStatus;
   signerName?: string;
+  packageType: ChangePackageType;
+  summary: ChangePackageSummary;
+  riskLevel: ChangePackageRiskLevel;
   riskMessages: string[];
   canImportNormally: boolean;
   requiresDangerousImport: boolean;
+  requiresMaintenanceConfirmation: boolean;
+  requiresOwnerCredentialConfirmation: boolean;
 }
 
 export interface ChangeConflict {
@@ -111,15 +149,44 @@ export interface ConflictResolution {
 export interface ApplyChangePackageResult {
   appliedEntries: number;
   importedComments: number;
+  importedTerms: number;
+  importedContexts: number;
+  importedTasks: number;
+  importedMembers: number;
+  importedProjectSettings: number;
   importedEvents: number;
 }
 
 export interface ApplyChangePackageOptions {
   allowDangerous?: boolean;
+  confirmMaintenance?: boolean;
+  confirmOwnerCredentials?: boolean;
   actor?: Member | null;
 }
 
 const CHANGE_PACKAGE_APP_VERSION = "0.2.0";
+const EMPTY_SUMMARY: ChangePackageSummary = {
+  changed_entries: 0,
+  changed_comments: 0,
+  changed_terms: 0,
+  changed_contexts: 0,
+  changed_tasks: 0,
+  changed_members: 0,
+  changed_project_settings: 0,
+  changed_credentials: 0,
+  log_events: 0,
+};
+
+interface ChangePackagePayload {
+  entries: Record<string, Entry[]>;
+  comments: Record<string, Comment[]>;
+  terms: Record<string, Term[]>;
+  contexts: Record<string, string>;
+  tasks: Record<string, Task[]>;
+  projectFiles: Record<string, string>;
+  memberFiles: Record<string, string>;
+  events: ProjectEvent[];
+}
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 
@@ -137,6 +204,40 @@ function getProjectRoot(): ProjectDirectoryHandle {
 
 function compareText(left: string, right: string): number {
   return left.localeCompare(right);
+}
+
+function createEmptySummary(): ChangePackageSummary {
+  return { ...EMPTY_SUMMARY };
+}
+
+function getPackageType(manifest: ChangePackageManifest): ChangePackageType {
+  return manifest.package_type ?? "legacy";
+}
+
+function countRecordRows<T>(rowsByPath: Record<string, T[]>): number {
+  return Object.values(rowsByPath).reduce((total, rows) => total + rows.length, 0);
+}
+
+function countRecordFiles(rowsByPath: Record<string, unknown>): number {
+  return Object.keys(rowsByPath).length;
+}
+
+function getPackageSummary(payload: ChangePackagePayload): ChangePackageSummary {
+  return {
+    changed_entries: countRecordRows(payload.entries),
+    changed_comments: countRecordRows(payload.comments),
+    changed_terms: countRecordRows(payload.terms),
+    changed_contexts: countRecordFiles(payload.contexts),
+    changed_tasks: countRecordRows(payload.tasks),
+    changed_members: countRecordFiles(payload.memberFiles),
+    changed_project_settings: countRecordFiles(payload.projectFiles),
+    changed_credentials: countPackageCredentials(payload.memberFiles),
+    log_events: payload.events.length,
+  };
+}
+
+function hasPackageContent(summary: ChangePackageSummary): boolean {
+  return Object.values(summary).some((count) => count > 0);
 }
 
 function getStableRowKey(row: {
@@ -175,34 +276,43 @@ function normalizeRecordRows<T extends {
     }));
 }
 
-function buildContentHashPayload(
-  entries: Record<string, Entry[]>,
-  comments: Record<string, Comment[]>,
-  events: ProjectEvent[],
-) {
+function normalizeTextRecord(rowsByPath: Record<string, string>) {
+  return Object.entries(rowsByPath)
+    .sort(([leftPath], [rightPath]) => compareText(leftPath, rightPath))
+    .map(([path, content]) => ({ path, content }));
+}
+
+function buildContentHashPayload(payload: ChangePackagePayload) {
   return {
-    entries: normalizeRecordRows(entries),
-    comments: normalizeRecordRows(comments),
-    logs: sortRows(events),
+    entries: normalizeRecordRows(payload.entries),
+    comments: normalizeRecordRows(payload.comments),
+    terms: normalizeRecordRows(payload.terms),
+    contexts: normalizeTextRecord(payload.contexts),
+    tasks: normalizeRecordRows(payload.tasks),
+    project: normalizeTextRecord(payload.projectFiles),
+    members: normalizeTextRecord(payload.memberFiles),
+    logs: sortRows(payload.events),
   };
 }
 
-async function calculateContentHash(
-  entries: Record<string, Entry[]>,
-  comments: Record<string, Comment[]>,
-  events: ProjectEvent[],
-): Promise<string> {
-  return sha256Hex(stableStringify(buildContentHashPayload(entries, comments, events)));
+async function calculateContentHash(payload: ChangePackagePayload): Promise<string> {
+  return sha256Hex(stableStringify(buildContentHashPayload(payload)));
 }
 
 function buildSignaturePayload(manifest: ChangePackageManifest): string {
   return stableStringify({ manifest });
 }
 
-function buildPackageId(userId: string, taskId: string, createdAt: string): string {
+function buildPackageId(
+  userId: string,
+  packageType: ChangePackageType,
+  createdAt: string,
+  taskId?: string,
+): string {
   const date = createdAt.slice(0, 10).replace(/-/g, "");
+  const scope = packageType === "task_changes" && taskId ? taskId : packageType;
 
-  return createId(`change_${date}_${userId}_${taskId}`);
+  return createId(`change_${date}_${userId}_${scope}`);
 }
 
 function readSignature(files: Record<string, string>): ChangePackageSignature | undefined {
@@ -221,10 +331,102 @@ async function loadProjectMembers(root: ProjectDirectoryHandle): Promise<Member[
   return file.members;
 }
 
+function parseMembersFromPackage(memberFiles: Record<string, string>): Member[] {
+  const text = memberFiles["members/members.json"];
+
+  if (!text) {
+    return [];
+  }
+
+  try {
+    const file = JSON.parse(text) as { members?: Member[] };
+
+    return file.members ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function parseProjectFromPackage(projectFiles: Record<string, string>): ProjectConfig | null {
+  const text = projectFiles["project/project.json"];
+
+  if (!text) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(text) as ProjectConfig;
+  } catch {
+    return null;
+  }
+}
+
+function hasCredentialFields(member: Member): boolean {
+  return Boolean(
+    member.password_hash || member.password_salt || member.password_updated_at,
+  );
+}
+
+function memberCredentialsChanged(
+  currentMember: Member | undefined,
+  packageMember: Member,
+): boolean {
+  return (
+    currentMember?.password_hash !== packageMember.password_hash ||
+    currentMember?.password_salt !== packageMember.password_salt ||
+    currentMember?.password_updated_at !== packageMember.password_updated_at
+  );
+}
+
+function countPackageCredentials(memberFiles: Record<string, string>): number {
+  return parseMembersFromPackage(memberFiles).filter(hasCredentialFields).length;
+}
+
+function isOwnerMember(member: Member | undefined): boolean {
+  return Boolean(member?.roles.includes("owner"));
+}
+
+function detectOwnerCredentialChange(
+  currentMembers: Member[],
+  packageMembers: Member[],
+): boolean {
+  return packageMembers.some((packageMember) => {
+    const currentMember = currentMembers.find((member) => member.id === packageMember.id);
+
+    return (
+      (isOwnerMember(currentMember) || isOwnerMember(packageMember)) &&
+      memberCredentialsChanged(currentMember, packageMember)
+    );
+  });
+}
+
+function detectOwnerRolePromotion(
+  currentMembers: Member[],
+  packageMembers: Member[],
+): boolean {
+  return packageMembers.some((packageMember) => {
+    const currentMember = currentMembers.find((member) => member.id === packageMember.id);
+
+    return !isOwnerMember(currentMember) && isOwnerMember(packageMember);
+  });
+}
+
+function countChangedMemberRecords(
+  currentMembers: Member[],
+  packageMembers: Member[],
+): number {
+  return packageMembers.filter((packageMember) => {
+    const currentMember = currentMembers.find((member) => member.id === packageMember.id);
+
+    return stableStringify(currentMember ?? null) !== stableStringify(packageMember);
+  }).length;
+}
+
 function createBaseValidation(
   changePackage: ReadChangePackage,
 ): ChangePackageValidation {
   const isLegacyPackage = !changePackage.manifest.content_hash;
+  const summary = changePackage.manifest.summary ?? createEmptySummary();
 
   return {
     projectMatch: "unknown",
@@ -232,9 +434,14 @@ function createBaseValidation(
     contentIntegrity: isLegacyPackage ? "legacy_unchecked" : "failed",
     declaredContentHash: changePackage.manifest.content_hash,
     signatureStatus: changePackage.signature ? "invalid" : "unsigned",
+    packageType: getPackageType(changePackage.manifest),
+    summary,
+    riskLevel: "normal",
     riskMessages: [],
     canImportNormally: false,
     requiresDangerousImport: false,
+    requiresMaintenanceConfirmation: false,
+    requiresOwnerCredentialConfirmation: false,
   };
 }
 
@@ -253,6 +460,26 @@ function buildRiskMessages(
 
   if (validation.contentIntegrity === "legacy_unchecked") {
     messages.push("这是旧格式修改包，无法校验内容完整性。");
+  }
+
+  if (validation.packageType === "maintenance_changes") {
+    messages.push("这是项目维护修改包，可能更新项目设置、成员、权限或密码凭据。");
+  }
+
+  if (validation.summary.changed_project_settings > 0) {
+    messages.push("修改包包含项目设置变更，导入前请确认来源可靠。");
+  }
+
+  if (validation.summary.changed_members > 0) {
+    messages.push("修改包包含成员或权限变更，不会静默导入。");
+  }
+
+  if (validation.summary.changed_credentials > 0) {
+    messages.push("修改包包含密码凭据变更，界面不会显示具体凭据内容。");
+  }
+
+  if (validation.requiresOwnerCredentialConfirmation) {
+    messages.push("修改包涉及负责人账号凭据或负责人权限变更，需要额外确认。");
   }
 
   if (validation.signatureStatus === "invalid") {
@@ -372,7 +599,55 @@ async function loadTaskEntries(
   return groups.flatMap((group) => group.entries);
 }
 
-async function collectChangedEntries(
+async function collectProjectEntryGroups(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+): Promise<{ path: string; entries: Entry[] }[]> {
+  const groups: { path: string; entries: Entry[] }[] = [];
+
+  for (const file of project.files) {
+    if (!(await fileExists(root, file.entries_path))) {
+      continue;
+    }
+
+    const fileNames = await listFiles(root, file.entries_path);
+    const chunkFiles = fileNames
+      .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
+      .sort((a, b) => a.localeCompare(b));
+
+    for (const chunkFile of chunkFiles) {
+      const path = `${file.entries_path}/${chunkFile}`;
+
+      groups.push({
+        path,
+        entries: normalizeEntries(await readJsonl<Entry>(root, path)),
+      });
+    }
+  }
+
+  return groups;
+}
+
+async function collectUserChangedEntries(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+  userId: string,
+): Promise<Record<string, Entry[]>> {
+  const changedEntries: Record<string, Entry[]> = {};
+  const groups = await collectProjectEntryGroups(root, project);
+
+  for (const group of groups) {
+    const rows = group.entries.filter((entry) => entry.updated_by === userId);
+
+    if (rows.length > 0) {
+      changedEntries[group.path] = rows;
+    }
+  }
+
+  return changedEntries;
+}
+
+async function collectTaskChangedEntries(
   root: ProjectDirectoryHandle,
   task: Task,
   userId: string,
@@ -397,6 +672,10 @@ async function collectChangedEntries(
   }
 
   return changedEntries;
+}
+
+function getPackageEntries(payloadEntries: Record<string, Entry[]>): Entry[] {
+  return Object.values(payloadEntries).flat();
 }
 
 async function collectComments(
@@ -425,6 +704,58 @@ async function collectComments(
   return comments;
 }
 
+async function collectUserTerms(
+  root: ProjectDirectoryHandle,
+  userId: string,
+): Promise<Record<string, Term[]>> {
+  if (!(await fileExists(root, "terms/terms.jsonl"))) {
+    return {};
+  }
+
+  const rows = (await readJsonl<Term>(root, "terms/terms.jsonl")).filter(
+    (term) => term.created_by === userId,
+  );
+
+  return rows.length > 0 ? { "terms/terms.jsonl": rows } : {};
+}
+
+async function collectAllTerms(root: ProjectDirectoryHandle): Promise<Record<string, Term[]>> {
+  if (!(await fileExists(root, "terms/terms.jsonl"))) {
+    return {};
+  }
+
+  return { "terms/terms.jsonl": await readJsonl<Term>(root, "terms/terms.jsonl") };
+}
+
+async function collectUserTasks(
+  root: ProjectDirectoryHandle,
+  userId: string,
+): Promise<Record<string, Task[]>> {
+  if (!(await fileExists(root, "tasks/tasks.jsonl"))) {
+    return {};
+  }
+
+  const rows = (await readJsonl<Task>(root, "tasks/tasks.jsonl")).filter(
+    (task) => task.created_by === userId || task.assignee === userId,
+  );
+
+  return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
+}
+
+async function collectAllTasks(root: ProjectDirectoryHandle): Promise<Record<string, Task[]>> {
+  if (!(await fileExists(root, "tasks/tasks.jsonl"))) {
+    return {};
+  }
+
+  return { "tasks/tasks.jsonl": await readJsonl<Task>(root, "tasks/tasks.jsonl") };
+}
+
+async function collectTaskRows(root: ProjectDirectoryHandle, task: Task): Promise<Record<string, Task[]>> {
+  return (await fileExists(root, "tasks/tasks.jsonl"))
+    ? { "tasks/tasks.jsonl": [task] }
+    : {};
+}
+
 async function collectEvents(
   root: ProjectDirectoryHandle,
   taskEntries: Entry[],
@@ -443,10 +774,74 @@ async function collectEvents(
   );
 }
 
-function buildFileName(userId: string, taskId: string, createdAt: string): string {
+async function collectUserEvents(
+  root: ProjectDirectoryHandle,
+  userId: string,
+): Promise<ProjectEvent[]> {
+  if (!(await fileExists(root, "logs/events.jsonl"))) {
+    return [];
+  }
+
+  return (await readJsonl<ProjectEvent>(root, "logs/events.jsonl")).filter(
+    (event) => event.user_id === userId,
+  );
+}
+
+async function collectAllEvents(root: ProjectDirectoryHandle): Promise<ProjectEvent[]> {
+  if (!(await fileExists(root, "logs/events.jsonl"))) {
+    return [];
+  }
+
+  return readJsonl<ProjectEvent>(root, "logs/events.jsonl");
+}
+
+async function collectTextFiles(
+  root: ProjectDirectoryHandle,
+  directoryPath: string,
+): Promise<Record<string, string>> {
+  if (!(await fileExists(root, directoryPath))) {
+    return {};
+  }
+
+  const files: Record<string, string> = {};
+  const names = await listFiles(root, directoryPath);
+
+  for (const name of names) {
+    const path = `${directoryPath}/${name}`;
+
+    try {
+      Object.assign(files, await collectTextFiles(root, path));
+    } catch {
+      files[path] = await readTextFile(root, path);
+    }
+  }
+
+  return files;
+}
+
+async function collectProjectFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
+  return {
+    "project/project.json": await readTextFile(root, "project.json"),
+  };
+}
+
+async function collectMemberFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
+  return {
+    "members/members.json": await readTextFile(root, "members.json"),
+  };
+}
+
+function buildFileName(
+  userId: string,
+  packageType: ChangePackageType,
+  createdAt: string,
+  taskId?: string,
+): string {
   const date = createdAt.slice(0, 10).replace(/-/g, "");
 
-  return `changes-${userId}-${taskId}-${date}.zip`;
+  const scope = packageType === "task_changes" && taskId ? taskId : packageType;
+
+  return `changes-${userId}-${scope}-${date}.zip`;
 }
 
 function getDirectoryPath(path: string): string {
@@ -498,6 +893,30 @@ async function loadCurrentEntries(path: string): Promise<Entry[]> {
   return normalizeEntries(await readJsonl<Entry>(getProjectRoot(), path));
 }
 
+function mergeRowsById<T extends { id: string }>(
+  existingRows: T[],
+  packageRows: T[],
+): { rows: T[]; imported: number } {
+  const nextRows = [...existingRows];
+  let imported = 0;
+
+  for (const packageRow of packageRows) {
+    const index = nextRows.findIndex((row) => row.id === packageRow.id);
+
+    if (index >= 0) {
+      if (stableStringify(nextRows[index]) !== stableStringify(packageRow)) {
+        nextRows[index] = packageRow;
+        imported += 1;
+      }
+    } else {
+      nextRows.push(packageRow);
+      imported += 1;
+    }
+  }
+
+  return { rows: nextRows, imported };
+}
+
 async function appendImportLog(
   manifest: ChangePackageManifest,
   result: ApplyChangePackageResult,
@@ -516,13 +935,21 @@ async function appendImportLog(
     created_at: nowIso(),
     detail: {
       package_id: manifest.package_id ?? "",
+      package_type: validation.packageType,
       applied_entries: result.appliedEntries,
       imported_comments: result.importedComments,
+      imported_terms: result.importedTerms,
+      imported_contexts: result.importedContexts,
+      imported_tasks: result.importedTasks,
+      imported_members: result.importedMembers,
+      imported_project_settings: result.importedProjectSettings,
       imported_events: result.importedEvents,
       content_integrity: validation.contentIntegrity,
       content_hash: manifest.content_hash ?? "",
       signature_status: validation.signatureStatus,
       dangerous_import: Boolean(options.allowDangerous),
+      maintenance_confirmed: Boolean(options.confirmMaintenance),
+      owner_credentials_confirmed: Boolean(options.confirmOwnerCredentials),
       imported_by: options.actor?.id ?? "",
     },
   };
@@ -533,64 +960,118 @@ async function appendImportLog(
 
 export async function exportChangePackage(
   userId: string,
-  taskId: string,
+  options: ExportChangePackageOptions,
 ): Promise<ExportedChangePackage> {
   const root = getProjectRoot();
   const project = await readJson<ProjectConfig>(root, "project.json");
-  const task = await loadTask(root, taskId);
-  const taskEntries = await loadTaskEntries(root, task);
-  const changedEntries = await collectChangedEntries(root, task, userId);
-  const comments = await collectComments(root, taskEntries, userId);
-  const events = await collectEvents(root, taskEntries, userId);
-  const changedEntryCount = Object.values(changedEntries).reduce(
-    (total, rows) => total + rows.length,
-    0,
-  );
-  const newCommentCount = Object.values(comments).reduce(
-    (total, rows) => total + rows.length,
-    0,
-  );
+  const payload: ChangePackagePayload = {
+    entries: {},
+    comments: {},
+    terms: {},
+    contexts: {},
+    tasks: {},
+    projectFiles: {},
+    memberFiles: {},
+    events: [],
+  };
 
-  if (changedEntryCount + newCommentCount + events.length === 0) {
-    throw new Error(
-      "当前成员在所选任务范围内没有可导出的修改。请确认登录的是完成该任务的成员，或先保存译文后再导出。",
-    );
+  if (options.mode === "task_changes") {
+    if (!options.taskId) {
+      throw new Error("请选择要导出的任务。");
+    }
+
+    const task = await loadTask(root, options.taskId);
+
+    payload.entries = await collectTaskChangedEntries(root, task, userId);
+    payload.comments = await collectComments(root, await loadTaskEntries(root, task), userId);
+    payload.tasks = await collectTaskRows(root, task);
+    payload.events = await collectEvents(root, getPackageEntries(payload.entries), userId);
+  }
+
+  if (options.mode === "user_changes") {
+    payload.entries = await collectUserChangedEntries(root, project, userId);
+    payload.comments = await collectComments(root, getPackageEntries(payload.entries), userId);
+    payload.terms = await collectUserTerms(root, userId);
+    payload.tasks = await collectUserTasks(root, userId);
+    payload.events = await collectUserEvents(root, userId);
+  }
+
+  if (options.mode === "maintenance_changes") {
+    payload.terms = await collectAllTerms(root);
+    payload.contexts = await collectTextFiles(root, "contexts");
+    payload.tasks = await collectAllTasks(root);
+    payload.projectFiles = await collectProjectFiles(root);
+    payload.memberFiles = await collectMemberFiles(root);
+    payload.events = await collectAllEvents(root);
+  }
+
+  const summary = getPackageSummary(payload);
+
+  if (!hasPackageContent(summary)) {
+    throw new Error("当前范围内没有可导出的修改。");
   }
 
   const createdAt = nowIso();
-  const contentHash = await calculateContentHash(changedEntries, comments, events);
+  const contentHash = await calculateContentHash(payload);
   const manifest: ChangePackageManifest = {
     schema_version: 1,
     project_id: project.project_id,
-    package_id: buildPackageId(userId, taskId, createdAt),
+    package_id: buildPackageId(userId, options.mode, createdAt, options.taskId),
+    package_type: options.mode,
     user_id: userId,
     user_name: userId,
-    task_id: taskId,
+    task_id: options.mode === "task_changes" ? options.taskId : undefined,
     created_at: createdAt,
-    changed_entries: changedEntryCount,
-    new_comments: newCommentCount,
+    changed_entries: summary.changed_entries,
+    new_comments: summary.changed_comments,
     content_hash: contentHash,
     app_version: CHANGE_PACKAGE_APP_VERSION,
     source_project_version: String(project.schema_version),
+    summary,
   };
   const signature = await createSignature(manifest);
   const files: ZipContent = {
     "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
     "entries/": null,
     "comments/": null,
+    "terms/": null,
+    "contexts/": null,
+    "tasks/": null,
+    "project/": null,
+    "members/": null,
     "logs/": null,
   };
 
-  for (const [path, rows] of Object.entries(changedEntries)) {
+  for (const [path, rows] of Object.entries(payload.entries)) {
     files[path] = stringifyJsonl(rows);
   }
 
-  for (const [path, rows] of Object.entries(comments)) {
+  for (const [path, rows] of Object.entries(payload.comments)) {
     files[path] = stringifyJsonl(rows);
   }
 
-  if (events.length > 0) {
-    files["logs/events.jsonl"] = stringifyJsonl(events);
+  for (const [path, rows] of Object.entries(payload.terms)) {
+    files[path] = stringifyJsonl(rows);
+  }
+
+  for (const [path, content] of Object.entries(payload.contexts)) {
+    files[path] = content;
+  }
+
+  for (const [path, rows] of Object.entries(payload.tasks)) {
+    files[path] = stringifyJsonl(rows);
+  }
+
+  for (const [path, content] of Object.entries(payload.projectFiles)) {
+    files[path] = content;
+  }
+
+  for (const [path, content] of Object.entries(payload.memberFiles)) {
+    files[path] = content;
+  }
+
+  if (payload.events.length > 0) {
+    files["logs/events.jsonl"] = stringifyJsonl(payload.events);
   }
 
   if (signature) {
@@ -598,7 +1079,7 @@ export async function exportChangePackage(
   }
 
   return {
-    fileName: buildFileName(userId, taskId, createdAt),
+    fileName: buildFileName(userId, options.mode, createdAt, options.taskId),
     blob: await createZip(files),
     manifest,
     signature,
@@ -622,6 +1103,23 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
       ),
     );
     const comments = parsePackageJsonl<Comment>(files, "comments/");
+    const terms = parsePackageJsonl<Term>(files, "terms/");
+    const tasks = parsePackageJsonl<Task>(files, "tasks/");
+    const contexts = Object.fromEntries(
+      Object.entries(files).filter(
+        ([path]) => path.startsWith("contexts/") && !path.endsWith("/"),
+      ),
+    );
+    const projectFiles = Object.fromEntries(
+      Object.entries(files).filter(
+        ([path]) => path.startsWith("project/") && !path.endsWith("/"),
+      ),
+    );
+    const memberFiles = Object.fromEntries(
+      Object.entries(files).filter(
+        ([path]) => path.startsWith("members/") && !path.endsWith("/"),
+      ),
+    );
     const events = files["logs/events.jsonl"]
       ? parseJsonl<ProjectEvent>(files["logs/events.jsonl"])
       : [];
@@ -632,6 +1130,11 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
       files,
       entries,
       comments,
+      terms,
+      contexts,
+      tasks,
+      projectFiles,
+      memberFiles,
       events,
     };
   } catch (error) {
@@ -650,17 +1153,63 @@ export async function validateChangePackage(
   const project = await readJson<ProjectConfig>(root, "project.json");
   const members = await loadProjectMembers(root);
   const packageProjectId = changePackage.manifest.project_id;
-  const calculatedContentHash = await calculateContentHash(
-    changePackage.entries,
-    changePackage.comments,
-    changePackage.events,
-  );
+  const packageType = getPackageType(changePackage.manifest);
+  const payload: ChangePackagePayload = {
+    entries: changePackage.entries,
+    comments: changePackage.comments,
+    terms: changePackage.terms,
+    contexts: changePackage.contexts,
+    tasks: changePackage.tasks,
+    projectFiles: changePackage.projectFiles,
+    memberFiles: changePackage.memberFiles,
+    events: changePackage.events,
+  };
+  const calculatedContentHash = await calculateContentHash(payload);
   const contentIntegrity: ContentIntegrityStatus = changePackage.manifest.content_hash
     ? changePackage.manifest.content_hash === calculatedContentHash
       ? "passed"
       : "failed"
     : "legacy_unchecked";
   const signatureResult = await verifySignatureStatus(changePackage, members);
+  const packageMembers = parseMembersFromPackage(changePackage.memberFiles);
+  const packageProject = parseProjectFromPackage(changePackage.projectFiles);
+  const summary = getPackageSummary(payload);
+  const changedMemberRecords =
+    packageMembers.length > 0 ? countChangedMemberRecords(members, packageMembers) : 0;
+  const projectChanged =
+    packageProject && stableStringify(project) !== stableStringify(packageProject)
+      ? 1
+      : 0;
+  const credentialChanges = packageMembers.filter((member) =>
+    memberCredentialsChanged(
+      members.find((currentMember) => currentMember.id === member.id),
+      member,
+    ),
+  ).length;
+  const hasOwnerCredentialChange = detectOwnerCredentialChange(members, packageMembers);
+  const hasOwnerPromotion = detectOwnerRolePromotion(members, packageMembers);
+  const normalizedSummary: ChangePackageSummary = {
+    ...summary,
+    changed_members: Math.max(summary.changed_members, changedMemberRecords),
+    changed_project_settings: Math.max(
+      summary.changed_project_settings,
+      projectChanged,
+    ),
+    changed_credentials: Math.max(summary.changed_credentials, credentialChanges),
+  };
+  const requiresMaintenanceConfirmation =
+    packageType === "maintenance_changes" ||
+    normalizedSummary.changed_members > 0 ||
+    normalizedSummary.changed_project_settings > 0 ||
+    normalizedSummary.changed_credentials > 0;
+  const requiresOwnerCredentialConfirmation =
+    hasOwnerCredentialChange || hasOwnerPromotion;
+  const riskLevel: ChangePackageRiskLevel =
+    contentIntegrity === "failed" || requiresOwnerCredentialConfirmation
+      ? "danger"
+      : requiresMaintenanceConfirmation
+        ? "maintenance"
+        : "normal";
   const baseValidation = {
     projectMatch:
       packageProjectId === project.project_id
@@ -673,10 +1222,15 @@ export async function validateChangePackage(
     calculatedContentHash,
     signatureStatus: signatureResult.signatureStatus,
     signerName: signatureResult.signerName,
+    packageType,
+    summary: normalizedSummary,
+    riskLevel,
     canImportNormally:
       packageProjectId === project.project_id && contentIntegrity !== "failed",
     requiresDangerousImport:
       packageProjectId === project.project_id && contentIntegrity === "failed",
+    requiresMaintenanceConfirmation,
+    requiresOwnerCredentialConfirmation,
   };
   const validation: ChangePackageValidation = {
     ...baseValidation,
@@ -700,12 +1254,22 @@ export function previewChangePackage(
       (total, rows) => total + rows.length,
       0,
     ),
+    termCount: countRecordRows(changePackage.terms),
+    contextCount: countRecordFiles(changePackage.contexts),
+    taskCount: countRecordRows(changePackage.tasks),
+    memberChangeCount: validation.summary.changed_members,
+    credentialChangeCount: validation.summary.changed_credentials,
+    hasProjectSettingsChange: validation.summary.changed_project_settings > 0,
     logCount: changePackage.events.length,
     entryPaths: Object.keys(changePackage.entries),
     validation,
     contentHashShort: shortHash(changePackage.manifest.content_hash),
     isLegacyPackage:
-      !changePackage.manifest.package_id || !changePackage.manifest.content_hash,
+      getPackageType(changePackage.manifest) === "legacy" ||
+      !changePackage.manifest.package_id ||
+      !changePackage.manifest.content_hash,
+    packageType: validation.packageType,
+    riskLevel: validation.riskLevel,
   };
 }
 
@@ -752,6 +1316,28 @@ export async function applyChangePackage(
     throw new Error("修改包不属于当前项目，无法导入。");
   }
 
+  if (!canImportChangePackage(options.actor)) {
+    throw new Error("当前成员没有导入修改包的权限。");
+  }
+
+  if (
+    validation.packageType === "maintenance_changes" &&
+    !canImportMaintenanceChangePackage(options.actor)
+  ) {
+    throw new Error("当前成员没有导入项目维护修改的权限。");
+  }
+
+  if (validation.requiresMaintenanceConfirmation && !options.confirmMaintenance) {
+    throw new Error("项目维护修改需要确认后才能导入。");
+  }
+
+  if (
+    validation.requiresOwnerCredentialConfirmation &&
+    !options.confirmOwnerCredentials
+  ) {
+    throw new Error("负责人账号或权限变更需要额外确认。");
+  }
+
   if (validation.contentIntegrity === "failed") {
     if (!options.allowDangerous) {
       throw new Error("修改包内容完整性未通过，默认拒绝导入。");
@@ -774,6 +1360,11 @@ export async function applyChangePackage(
 
   let appliedEntries = 0;
   let importedComments = 0;
+  let importedTerms = 0;
+  let importedContexts = 0;
+  let importedTasks = 0;
+  let importedMembers = 0;
+  let importedProjectSettings = 0;
   let importedEvents = 0;
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
@@ -837,6 +1428,52 @@ export async function applyChangePackage(
     }
   }
 
+  for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
+    const existingTerms = (await fileExists(root, path))
+      ? await readJsonl<Term>(root, path)
+      : [];
+    const result = mergeRowsById(existingTerms, packageTerms);
+
+    if (result.imported > 0) {
+      await ensureDirectory(root, getDirectoryPath(path));
+      await writeJsonl(root, path, result.rows);
+      importedTerms += result.imported;
+    }
+  }
+
+  for (const [path, packageTasks] of Object.entries(changePackage.tasks)) {
+    const existingTasks = (await fileExists(root, path))
+      ? await readJsonl<Task>(root, path)
+      : [];
+    const result = mergeRowsById(existingTasks, packageTasks);
+
+    if (result.imported > 0) {
+      await ensureDirectory(root, getDirectoryPath(path));
+      await writeJsonl(root, path, result.rows);
+      importedTasks += result.imported;
+    }
+  }
+
+  for (const [path, content] of Object.entries(changePackage.contexts)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeTextFile(root, path, content);
+    importedContexts += 1;
+  }
+
+  for (const [path, content] of Object.entries(changePackage.projectFiles)) {
+    if (path === "project/project.json") {
+      await writeTextFile(root, "project.json", content);
+      importedProjectSettings += 1;
+    }
+  }
+
+  for (const [path, content] of Object.entries(changePackage.memberFiles)) {
+    if (path === "members/members.json") {
+      await writeTextFile(root, "members.json", content);
+      importedMembers += 1;
+    }
+  }
+
   if (changePackage.events.length > 0) {
     const existingEvents = (await fileExists(root, "logs/events.jsonl"))
       ? await readJsonl<ProjectEvent>(root, "logs/events.jsonl")
@@ -859,6 +1496,11 @@ export async function applyChangePackage(
   const result: ApplyChangePackageResult = {
     appliedEntries,
     importedComments,
+    importedTerms,
+    importedContexts,
+    importedTasks,
+    importedMembers,
+    importedProjectSettings,
     importedEvents,
   };
 

@@ -47,6 +47,34 @@ function signatureStatusText(preview: ChangePackagePreview): string {
 
   return preview.isLegacyPackage ? "未签名旧格式修改包" : "未签名";
 }
+
+function packageTypeText(preview: ChangePackagePreview): string {
+  if (preview.packageType === "user_changes") {
+    return "我的全部修改";
+  }
+
+  if (preview.packageType === "task_changes") {
+    return "所选任务修改";
+  }
+
+  if (preview.packageType === "maintenance_changes") {
+    return "项目维护修改";
+  }
+
+  return "旧格式修改包";
+}
+
+function riskLevelText(preview: ChangePackagePreview): string {
+  if (preview.riskLevel === "danger") {
+    return "高风险";
+  }
+
+  if (preview.riskLevel === "maintenance") {
+    return "维护变更";
+  }
+
+  return "普通";
+}
 </script>
 
 <template>
@@ -54,6 +82,10 @@ function signatureStatusText(preview: ChangePackagePreview): string {
     <h2>修改包预览</h2>
 
     <dl>
+      <div>
+        <dt>修改包类型</dt>
+        <dd>{{ packageTypeText(preview) }}</dd>
+      </div>
       <div>
         <dt>提交者</dt>
         <dd>{{ preview.manifest.user_name || preview.manifest.user_id }}</dd>
@@ -75,6 +107,30 @@ function signatureStatusText(preview: ChangePackagePreview): string {
         <dd>{{ preview.commentCount }}</dd>
       </div>
       <div>
+        <dt>术语变更</dt>
+        <dd>{{ preview.termCount }}</dd>
+      </div>
+      <div>
+        <dt>上下文变更</dt>
+        <dd>{{ preview.contextCount }}</dd>
+      </div>
+      <div>
+        <dt>任务变更</dt>
+        <dd>{{ preview.taskCount }}</dd>
+      </div>
+      <div>
+        <dt>成员/权限变更</dt>
+        <dd>{{ preview.memberChangeCount }}</dd>
+      </div>
+      <div>
+        <dt>密码凭据变更</dt>
+        <dd>{{ preview.credentialChangeCount }}</dd>
+      </div>
+      <div>
+        <dt>项目设置变更</dt>
+        <dd>{{ preview.hasProjectSettingsChange ? "包含" : "无" }}</dd>
+      </div>
+      <div>
         <dt>日志</dt>
         <dd>{{ preview.logCount }}</dd>
       </div>
@@ -93,6 +149,10 @@ function signatureStatusText(preview: ChangePackagePreview): string {
       <div>
         <dt>签名状态</dt>
         <dd>{{ signatureStatusText(preview) }}</dd>
+      </div>
+      <div>
+        <dt>风险级别</dt>
+        <dd>{{ riskLevelText(preview) }}</dd>
       </div>
     </dl>
 

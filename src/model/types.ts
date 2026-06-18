@@ -162,19 +162,39 @@ export interface ProjectEvent {
   detail?: Record<string, unknown>;
 }
 
+export type ChangePackageType =
+  | "user_changes"
+  | "task_changes"
+  | "maintenance_changes"
+  | "legacy";
+
+export interface ChangePackageSummary {
+  changed_entries: number;
+  changed_comments: number;
+  changed_terms: number;
+  changed_contexts: number;
+  changed_tasks: number;
+  changed_members: number;
+  changed_project_settings: number;
+  changed_credentials: number;
+  log_events: number;
+}
+
 export interface ChangePackageManifest {
   schema_version: number;
   project_id: string;
   package_id?: string;
+  package_type?: ChangePackageType;
   user_id: string;
   user_name?: string;
-  task_id: string;
+  task_id?: string;
   created_at: string;
-  changed_entries: number;
+  changed_entries?: number;
   new_comments?: number;
   content_hash?: string;
   app_version?: string;
   source_project_version?: string;
+  summary?: ChangePackageSummary;
 }
 
 export interface ChangePackageSignature {

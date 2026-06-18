@@ -217,6 +217,18 @@ export function canDangerousImportChangePackage(
   return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT);
 }
 
+export function canExportMaintenanceChangePackage(
+  user: Member | null | undefined,
+): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE);
+}
+
+export function canImportMaintenanceChangePackage(
+  user: Member | null | undefined,
+): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE);
+}
+
 export function canExportRelease(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.RELEASE_EXPORT);
 }

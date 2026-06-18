@@ -14,14 +14,17 @@ import {
   type ChangeConflict,
   type ChangePackagePreview,
   type ConflictResolution,
+  type ExportChangePackageMode,
   type ReadChangePackage,
 } from "../services/changes";
 import { exportProject, setExporterProjectRoot } from "../services/exporter";
 import {
   canDangerousImportChangePackage,
   canExportChangePackage,
+  canExportMaintenanceChangePackage,
   canExportRelease,
   canImportChangePackage,
+  canImportMaintenanceChangePackage,
   getCurrentUser,
 } from "../services/permissions";
 import { openProject } from "../services/project";
@@ -36,6 +39,7 @@ const props = defineProps<{
 const projectName = ref("");
 const tasks = ref<Task[]>([]);
 const selectedTaskId = ref("");
+const exportMode = ref<ExportChangePackageMode>("user_changes");
 const isLoading = ref(false);
 const isExporting = ref(false);
 const isExportingRelease = ref(false);
@@ -50,11 +54,25 @@ const conflicts = ref<ChangeConflict[]>([]);
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const hasProjectContext = computed(() => Boolean(props.project));
 const canExportChanges = computed(() => canExportChangePackage(currentUser.value));
+const canExportMaintenance = computed(() =>
+  canExportMaintenanceChangePackage(currentUser.value),
+);
 const canImportPackages = computed(() => canImportChangePackage(currentUser.value));
+const canImportMaintenance = computed(() =>
+  canImportMaintenanceChangePackage(currentUser.value),
+);
 const canDangerousImport = computed(() =>
   canDangerousImportChangePackage(currentUser.value),
 );
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
+const canSelectImportFile = computed(
+  () => canImportPackages.value || canImportMaintenance.value,
+);
+const canExportSelectedMode = computed(() =>
+  exportMode.value === "maintenance_changes"
+    ? canExportMaintenance.value
+    : canExportChanges.value,
+);
 const emptyStateText = computed(() =>
   projectName.value
     ? "当前项目暂无可导出的任务。"
@@ -67,11 +85,19 @@ const needsDangerousImport = computed(
 const canApplySelectedPackage = computed(() => {
   const validation = packageValidation.value;
 
-  if (!validation || !canImportPackages.value) {
+  if (!validation) {
     return false;
   }
 
   if (validation.projectMatch !== "matched") {
+    return false;
+  }
+
+  if (validation.packageType === "maintenance_changes") {
+    if (!canImportMaintenance.value) {
+      return false;
+    }
+  } else if (!canImportPackages.value) {
     return false;
   }
 
@@ -84,7 +110,7 @@ const canApplySelectedPackage = computed(() => {
 const applyDisabledReason = computed(() => {
   const validation = packageValidation.value;
 
-  if (!canImportPackages.value) {
+  if (!canSelectImportFile.value) {
     return "当前成员没有导入修改包的权限。";
   }
 
@@ -94,6 +120,13 @@ const applyDisabledReason = computed(() => {
 
   if (validation.projectMatch !== "matched") {
     return "修改包不属于当前项目，不能导入。";
+  }
+
+  if (
+    validation.packageType === "maintenance_changes" &&
+    !canImportMaintenance.value
+  ) {
+    return "当前成员没有导入项目维护修改的权限。";
   }
 
   if (validation.requiresDangerousImport && !canDangerousImport.value) {
@@ -183,13 +216,21 @@ async function handleOpenProject() {
 }
 
 async function handleExportChanges() {
-  if (!currentUser.value || !selectedTaskId.value) {
-    errorMessage.value = "请先登录并选择任务。";
+  if (!currentUser.value) {
+    errorMessage.value = "请先登录。";
     return;
   }
 
-  if (!canExportChanges.value) {
-    errorMessage.value = "当前成员没有导出修改包的权限。";
+  if (exportMode.value === "task_changes" && !selectedTaskId.value) {
+    errorMessage.value = "请选择任务。";
+    return;
+  }
+
+  if (!canExportSelectedMode.value) {
+    errorMessage.value =
+      exportMode.value === "maintenance_changes"
+        ? "当前成员没有导出项目维护修改的权限。"
+        : "当前成员没有导出修改包的权限。";
     return;
   }
 
@@ -198,10 +239,10 @@ async function handleExportChanges() {
   message.value = "";
 
   try {
-    const result = await exportChangePackage(
-      currentUser.value.id,
-      selectedTaskId.value,
-    );
+    const result = await exportChangePackage(currentUser.value.id, {
+      mode: exportMode.value,
+      taskId: exportMode.value === "task_changes" ? selectedTaskId.value : undefined,
+    });
 
     downloadBlob(result.blob, result.fileName);
     message.value = result.signature
@@ -246,7 +287,7 @@ async function handleSelectChangePackage(event: Event) {
     return;
   }
 
-  if (!canImportPackages.value) {
+  if (!canSelectImportFile.value) {
     errorMessage.value = "当前成员没有导入修改包的权限。";
     input.value = "";
     return;
@@ -304,6 +345,24 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
     return;
   }
 
+  if (
+    packageValidation.value?.requiresMaintenanceConfirmation &&
+    !window.confirm(
+      "这个修改包包含项目维护变更，可能更新项目设置、成员、权限或密码凭据。确认继续吗？",
+    )
+  ) {
+    return;
+  }
+
+  if (
+    packageValidation.value?.requiresOwnerCredentialConfirmation &&
+    !window.confirm(
+      "这个修改包涉及负责人账号凭据或负责人权限变更。再次确认继续导入吗？",
+    )
+  ) {
+    return;
+  }
+
   isApplyingPackage.value = true;
   errorMessage.value = "";
   message.value = "";
@@ -311,13 +370,18 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
   try {
     const result = await applyChangePackage(changePackage.value, resolutions, {
       allowDangerous: needsDangerousImport.value,
+      confirmMaintenance:
+        packageValidation.value?.requiresMaintenanceConfirmation ?? false,
+      confirmOwnerCredentials:
+        packageValidation.value?.requiresOwnerCredentialConfirmation ?? false,
       actor: currentUser.value,
     });
 
     conflicts.value = [];
+    const detail = `应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论、${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
     message.value = needsDangerousImport.value
-      ? `危险导入完成：应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论。`
-      : `导入完成：应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论。`;
+      ? `危险导入完成：${detail}`
+      : `导入完成：${detail}`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导入修改包失败。请检查冲突处理。";
@@ -364,7 +428,36 @@ watch(
           <strong>{{ currentUser?.name || "未登录" }}</strong>
         </div>
 
-        <label>
+        <fieldset class="export-mode-field">
+          <legend>导出范围</legend>
+          <label>
+            <input
+              v-model="exportMode"
+              type="radio"
+              value="user_changes"
+            />
+            <span>导出我的全部修改</span>
+          </label>
+          <label>
+            <input
+              v-model="exportMode"
+              type="radio"
+              value="task_changes"
+            />
+            <span>导出所选任务修改</span>
+          </label>
+          <label>
+            <input
+              v-model="exportMode"
+              type="radio"
+              value="maintenance_changes"
+              :disabled="!canExportMaintenance"
+            />
+            <span>导出项目维护修改</span>
+          </label>
+        </fieldset>
+
+        <label v-if="exportMode === 'task_changes'">
           <span>任务</span>
           <select v-model="selectedTaskId">
             <option v-for="task in tasks" :key="task.id" :value="task.id">
@@ -374,20 +467,30 @@ watch(
         </label>
 
         <button
-          v-if="canExportChanges"
+          v-if="canExportSelectedMode"
           class="export-button"
           type="button"
-          :disabled="isExporting || !currentUser || !selectedTaskId"
+          :disabled="
+            isExporting ||
+            !currentUser ||
+            (exportMode === 'task_changes' && !selectedTaskId)
+          "
           @click="handleExportChanges"
         >
-          {{ isExporting ? "正在导出..." : "导出我的修改" }}
+          {{ isExporting ? "正在导出..." : "导出修改包" }}
         </button>
-        <p v-else class="section-note">当前成员没有导出修改包的权限。</p>
+        <p v-else class="section-note">
+          {{
+            exportMode === "maintenance_changes"
+              ? "当前成员没有导出项目维护修改的权限。"
+              : "当前成员没有导出修改包的权限。"
+          }}
+        </p>
       </div>
 
       <section v-if="projectName" class="import-section">
         <h2>导入修改包</h2>
-        <label v-if="canImportPackages" class="file-field">
+        <label v-if="canSelectImportFile" class="file-field">
           <span>选择修改包</span>
           <input
             type="file"
@@ -404,7 +507,7 @@ watch(
         />
 
         <button
-          v-if="packagePreview && conflicts.length === 0 && canImportPackages"
+          v-if="packagePreview && conflicts.length === 0 && canSelectImportFile"
           :class="['export-button', { 'danger-button': needsDangerousImport }]"
           type="button"
           :disabled="isApplyingPackage || !canApplySelectedPackage"
@@ -561,6 +664,27 @@ label {
   gap: 8px;
 }
 
+.export-mode-field {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 6px;
+}
+
+.export-mode-field legend {
+  padding: 0 4px;
+  color: #5b6472;
+  font-size: 14px;
+}
+
+.export-mode-field label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
 label span,
 .current-user-field span {
   color: #5b6472;
@@ -592,6 +716,13 @@ input {
   background: #ffffff;
   color: #1f2937;
   font: inherit;
+}
+
+input[type="radio"] {
+  min-height: auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
 }
 
 .export-button {
