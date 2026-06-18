@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import TermHint from "./TermHint.vue";
 import type { Entry } from "../model/types";
+import { canEditEntry, getCurrentUser } from "../services/permissions";
 import { checkTermUsage, type TermUsageResult } from "../services/terms";
 
 const props = defineProps<{
@@ -18,6 +19,12 @@ const target = ref("");
 const termResults = ref<TermUsageResult[]>([]);
 const termErrorMessage = ref("");
 let termRequestId = 0;
+
+const currentUser = computed(() => getCurrentUser());
+const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
+const permissionMessage = computed(() =>
+  props.entry && !canSaveEntry.value ? "当前用户没有此操作权限" : "",
+);
 
 watch(
   () => props.entry,
@@ -106,7 +113,7 @@ function handleSaveNext() {
         class="target-input"
         rows="8"
         placeholder="请输入译文"
-        :disabled="isSaving || entry.locked"
+        :disabled="isSaving || entry.locked || !canSaveEntry"
       />
     </label>
 
@@ -117,12 +124,15 @@ function handleSaveNext() {
 
     <p v-if="termErrorMessage" class="term-error">{{ termErrorMessage }}</p>
     <TermHint v-else :terms="termResults" />
+    <p v-if="permissionMessage" class="permission-message">
+      {{ permissionMessage }}
+    </p>
 
     <div class="actions">
       <button
         class="secondary-button"
         type="button"
-        :disabled="isSaving || entry.locked"
+        :disabled="isSaving || entry.locked || !canSaveEntry"
         @click="handleSave"
       >
         {{ isSaving ? "保存中..." : "保存" }}
@@ -130,7 +140,7 @@ function handleSaveNext() {
       <button
         class="primary-button"
         type="button"
-        :disabled="isSaving || entry.locked"
+        :disabled="isSaving || entry.locked || !canSaveEntry"
         @click="handleSaveNext"
       >
         保存并下一条
@@ -208,10 +218,18 @@ h2 {
   margin-top: 14px;
 }
 
-.term-error {
+.term-error,
+.permission-message {
   margin: 18px 0 0;
-  color: #b42318;
   line-height: 1.6;
+}
+
+.term-error {
+  color: #b42318;
+}
+
+.permission-message {
+  color: #b45309;
 }
 
 .actions {
