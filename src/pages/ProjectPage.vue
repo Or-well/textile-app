@@ -1,7 +1,16 @@
 <script setup lang="ts">
+import { onMounted, ref } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
+import SyncStatusPanel from "../components/SyncStatusPanel.vue";
 import type { ProjectConfig } from "../model/types";
 import type { BasicProjectStats } from "../services/stats";
+import {
+  getSyncStatus,
+  submitTaskWithSync,
+  syncLatestProject,
+  uploadMyChanges,
+  type SyncStatus,
+} from "../services/sync";
 
 defineProps<{
   project: ProjectConfig;
@@ -12,6 +21,41 @@ defineProps<{
 const emit = defineEmits<{
   openFiles: [];
 }>();
+
+const syncStatus = ref<SyncStatus>();
+const isSyncBusy = ref(false);
+const syncMessage = ref("");
+const syncErrorMessage = ref("");
+
+async function refreshSyncStatus() {
+  syncStatus.value = await getSyncStatus();
+}
+
+async function runSyncAction(action: () => Promise<{ message: string; fallbackMessage?: string }>) {
+  isSyncBusy.value = true;
+  syncMessage.value = "";
+  syncErrorMessage.value = "";
+
+  try {
+    const result = await action();
+
+    syncMessage.value = result.fallbackMessage
+      ? `${result.message}${result.fallbackMessage}`
+      : result.message;
+    await refreshSyncStatus();
+  } catch (error) {
+    syncErrorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "同步操作失败。你可以先导出修改包，交给负责人合并。";
+  } finally {
+    isSyncBusy.value = false;
+  }
+}
+
+onMounted(() => {
+  void refreshSyncStatus();
+});
 </script>
 
 <template>
@@ -36,6 +80,18 @@ const emit = defineEmits<{
           label="总体完成"
         />
         <p v-else class="muted-text">正在准备项目统计。</p>
+      </section>
+
+      <section class="sync-overview-panel">
+        <SyncStatusPanel
+          :status="syncStatus"
+          :is-busy="isSyncBusy"
+          @sync="runSyncAction(syncLatestProject)"
+          @upload="runSyncAction(uploadMyChanges)"
+          @submit-task="runSyncAction(() => submitTaskWithSync('current_task'))"
+        />
+        <p v-if="syncMessage" class="sync-message">{{ syncMessage }}</p>
+        <p v-if="syncErrorMessage" class="sync-error">{{ syncErrorMessage }}</p>
       </section>
 
       <section class="overview-panel">
@@ -160,6 +216,25 @@ h2 {
 
 .stats-panel {
   grid-column: 1 / -1;
+}
+
+.sync-overview-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.sync-message,
+.sync-error {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.sync-message {
+  color: #166534;
+}
+
+.sync-error {
+  color: #b42318;
 }
 
 dl {

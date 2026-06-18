@@ -43,6 +43,8 @@ async function handleOpenProject() {
         {{ isOpening ? "正在打开..." : "打开项目文件夹" }}
       </button>
 
+      <a class="back-link" href="/projects">返回项目列表</a>
+
       <p v-if="projectName" class="project-name">当前项目：{{ projectName }}</p>
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     </section>
@@ -99,6 +101,16 @@ h1 {
 .open-button:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  margin-left: 10px;
+  color: #2563eb;
+  font-size: 14px;
+  text-decoration: none;
 }
 
 .project-name,

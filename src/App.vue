@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import ProjectLayout from "./components/ProjectLayout.vue";
+import CommentsPage from "./pages/CommentsPage.vue";
 import EntryPage from "./pages/EntryPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
+import HomePage from "./pages/HomePage.vue";
+import ImportExportPage from "./pages/ImportExportPage.vue";
 import ProjectListPage from "./pages/ProjectListPage.vue";
 import ProjectPage from "./pages/ProjectPage.vue";
+import SettingsPage from "./pages/SettingsPage.vue";
+import TasksPage from "./pages/TasksPage.vue";
 import type { Member, ProjectConfig } from "./model/types";
 import { setChangesProjectRoot } from "./services/changes";
 import { setCommentsProjectRoot } from "./services/comments";
@@ -77,6 +82,10 @@ function parseRoute(path: string) {
 
   if (parts.length === 0) {
     return { page: "projects" as const };
+  }
+
+  if (parts[0] === "home") {
+    return { page: "home" as const };
   }
 
   if (parts[0] !== "projects") {
@@ -238,14 +247,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ProjectListPage
-    v-if="route.page === 'projects'"
-    :current-project="currentProjectSummary"
-    :is-opening="isOpeningProject"
-    :error-message="appErrorMessage"
-    @open-local-project="handleOpenLocalProject"
-    @enter-current-project="handleEnterCurrentProject"
-  />
+  <HomePage v-if="route.page === 'home'" />
+
+  <section v-else-if="route.page === 'projects'" class="project-list-shell">
+    <button class="home-link-button" type="button" @click="navigate('/home')">
+      打开项目入口
+    </button>
+    <ProjectListPage
+      :current-project="currentProjectSummary"
+      :is-opening="isOpeningProject"
+      :error-message="appErrorMessage"
+      @open-local-project="handleOpenLocalProject"
+      @enter-current-project="handleEnterCurrentProject"
+    />
+  </section>
 
   <ProjectLayout
     v-else-if="route.page === 'project'"
@@ -276,16 +291,24 @@ onBeforeUnmount(() => {
         :file-id="route.fileId"
       />
 
+      <TasksPage v-else-if="route.section === 'tasks'" />
+
+      <CommentsPage v-else-if="route.section === 'comments'" />
+
+      <ImportExportPage v-else-if="route.section === 'import-export'" />
+
+      <SettingsPage v-else-if="route.section === 'settings'" />
+
       <section v-else class="placeholder-page">
         <p class="eyebrow">项目内页面</p>
         <h1>{{ sectionLabels[route.section] }}</h1>
-        <p>这个栏目已经接入项目工作台导航，完整内容将在后续模块迁移。</p>
+        <p>这个栏目已经接入项目工作台导航，当前版本还没有对应页面文件。</p>
       </section>
     </template>
 
     <section v-else class="placeholder-page">
       <p class="eyebrow">未打开项目</p>
-      <h1>请先打开本地项目</h1>
+      <h1>请先打开项目文件夹</h1>
       <p>项目工作台需要先从项目列表页选择一个本地项目文件夹。</p>
       <button class="primary-button" type="button" @click="navigate('/projects')">
         返回项目列表
@@ -303,3 +326,30 @@ onBeforeUnmount(() => {
     </section>
   </main>
 </template>
+
+<style scoped>
+.project-list-shell {
+  position: relative;
+}
+
+.home-link-button {
+  position: absolute;
+  top: 82px;
+  right: max(28px, calc((100vw - 1220px) / 2));
+  z-index: 2;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+@media (max-width: 820px) {
+  .home-link-button {
+    position: static;
+    margin: 18px 18px 0;
+  }
+}
+</style>
