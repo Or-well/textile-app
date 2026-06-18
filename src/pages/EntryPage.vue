@@ -10,6 +10,7 @@ import {
   saveEntry,
   setEntriesProjectRoot,
 } from "../services/entries";
+import { setTermsProjectRoot } from "../services/terms";
 
 const entries = ref<Entry[]>([]);
 const selectedEntry = ref<Entry>();
@@ -30,6 +31,7 @@ async function handleOpenProject() {
     const project = await openProject();
     projectName.value = project.config.name;
     setEntriesProjectRoot(project.root);
+    setTermsProjectRoot(project.root);
 
     entries.value = await loadEntries("script_001");
     selectedEntry.value = entries.value[0];

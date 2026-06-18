@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import TermHint from "./TermHint.vue";
 import type { Entry } from "../model/types";
+import { checkTermUsage, type TermUsageResult } from "../services/terms";
 
 const props = defineProps<{
   entry?: Entry;
@@ -13,11 +15,43 @@ const emit = defineEmits<{
 }>();
 
 const target = ref("");
+const termResults = ref<TermUsageResult[]>([]);
+const termErrorMessage = ref("");
+let termRequestId = 0;
 
 watch(
   () => props.entry,
   (entry) => {
     target.value = entry?.target ?? "";
+  },
+  { immediate: true },
+);
+
+watch(
+  [() => props.entry?.source, target],
+  async ([sourceText, targetText]) => {
+    const requestId = (termRequestId += 1);
+
+    if (!sourceText) {
+      termResults.value = [];
+      termErrorMessage.value = "";
+      return;
+    }
+
+    try {
+      const results = await checkTermUsage(sourceText, targetText);
+
+      if (requestId === termRequestId) {
+        termResults.value = results;
+        termErrorMessage.value = "";
+      }
+    } catch (error) {
+      if (requestId === termRequestId) {
+        termResults.value = [];
+        termErrorMessage.value =
+          error instanceof Error ? error.message : "术语提示无法读取。";
+      }
+    }
   },
   { immediate: true },
 );
@@ -80,6 +114,9 @@ function handleSaveNext() {
       <span>状态：{{ entry.status }}</span>
       <span>键名：{{ entry.key }}</span>
     </div>
+
+    <p v-if="termErrorMessage" class="term-error">{{ termErrorMessage }}</p>
+    <TermHint v-else :terms="termResults" />
 
     <div class="actions">
       <button
@@ -169,6 +206,12 @@ h2 {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 14px;
+}
+
+.term-error {
+  margin: 18px 0 0;
+  color: #b42318;
+  line-height: 1.6;
 }
 
 .actions {
