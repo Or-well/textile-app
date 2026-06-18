@@ -110,7 +110,9 @@ export interface Term {
   part_of_speech: string;
   note: string;
   variants: string[];
+  case_sensitive?: boolean;
   created_by: string;
+  created_at?: string;
   updated_at: string;
 }
 

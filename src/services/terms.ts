@@ -21,6 +21,7 @@ export interface TermInput {
   part_of_speech: string;
   note: string;
   variants: string[];
+  case_sensitive?: boolean;
 }
 
 export interface ImportedTermsResult {
@@ -77,6 +78,7 @@ function normalizeTermInput(input: TermInput): TermInput {
     part_of_speech: input.part_of_speech.trim(),
     note: input.note.trim(),
     variants: normalizeVariants(input.variants),
+    case_sensitive: input.case_sensitive === true ? true : undefined,
   };
 }
 
@@ -91,7 +93,9 @@ function normalizeTerm(term: Partial<Term>, userId: string): Term {
     part_of_speech: term.part_of_speech?.trim() ?? "",
     note: term.note?.trim() ?? "",
     variants: normalizeVariants(variants),
+    case_sensitive: term.case_sensitive === true ? true : undefined,
     created_by: term.created_by || userId,
+    created_at: term.created_at || now,
     updated_at: term.updated_at || now,
   };
 }
@@ -182,6 +186,7 @@ export async function addTerm(input: TermInput, userId: string): Promise<Term> {
     id: createId("term"),
     ...normalizedInput,
     created_by: userId,
+    created_at: nowIso(),
     updated_at: nowIso(),
   };
 
@@ -254,6 +259,7 @@ export async function importTermsFile(
         ...nextTerm,
         id: nextTerms[termIndex].id,
         created_by: nextTerms[termIndex].created_by,
+        created_at: nextTerms[termIndex].created_at,
       };
       updated += 1;
     } else {

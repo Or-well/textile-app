@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import TaskPanel from "../components/TaskPanel.vue";
-import type { Member, Task } from "../model/types";
+import type { Member, ProjectConfig, Task } from "../model/types";
 import { setCurrentUser, getCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 import {
@@ -12,6 +12,11 @@ import {
   submitTask,
   type TaskProgress,
 } from "../services/tasks";
+
+const props = defineProps<{
+  project?: ProjectConfig;
+  members?: Member[];
+}>();
 
 const members = ref<Member[]>([]);
 const allTasks = ref<Task[]>([]);
@@ -28,6 +33,10 @@ const savedMessage = ref("");
 const selectedUser = computed(
   () => members.value.find((member) => member.id === selectedUserId.value) ?? null,
 );
+const hasProjectContext = computed(() => Boolean(props.project));
+const emptyStateText = computed(() =>
+  projectName.value ? "当前项目暂无任务。" : "请打开项目文件夹，查看任务。",
+);
 
 async function refreshMyTasks() {
   myTasks.value = selectedUserId.value
@@ -39,6 +48,53 @@ async function selectTask(task: Task) {
   selectedTask.value = task;
   selectedProgress.value = await getTaskProgress(task.id);
   savedMessage.value = "";
+}
+
+async function loadTaskState() {
+  isLoading.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+  selectedTask.value = undefined;
+  selectedProgress.value = undefined;
+
+  try {
+    allTasks.value = await loadTasks();
+    await refreshMyTasks();
+
+    if (myTasks.value[0]) {
+      await selectTask(myTasks.value[0]);
+    }
+  } catch (error) {
+    allTasks.value = [];
+    myTasks.value = [];
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "任务列表加载失败。请确认项目数据可以读取。";
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function initializeFromProjectContext() {
+  if (!props.project) {
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+
+  projectName.value = props.project.name;
+  members.value = (props.members ?? []).filter((member) => member.active);
+  selectedUserId.value =
+    members.value.find((member) => member.id === currentUser?.id)?.id ??
+    members.value[0]?.id ??
+    "";
+
+  if (selectedUser.value) {
+    setCurrentUser(selectedUser.value);
+  }
+
+  await loadTaskState();
 }
 
 async function handleOpenProject() {
@@ -64,12 +120,7 @@ async function handleOpenProject() {
     }
 
     setTasksProjectRoot(project.root);
-    allTasks.value = await loadTasks();
-    await refreshMyTasks();
-
-    if (myTasks.value[0]) {
-      await selectTask(myTasks.value[0]);
-    }
+    await loadTaskState();
   } catch (error) {
     members.value = [];
     allTasks.value = [];
@@ -123,6 +174,14 @@ async function handleSubmitTask(taskId: string) {
     isSubmitting.value = false;
   }
 }
+
+watch(
+  () => [props.project?.project_id, props.members?.length ?? 0],
+  () => {
+    void initializeFromProjectContext();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -134,6 +193,7 @@ async function handleSubmitTask(taskId: string) {
       </div>
 
       <button
+        v-if="!hasProjectContext"
         class="open-button"
         type="button"
         :disabled="isLoading"
@@ -202,7 +262,7 @@ async function handleSubmitTask(taskId: string) {
     </section>
 
     <p v-else-if="!isLoading && !errorMessage" class="empty-state">
-      请打开项目文件夹，查看任务。
+      {{ emptyStateText }}
     </p>
   </main>
 </template>

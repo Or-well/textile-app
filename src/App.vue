@@ -146,10 +146,15 @@ function buildProjectSummary(
   stats: BasicProjectStats,
   totalTasks: number,
 ): ProjectSummary {
+  const projectDescription = (config as ProjectConfig & { description?: string })
+    .description;
+
   return {
     id: config.project_id,
     name: config.name,
-    description: `${config.source_language} -> ${config.target_language} 本地汉化项目`,
+    description:
+      projectDescription?.trim() ||
+      `${config.source_language} -> ${config.target_language} 本地汉化项目`,
     totalEntries: stats.totalEntries,
     translatedPercent: stats.translationProgress,
     reviewedPercent: stats.reviewProgress,
@@ -210,6 +215,18 @@ function handleOpenProjectSection(section: ProjectSection) {
   }
 
   navigate(`/projects/${encodeURIComponent(currentProject.value.config.project_id)}/${section}`);
+}
+
+function handleProjectUpdated(config: ProjectConfig) {
+  if (!currentProject.value) {
+    return;
+  }
+
+  currentProject.value = {
+    ...currentProject.value,
+    config,
+  };
+  void refreshProjectSummary();
 }
 
 function handleOpenFile(fileId: string) {
@@ -281,20 +298,38 @@ onBeforeUnmount(() => {
         :file-id="route.fileId"
       />
 
-      <TasksPage v-else-if="route.section === 'tasks'" />
+      <TasksPage
+        v-else-if="route.section === 'tasks'"
+        :project="currentProject.config"
+        :members="currentProject.members"
+      />
 
       <TermsPage v-else-if="route.section === 'terms'" />
 
-      <CommentsPage v-else-if="route.section === 'comments'" />
+      <CommentsPage
+        v-else-if="route.section === 'comments'"
+        :project="currentProject.config"
+      />
 
       <StatsPage
         v-else-if="route.section === 'stats'"
         :project="currentProject.config"
       />
 
-      <ImportExportPage v-else-if="route.section === 'import-export'" />
+      <ImportExportPage
+        v-else-if="route.section === 'import-export'"
+        :project="currentProject.config"
+        :members="currentProject.members"
+      />
 
-      <SettingsPage v-else-if="route.section === 'settings'" />
+      <SettingsPage
+        v-else-if="route.section === 'settings'"
+        :project="currentProject.config"
+        :members="currentProject.members"
+        :project-root="currentProject.root"
+        @project-updated="handleProjectUpdated"
+        @open-import-export="handleOpenProjectSection('import-export')"
+      />
 
       <section v-else class="placeholder-page">
         <p class="eyebrow">项目内页面</p>
@@ -302,10 +337,6 @@ onBeforeUnmount(() => {
         <p>这个栏目已经接入项目工作台导航，当前版本还没有对应页面文件。</p>
       </section>
     </template>
-
-    <TermsPage v-else-if="route.section === 'terms'" />
-
-    <StatsPage v-else-if="route.section === 'stats'" />
 
     <section v-else class="placeholder-page">
       <p class="eyebrow">未打开项目</p>

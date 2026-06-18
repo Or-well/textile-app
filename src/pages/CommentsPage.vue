@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import type { Comment, Entry } from "../model/types";
+import { computed, ref, watch } from "vue";
+import type { Comment, Entry, ProjectConfig } from "../model/types";
 import {
   loadDisputedEntries,
   loadRecentComments,
@@ -10,6 +10,10 @@ import {
 import { setHistoryProjectRoot } from "../services/history";
 import { canResolveDispute, getCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
+
+const props = defineProps<{
+  project?: ProjectConfig;
+}>();
 
 const projectName = ref("");
 const disputedEntries = ref<Entry[]>([]);
@@ -25,6 +29,10 @@ const currentUser = computed(() => getCurrentUser());
 const canResolveSelectedDispute = computed(() =>
   canResolveDispute(currentUser.value, selectedEntry.value),
 );
+const hasProjectContext = computed(() => Boolean(props.project));
+const emptyStateText = computed(() =>
+  projectName.value ? "当前项目暂无评论或争议。" : "请打开项目文件夹，查看评论与争议。",
+);
 
 async function refreshCommentsView() {
   disputedEntries.value = await loadDisputedEntries();
@@ -35,6 +43,33 @@ async function refreshCommentsView() {
     !disputedEntries.value.some((entry) => entry.id === selectedEntry.value?.id)
   ) {
     selectedEntry.value = disputedEntries.value[0];
+  }
+}
+
+async function initializeFromProjectContext() {
+  if (!props.project) {
+    return;
+  }
+
+  isLoading.value = true;
+  errorMessage.value = "";
+  message.value = "";
+  resolution.value = "";
+  projectName.value = props.project.name;
+
+  try {
+    await refreshCommentsView();
+    selectedEntry.value = disputedEntries.value[0];
+  } catch (error) {
+    disputedEntries.value = [];
+    recentComments.value = [];
+    selectedEntry.value = undefined;
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "评论与争议加载失败。请确认项目数据可以读取。";
+  } finally {
+    isLoading.value = false;
   }
 }
 
@@ -96,6 +131,14 @@ async function handleResolveDispute() {
     isResolving.value = false;
   }
 }
+
+watch(
+  () => props.project?.project_id,
+  () => {
+    void initializeFromProjectContext();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -107,6 +150,7 @@ async function handleResolveDispute() {
       </div>
 
       <button
+        v-if="!hasProjectContext"
         class="open-button"
         type="button"
         :disabled="isLoading"
@@ -180,7 +224,7 @@ async function handleResolveDispute() {
     </section>
 
     <p v-else-if="!isLoading && !errorMessage" class="empty-state">
-      请打开项目文件夹，查看评论与争议。
+      {{ emptyStateText }}
     </p>
   </main>
 </template>

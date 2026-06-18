@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
-import type { Member, Task } from "../model/types";
+import type { Member, ProjectConfig, Task } from "../model/types";
 import {
   applyChangePackage,
   detectConflicts,
@@ -20,6 +20,11 @@ import { exportProject, setExporterProjectRoot } from "../services/exporter";
 import { getCurrentUser, setCurrentUser } from "../services/permissions";
 import { openProject } from "../services/project";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
+
+const props = defineProps<{
+  project?: ProjectConfig;
+  members?: Member[];
+}>();
 
 const projectName = ref("");
 const members = ref<Member[]>([]);
@@ -40,6 +45,12 @@ const conflicts = ref<ChangeConflict[]>([]);
 const selectedUser = computed(
   () => members.value.find((member) => member.id === selectedUserId.value) ?? null,
 );
+const hasProjectContext = computed(() => Boolean(props.project));
+const emptyStateText = computed(() =>
+  projectName.value
+    ? "当前项目暂无可导出的任务。"
+    : "请打开项目文件夹，选择用户和任务后导出修改。",
+);
 
 function downloadBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
@@ -51,6 +62,50 @@ function downloadBlob(blob: Blob, fileName: string): void {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+async function loadImportExportState() {
+  isLoading.value = true;
+  errorMessage.value = "";
+  message.value = "";
+  changePackage.value = undefined;
+  packagePreview.value = undefined;
+  conflicts.value = [];
+
+  try {
+    tasks.value = await loadTasks();
+    selectedTaskId.value = tasks.value[0]?.id ?? "";
+  } catch (error) {
+    tasks.value = [];
+    selectedTaskId.value = "";
+    errorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "导入导出准备失败。请确认项目数据可以读取。";
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function initializeFromProjectContext() {
+  if (!props.project) {
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+
+  projectName.value = props.project.name;
+  members.value = (props.members ?? []).filter((member) => member.active);
+  selectedUserId.value =
+    members.value.find((member) => member.id === currentUser?.id)?.id ??
+    members.value[0]?.id ??
+    "";
+
+  if (selectedUser.value) {
+    setCurrentUser(selectedUser.value);
+  }
+
+  await loadImportExportState();
 }
 
 async function handleOpenProject() {
@@ -76,8 +131,7 @@ async function handleOpenProject() {
     setChangesProjectRoot(project.root);
     setExporterProjectRoot(project.root);
     setTasksProjectRoot(project.root);
-    tasks.value = await loadTasks();
-    selectedTaskId.value = tasks.value[0]?.id ?? "";
+    await loadImportExportState();
   } catch (error) {
     projectName.value = "";
     members.value = [];
@@ -206,6 +260,14 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
     isApplyingPackage.value = false;
   }
 }
+
+watch(
+  () => [props.project?.project_id, props.members?.length ?? 0],
+  () => {
+    void initializeFromProjectContext();
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -218,6 +280,7 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
         </div>
 
         <button
+          v-if="!hasProjectContext"
           class="open-button"
           type="button"
           :disabled="isLoading"
@@ -313,7 +376,7 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
       </section>
 
       <p v-else-if="!isLoading && !errorMessage" class="empty-state">
-        请打开项目文件夹，选择用户和任务后导出修改。
+        {{ emptyStateText }}
       </p>
     </section>
   </main>
