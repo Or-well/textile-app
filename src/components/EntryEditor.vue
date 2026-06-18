@@ -1,26 +1,33 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import CommentPanel from "./CommentPanel.vue";
-import TermHint from "./TermHint.vue";
-import type { Entry } from "../model/types";
+import type { Entry, EntryStatus } from "../model/types";
 import { canEditEntry, getCurrentUser } from "../services/permissions";
-import { checkTermUsage, type TermUsageResult } from "../services/terms";
 
 const props = defineProps<{
   entry?: Entry;
+  fileName: string;
   isSaving?: boolean;
+  canGoPrevious?: boolean;
+  canGoNext?: boolean;
 }>();
 
 const emit = defineEmits<{
   save: [entry: Entry];
   saveNext: [entry: Entry];
-  entryUpdated: [entry: Entry];
+  previous: [];
+  next: [];
+  draftTargetChanged: [target: string];
 }>();
 
 const target = ref("");
-const termResults = ref<TermUsageResult[]>([]);
-const termErrorMessage = ref("");
-let termRequestId = 0;
+
+const statusLabels: Record<EntryStatus, string> = {
+  untranslated: "未翻译",
+  translated: "已翻译",
+  proofread: "已校对",
+  reviewed: "已审核",
+  disputed: "有争议",
+};
 
 const currentUser = computed(() => getCurrentUser());
 const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
@@ -32,38 +39,14 @@ watch(
   () => props.entry,
   (entry) => {
     target.value = entry?.target ?? "";
+    emit("draftTargetChanged", target.value);
   },
   { immediate: true },
 );
 
-watch(
-  [() => props.entry?.source, target],
-  async ([sourceText, targetText]) => {
-    const requestId = (termRequestId += 1);
-
-    if (!sourceText) {
-      termResults.value = [];
-      termErrorMessage.value = "";
-      return;
-    }
-
-    try {
-      const results = await checkTermUsage(sourceText, targetText);
-
-      if (requestId === termRequestId) {
-        termResults.value = results;
-        termErrorMessage.value = "";
-      }
-    } catch (error) {
-      if (requestId === termRequestId) {
-        termResults.value = [];
-        termErrorMessage.value =
-          error instanceof Error ? error.message : "术语提示无法读取。";
-      }
-    }
-  },
-  { immediate: true },
-);
+watch(target, (value) => {
+  emit("draftTargetChanged", value);
+});
 
 function buildDraftEntry(): Entry | undefined {
   if (!props.entry) {
@@ -95,44 +78,78 @@ function handleSaveNext() {
 
 <template>
   <article v-if="entry" class="entry-editor">
-    <p class="entry-index">#{{ entry.index }}</p>
-    <h2>{{ entry.speaker || "旁白" }}</h2>
+    <header class="editor-header">
+      <div>
+        <span class="status-badge" :class="entry.status">
+          {{ statusLabels[entry.status] }}
+        </span>
+        <h1>{{ entry.speaker || "旁白" }}</h1>
+      </div>
 
-    <div class="field-group">
+      <div class="entry-nav">
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="!canGoPrevious || isSaving"
+          @click="emit('previous')"
+        >
+          上一条
+        </button>
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="!canGoNext || isSaving"
+          @click="emit('next')"
+        >
+          下一条
+        </button>
+      </div>
+    </header>
+
+    <section class="source-panel">
       <span class="field-label">原文</span>
-      <p class="source-text">{{ entry.source }}</p>
-    </div>
+      <p>{{ entry.source }}</p>
+    </section>
 
-    <div class="field-group">
+    <section class="source-panel compact">
       <span class="field-label">上下文</span>
       <p>{{ entry.context || "无" }}</p>
-    </div>
+    </section>
 
-    <label class="field-group">
+    <label class="target-panel">
       <span class="field-label">译文</span>
       <textarea
         v-model="target"
-        class="target-input"
-        rows="8"
+        rows="11"
         placeholder="请输入译文"
         :disabled="isSaving || entry.locked || !canSaveEntry"
       />
     </label>
 
-    <div class="meta-row">
-      <span>状态：{{ entry.status }}</span>
-      <span>键名：{{ entry.key }}</span>
-    </div>
-
-    <p v-if="termErrorMessage" class="term-error">{{ termErrorMessage }}</p>
-    <TermHint v-else :terms="termResults" />
     <p v-if="permissionMessage" class="permission-message">
       {{ permissionMessage }}
     </p>
 
-    <CommentPanel :entry="entry" @entry-updated="emit('entryUpdated', $event)" />
+    <dl class="meta-grid">
+      <div>
+        <dt>文件</dt>
+        <dd>{{ fileName }}</dd>
+      </div>
+      <div>
+        <dt>词条 ID</dt>
+        <dd>{{ entry.id }}</dd>
+      </div>
+      <div>
+        <dt>键名</dt>
+        <dd>{{ entry.key }}</dd>
+      </div>
+      <div>
+        <dt>字数</dt>
+        <dd>{{ entry.word_count }}</dd>
+      </div>
+    </dl>
 
-    <div class="actions">
+    <footer class="actions">
       <button
         class="secondary-button"
         type="button"
@@ -149,112 +166,171 @@ function handleSaveNext() {
       >
         保存并下一条
       </button>
-    </div>
+    </footer>
   </article>
+
+  <section v-else class="empty-editor">
+    <h1>请选择词条</h1>
+    <p>从左侧列表选择一个词条后，可以在这里编辑译文。</p>
+  </section>
 </template>
 
 <style scoped>
-.entry-editor {
-  padding: 22px;
+.entry-editor,
+.empty-editor {
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+  padding: 20px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
 }
 
-.entry-index,
-.field-label,
-.meta-row {
-  color: #5b6472;
-  font-size: 13px;
-}
-
-.entry-index {
-  margin: 0 0 6px;
-}
-
-h2 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.2;
-}
-
-.field-group {
-  display: grid;
-  gap: 6px;
-  margin-top: 18px;
-}
-
-.field-group p {
-  margin: 0;
-  line-height: 1.7;
-}
-
-.source-text {
-  font-size: 17px;
-}
-
-.target-input {
-  width: 100%;
-  min-height: 180px;
-  resize: vertical;
-  padding: 12px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  color: #1f2937;
-  font: inherit;
-  line-height: 1.7;
-}
-
-.target-input:focus {
-  border-color: #2563eb;
-  outline: 3px solid #dbeafe;
-}
-
-.target-input:disabled {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-
-.meta-row {
+.editor-header {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 14px;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.term-error,
-.permission-message {
-  margin: 18px 0 0;
-  line-height: 1.6;
+h1,
+p,
+dl,
+dd {
+  margin: 0;
 }
 
-.term-error {
-  color: #b42318;
+h1 {
+  margin-top: 8px;
+  color: #111827;
+  font-size: 24px;
+  line-height: 1.25;
 }
 
-.permission-message {
-  color: #b45309;
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 700;
 }
 
+.status-badge.translated {
+  background: #e6f0ef;
+  color: #174346;
+}
+
+.status-badge.proofread,
+.status-badge.reviewed {
+  background: #edf3df;
+  color: #445915;
+}
+
+.status-badge.disputed {
+  background: #fff3dc;
+  color: #92400e;
+}
+
+.entry-nav,
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  margin-top: 20px;
+}
+
+.source-panel,
+.target-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.source-panel {
+  padding: 16px;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.source-panel.compact {
+  padding: 12px 16px;
+}
+
+.field-label,
+dt {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.source-panel p {
+  color: #111827;
+  font-size: 17px;
+  line-height: 1.7;
+}
+
+.source-panel.compact p {
+  color: #4b5563;
+  font-size: 14px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 230px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid #c8d0dc;
+  border-radius: 8px;
+  color: #1f2937;
+  line-height: 1.7;
+}
+
+textarea:focus {
+  border-color: #2f6f73;
+  outline: 3px solid #c7dddb;
+}
+
+textarea:disabled {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.permission-message {
+  color: #b45309;
+  line-height: 1.6;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.meta-grid div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+dd {
+  overflow-wrap: anywhere;
+  color: #111827;
+  font-size: 14px;
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 40px;
-  padding: 0 15px;
+  min-height: 38px;
+  padding: 0 14px;
   border-radius: 6px;
-  font-size: 15px;
   cursor: pointer;
 }
 
 .primary-button {
   border: 0;
-  background: #2563eb;
+  background: #2f6f73;
   color: #ffffff;
 }
 
@@ -266,7 +342,26 @@ h2 {
 
 .primary-button:disabled,
 .secondary-button:disabled {
-  cursor: wait;
-  opacity: 0.68;
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.empty-editor {
+  align-content: start;
+  color: #4b5563;
+}
+
+.empty-editor p {
+  line-height: 1.7;
+}
+
+@media (max-width: 780px) {
+  .editor-header {
+    flex-direction: column;
+  }
+
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

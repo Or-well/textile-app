@@ -7,6 +7,8 @@ import { loadEntries } from "../services/entries";
 interface FileSummary {
   file: ProjectFile;
   totalEntries: number;
+  untranslatedEntries: number;
+  disputedEntries: number;
   translatedPercent: number;
   reviewedPercent: number;
   updatedAt: string;
@@ -21,12 +23,58 @@ const emit = defineEmits<{
 }>();
 
 const fileSummaries = ref<FileSummary[]>([]);
+const searchText = ref("");
+const sortKey = ref<"name" | "updated" | "translated" | "reviewed">("name");
+const statusFilter = ref<"all" | "needs-work" | "reviewed" | "disputed">("all");
 const isLoading = ref(false);
 const errorMessage = ref("");
 
-const visibleFiles = computed(() =>
-  fileSummaries.value.filter((summary) => !summary.file.hidden),
-);
+const visibleFiles = computed(() => {
+  const keyword = searchText.value.trim().toLowerCase();
+  const files = fileSummaries.value.filter((summary) => {
+    if (summary.file.hidden) {
+      return false;
+    }
+
+    if (
+      keyword &&
+      !summary.file.name.toLowerCase().includes(keyword) &&
+      !summary.file.id.toLowerCase().includes(keyword)
+    ) {
+      return false;
+    }
+
+    if (statusFilter.value === "needs-work") {
+      return summary.translatedPercent < 100;
+    }
+
+    if (statusFilter.value === "reviewed") {
+      return summary.reviewedPercent === 100;
+    }
+
+    if (statusFilter.value === "disputed") {
+      return summary.disputedEntries > 0;
+    }
+
+    return true;
+  });
+
+  return [...files].sort((a, b) => {
+    if (sortKey.value === "updated") {
+      return b.updatedAt.localeCompare(a.updatedAt);
+    }
+
+    if (sortKey.value === "translated") {
+      return b.translatedPercent - a.translatedPercent;
+    }
+
+    if (sortKey.value === "reviewed") {
+      return b.reviewedPercent - a.reviewedPercent;
+    }
+
+    return a.file.name.localeCompare(b.file.name);
+  });
+});
 
 function count(entries: Entry[], status: Entry["status"]): number {
   return entries.filter((entry) => entry.status === status).length;
@@ -50,6 +98,8 @@ async function loadFileSummaries() {
       props.project.files.map(async (file) => {
         const entries = await loadEntries(file.id);
         const totalEntries = entries.length;
+        const untranslatedEntries = count(entries, "untranslated");
+        const disputedEntries = count(entries, "disputed");
         const translatedEntries =
           count(entries, "translated") +
           count(entries, "proofread") +
@@ -59,6 +109,8 @@ async function loadFileSummaries() {
         return {
           file,
           totalEntries,
+          untranslatedEntries,
+          disputedEntries,
           translatedPercent:
             totalEntries === 0
               ? 0
@@ -104,6 +156,33 @@ watch(
       <span class="file-count">{{ visibleFiles.length }} 个文件</span>
     </div>
 
+    <section class="file-toolbar">
+      <label>
+        <span>搜索文件</span>
+        <input v-model="searchText" type="search" placeholder="输入文件名" />
+      </label>
+
+      <label>
+        <span>排序</span>
+        <select v-model="sortKey">
+          <option value="name">按文件名</option>
+          <option value="updated">按更新时间</option>
+          <option value="translated">按翻译进度</option>
+          <option value="reviewed">按审核进度</option>
+        </select>
+      </label>
+
+      <label>
+        <span>状态筛选</span>
+        <select v-model="statusFilter">
+          <option value="all">全部文件</option>
+          <option value="needs-work">未完成</option>
+          <option value="reviewed">已审核完成</option>
+          <option value="disputed">有争议</option>
+        </select>
+      </label>
+    </section>
+
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-else-if="isLoading" class="empty-state">正在加载文件列表...</p>
 
@@ -117,7 +196,15 @@ watch(
       >
         <span class="file-main">
           <strong>{{ summary.file.name }}</strong>
-          <small>{{ summary.file.type }} · {{ summary.totalEntries }} 词条</small>
+          <small>
+            {{ summary.file.type }} · {{ summary.totalEntries }} 词条
+            <template v-if="summary.untranslatedEntries > 0">
+              · {{ summary.untranslatedEntries }} 未翻译
+            </template>
+            <template v-if="summary.disputedEntries > 0">
+              · {{ summary.disputedEntries }} 争议
+            </template>
+          </small>
         </span>
 
         <span class="file-progress">
@@ -173,6 +260,36 @@ h1 {
   color: #174346;
   font-size: 13px;
   font-weight: 700;
+}
+
+.file-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) minmax(160px, 220px);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.file-toolbar label {
+  display: grid;
+  gap: 6px;
+}
+
+.file-toolbar span {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.file-toolbar input,
+.file-toolbar select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
 }
 
 .error-message {
@@ -238,6 +355,7 @@ h1 {
 }
 
 @media (max-width: 980px) {
+  .file-toolbar,
   .file-row {
     grid-template-columns: 1fr;
   }

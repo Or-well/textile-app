@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import ProjectLayout from "./components/ProjectLayout.vue";
+import EntryPage from "./pages/EntryPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
 import ProjectListPage from "./pages/ProjectListPage.vue";
 import ProjectPage from "./pages/ProjectPage.vue";
@@ -257,13 +258,11 @@ onBeforeUnmount(() => {
         @open-file="handleOpenFile"
       />
 
-      <section v-else-if="route.section === 'file-entry'" class="placeholder-page">
-        <p class="eyebrow">文件词条编辑</p>
-        <h1>{{ route.fileId }}</h1>
-        <p>
-          文件入口已经接入。词条编辑页会在下一模块接入，这次不重写现有编辑器。
-        </p>
-      </section>
+      <EntryPage
+        v-else-if="route.section === 'file-entry'"
+        :project="currentProject.config"
+        :file-id="route.fileId"
+      />
 
       <section v-else class="placeholder-page">
         <p class="eyebrow">项目内页面</p>
