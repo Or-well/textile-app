@@ -14,7 +14,11 @@ import {
 import { openProject, saveProject } from "../services/project";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
 import { normalizeProgressWeights } from "../services/stats";
-import { getSyncStatus, type SyncStatus } from "../services/sync";
+import {
+  getSyncStatus,
+  syncLatestProject,
+  type SyncStatus,
+} from "../services/sync";
 
 type SettingsSection =
   | "project"
@@ -53,7 +57,6 @@ const sectionItems: Array<{ key: SettingsSection; label: string }> = [
 const roleOrder: Role[] = [
   "owner",
   "admin",
-  "tech_lead",
   "translator",
   "proofreader",
   "reviewer",
@@ -61,6 +64,30 @@ const roleOrder: Role[] = [
   "term_manager",
   "readonly",
 ];
+
+const roleLabels: Record<Role, string> = {
+  owner: "项目负责人",
+  admin: "管理员",
+  tech_lead: "技术负责人",
+  translator: "翻译",
+  proofreader: "校对",
+  reviewer: "审核",
+  publisher: "发布负责人",
+  term_manager: "术语负责人",
+  readonly: "只读成员",
+};
+
+const roleDescriptions: Record<Role, string> = {
+  owner: "维护项目、成员、任务、导入修改和危险操作。",
+  admin: "协助管理项目设置、任务和导入流程。",
+  tech_lead: "维护格式、导出器和底层协作问题。",
+  translator: "翻译词条、评论并导出自己的修改。",
+  proofreader: "校对译文、退回问题词条并标记争议。",
+  reviewer: "审核词条、解决争议并提交最终判断。",
+  publisher: "导出成品和发布报告。",
+  term_manager: "维护术语表、导入导出术语。",
+  readonly: "只查看项目内容，不修改数据。",
+};
 
 const activeSection = ref<SettingsSection>("project");
 const localProject = ref<EditableProjectConfig | null>(null);
@@ -84,6 +111,7 @@ const isLoading = ref(false);
 const isSavingProject = ref(false);
 const isSavingWeights = ref(false);
 const isRefreshingSync = ref(false);
+const isSyncing = ref(false);
 const message = ref("");
 const errorMessage = ref("");
 
@@ -93,6 +121,9 @@ const activeMembers = computed(() =>
 );
 const selectedUser = computed(
   () => localMembers.value.find((member) => member.id === selectedUserId.value) ?? null,
+);
+const currentRoleText = computed(() =>
+  currentUser.value?.roles.length ? currentUser.value.roles.join(" / ") : "未选择当前用户",
 );
 const canManageProject = computed(() =>
   can(currentUser.value, PERMISSION_ACTIONS.PROJECT_MANAGE),
@@ -118,6 +149,8 @@ const weightsAreValid = computed(
 const roleRows = computed(() =>
   roleOrder.map((role) => ({
     role,
+    label: roleLabels[role],
+    description: roleDescriptions[role],
     permissions: ROLE_DEFAULT_PERMISSIONS[role] ?? [],
   })),
 );
@@ -128,6 +161,7 @@ const syncStateText = computed(() => {
 
   return `${syncStatus.value.title}：${syncStatus.value.message}`;
 });
+const canSyncProject = computed(() => syncStatus.value?.canSync === true);
 
 function applyProject(project: ProjectConfig): void {
   const editableProject = project as EditableProjectConfig;
@@ -303,6 +337,16 @@ async function handleSaveProgressWeights() {
   }
 }
 
+function handleRestoreDefaultWeights() {
+  weightDraft.value = {
+    translation: 40,
+    proofread: 30,
+    review: 30,
+  };
+  message.value = "已恢复默认权重，保存后生效。";
+  errorMessage.value = "";
+}
+
 async function refreshSyncStatus() {
   isRefreshingSync.value = true;
 
@@ -322,6 +366,30 @@ async function refreshSyncStatus() {
     };
   } finally {
     isRefreshingSync.value = false;
+  }
+}
+
+async function handleSyncProject() {
+  if (!canSyncProject.value) {
+    return;
+  }
+
+  isSyncing.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const result = await syncLatestProject();
+
+    message.value = result.ok
+      ? result.message
+      : result.fallbackMessage ?? result.message;
+    await refreshSyncStatus();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "同步项目失败。请导出修改包作为备用。";
+  } finally {
+    isSyncing.value = false;
   }
 }
 
@@ -350,15 +418,7 @@ function handleDangerAction(actionName: string) {
     if (localProject.value) {
       emit("projectUpdated", localProject.value);
     }
-    return;
   }
-
-  if (actionName === "清理导出缓存") {
-    message.value = "清理导出缓存仍是占位功能，当前没有删除任何文件。";
-    return;
-  }
-
-  message.value = "删除项目仍是占位功能，当前没有删除任何项目数据。";
 }
 
 watch(
@@ -385,12 +445,12 @@ onMounted(() => {
 
 <template>
   <section class="settings-page">
-    <header class="page-header">
+    <header class="settings-header">
       <div>
-        <p class="eyebrow">项目设置</p>
-        <h1>{{ localProject?.name || "设置中心" }}</h1>
+        <p class="eyebrow">设置中心</p>
+        <h1>项目设置</h1>
         <p class="summary">
-          集中管理项目基础信息、当前用户、权限说明、进度权重和协作入口。
+          集中管理项目基础信息、成员、权限、进度权重和协作入口。
         </p>
       </div>
 
@@ -412,12 +472,13 @@ onMounted(() => {
       请先打开项目文件夹，再查看和保存项目设置。
     </p>
 
-    <div v-else-if="localProject" class="settings-layout">
+    <div v-else-if="localProject" class="settings-shell">
       <nav class="settings-nav" aria-label="设置分类">
+        <p class="nav-title">设置</p>
         <button
           v-for="item in sectionItems"
           :key="item.key"
-          class="section-button"
+          class="nav-item"
           :class="{ active: activeSection === item.key }"
           type="button"
           @click="activeSection = item.key"
@@ -427,251 +488,431 @@ onMounted(() => {
       </nav>
 
       <section class="settings-content">
-        <section v-if="activeSection === 'project'" class="content-panel">
-          <div class="panel-heading">
+        <section v-if="activeSection === 'project'" class="settings-card">
+          <header class="card-header">
             <h2>项目设置</h2>
-            <p>这些信息保存到项目的 project.json。</p>
+            <p>修改项目在列表、工作台和导出报告中显示的基础信息。</p>
+          </header>
+
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <label for="project-name">项目名称</label>
+                <p>显示在项目列表和工作台顶部。</p>
+              </div>
+              <div class="row-control">
+                <input
+                  id="project-name"
+                  v-model="projectDraft.name"
+                  :disabled="!canManageProject"
+                />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <label for="project-description">项目简介</label>
+                <p>写给项目成员看的简短说明。</p>
+              </div>
+              <div class="row-control">
+                <textarea
+                  id="project-description"
+                  v-model="projectDraft.description"
+                  rows="4"
+                  :disabled="!canManageProject"
+                  placeholder="例如：短篇视觉小说汉化协作项目"
+                />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <label for="source-language">源语言</label>
+                <p>原始文本使用的语言。</p>
+              </div>
+              <div class="row-control compact-control">
+                <input
+                  id="source-language"
+                  v-model="projectDraft.source_language"
+                  :disabled="!canManageProject"
+                />
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <label for="target-language">目标语言</label>
+                <p>译文输出使用的语言。</p>
+              </div>
+              <div class="row-control compact-control">
+                <input
+                  id="target-language"
+                  v-model="projectDraft.target_language"
+                  :disabled="!canManageProject"
+                />
+              </div>
+            </div>
           </div>
 
-          <div class="form-grid">
-            <label>
-              <span>项目名称</span>
-              <input v-model="projectDraft.name" :disabled="!canManageProject" />
-            </label>
-
-            <label>
-              <span>项目简介</span>
-              <textarea
-                v-model="projectDraft.description"
-                rows="4"
-                :disabled="!canManageProject"
-                placeholder="写给项目成员看的简短说明"
-              />
-            </label>
-
-            <label>
-              <span>源语言</span>
-              <input
-                v-model="projectDraft.source_language"
-                :disabled="!canManageProject"
-              />
-            </label>
-
-            <label>
-              <span>目标语言</span>
-              <input
-                v-model="projectDraft.target_language"
-                :disabled="!canManageProject"
-              />
-            </label>
-          </div>
-
-          <button
-            class="primary-button"
-            type="button"
-            :disabled="isSavingProject || !canManageProject"
-            @click="handleSaveProjectInfo"
-          >
-            {{ isSavingProject ? "正在保存..." : "保存项目设置" }}
-          </button>
-          <p v-if="!canManageProject" class="muted-text">
+          <p v-if="!canManageProject" class="notice-text">
             当前用户只能查看项目设置，不能修改。
+          </p>
+
+          <footer class="form-actions">
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="isSavingProject || !canManageProject"
+              @click="handleSaveProjectInfo"
+            >
+              {{ isSavingProject ? "正在保存..." : "保存项目设置" }}
+            </button>
+          </footer>
+        </section>
+
+        <section v-else-if="activeSection === 'members'" class="settings-card">
+          <header class="card-header">
+            <h2>成员管理</h2>
+            <p>查看项目成员，切换当前使用者。完整成员管理后续接入。</p>
+          </header>
+
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <label for="current-user">当前用户</label>
+                <p>影响软权限、任务筛选和操作记录。</p>
+              </div>
+              <div class="row-control compact-control">
+                <select id="current-user" v-model="selectedUserId" @change="handleSelectUser">
+                  <option value="">未选择</option>
+                  <option
+                    v-for="member in activeMembers"
+                    :key="member.id"
+                    :value="member.id"
+                  >
+                    {{ member.name }}
+                  </option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="member-table" role="table" aria-label="成员列表">
+            <div class="member-row table-head" role="row">
+              <span>成员</span>
+              <span>用户组</span>
+              <span>状态</span>
+              <span>操作</span>
+            </div>
+            <div
+              v-for="member in localMembers"
+              :key="member.id"
+              class="member-row"
+              role="row"
+            >
+              <strong>{{ member.name }}</strong>
+              <span>{{ member.roles.join(" / ") }}</span>
+              <span>{{ member.active ? "启用" : "停用" }}</span>
+              <span class="table-action">后续支持</span>
+            </div>
+          </div>
+
+          <p class="placeholder-note">
+            成员新增、禁用和密码重置将在项目登录模块中实现。
           </p>
         </section>
 
-        <section v-else-if="activeSection === 'members'" class="content-panel">
-          <div class="panel-heading">
-            <h2>成员管理</h2>
-            <p>当前版本支持选择当前用户，成员增删改留到后续包处理。</p>
-          </div>
-
-          <label class="user-select">
-            <span>当前用户</span>
-            <select v-model="selectedUserId" @change="handleSelectUser">
-              <option value="">未选择</option>
-              <option
-                v-for="member in activeMembers"
-                :key="member.id"
-                :value="member.id"
-              >
-                {{ member.name }}
-              </option>
-            </select>
-          </label>
-
-          <div class="table-list">
-            <div v-for="member in localMembers" :key="member.id" class="table-row">
-              <strong>{{ member.name }}</strong>
-              <span>{{ member.id }}</span>
-              <span>{{ member.roles.join(" / ") }}</span>
-              <span>{{ member.active ? "启用" : "停用" }}</span>
-            </div>
-          </div>
-        </section>
-
-        <section v-else-if="activeSection === 'roles'" class="content-panel">
-          <div class="panel-heading">
+        <section v-else-if="activeSection === 'roles'" class="settings-card">
+          <header class="card-header">
             <h2>角色与权限</h2>
-            <p>
-              权限由角色默认权限、成员额外允许和成员额外拒绝合并计算。owner / admin
-              等基础规则当前只读展示。
-            </p>
-          </div>
+            <p>当前角色：{{ currentRoleText }}。权限编辑暂不可编辑。</p>
+          </header>
+
+          <p class="notice-text">
+            owner / admin 等基础规则是项目流程约束。权限是本地软权限，用于减少误操作，不作为安全边界。
+          </p>
 
           <div class="role-list">
-            <article v-for="row in roleRows" :key="row.role" class="role-row">
-              <h3>{{ row.role }}</h3>
-              <div class="permission-list">
-                <code
-                  v-for="permission in row.permissions"
-                  :key="permission"
-                >
+            <article v-for="row in roleRows" :key="row.role" class="role-card">
+              <div>
+                <h3>{{ row.label }}</h3>
+                <p>{{ row.role }} · {{ row.description }}</p>
+              </div>
+              <div class="permission-chips">
+                <code v-for="permission in row.permissions" :key="permission">
                   {{ permission }}
                 </code>
               </div>
+              <span class="readonly-badge">暂不可编辑</span>
             </article>
           </div>
         </section>
 
-        <section v-else-if="activeSection === 'progress'" class="content-panel">
-          <div class="panel-heading">
+        <section v-else-if="activeSection === 'progress'" class="settings-card">
+          <header class="card-header">
             <h2>进度权重</h2>
-            <p>用于统计页、文件页和任务页的综合进度计算。</p>
+            <p>用于统计页和项目摘要的综合进度计算。</p>
+          </header>
+
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <label for="translation-weight">翻译权重</label>
+                <p>默认 40%，代表完成译文的基础贡献。</p>
+              </div>
+              <div class="row-control number-control">
+                <input
+                  id="translation-weight"
+                  v-model.number="weightDraft.translation"
+                  type="number"
+                  min="0"
+                  max="100"
+                  :disabled="!canEditProgressWeights"
+                />
+                <span>%</span>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <label for="proofread-weight">校对权重</label>
+                <p>默认 30%，代表完成校对后的进度提升。</p>
+              </div>
+              <div class="row-control number-control">
+                <input
+                  id="proofread-weight"
+                  v-model.number="weightDraft.proofread"
+                  type="number"
+                  min="0"
+                  max="100"
+                  :disabled="!canEditProgressWeights"
+                />
+                <span>%</span>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <label for="review-weight">审核权重</label>
+                <p>默认 30%，代表最终审核通过。</p>
+              </div>
+              <div class="row-control number-control">
+                <input
+                  id="review-weight"
+                  v-model.number="weightDraft.review"
+                  type="number"
+                  min="0"
+                  max="100"
+                  :disabled="!canEditProgressWeights"
+                />
+                <span>%</span>
+              </div>
+            </div>
           </div>
 
-          <div class="weight-grid">
-            <label>
-              <span>翻译权重</span>
-              <input
-                v-model.number="weightDraft.translation"
-                type="number"
-                min="0"
-                max="100"
-                :disabled="!canEditProgressWeights"
-              />
-            </label>
-            <label>
-              <span>校对权重</span>
-              <input
-                v-model.number="weightDraft.proofread"
-                type="number"
-                min="0"
-                max="100"
-                :disabled="!canEditProgressWeights"
-              />
-            </label>
-            <label>
-              <span>审核权重</span>
-              <input
-                v-model.number="weightDraft.review"
-                type="number"
-                min="0"
-                max="100"
-                :disabled="!canEditProgressWeights"
-              />
-            </label>
-          </div>
-
-          <p :class="weightsAreValid ? 'message-inline' : 'warning-text'">
+          <p :class="weightsAreValid ? 'success-text' : 'error-inline'">
             当前总和：{{ weightTotal }}%
+            <span v-if="!weightsAreValid">，必须等于 100%。</span>
           </p>
 
-          <button
-            class="primary-button"
-            type="button"
-            :disabled="isSavingWeights || !weightsAreValid || !canEditProgressWeights"
-            @click="handleSaveProgressWeights"
-          >
-            {{ isSavingWeights ? "正在保存..." : "保存进度权重" }}
-          </button>
+          <footer class="form-actions">
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="isSavingWeights || !weightsAreValid || !canEditProgressWeights"
+              @click="handleSaveProgressWeights"
+            >
+              {{ isSavingWeights ? "正在保存..." : "保存进度权重" }}
+            </button>
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="!canEditProgressWeights"
+              @click="handleRestoreDefaultWeights"
+            >
+              恢复默认
+            </button>
+          </footer>
         </section>
 
-        <section v-else-if="activeSection === 'export'" class="content-panel">
-          <div class="panel-heading">
+        <section v-else-if="activeSection === 'export'" class="settings-card">
+          <header class="card-header">
             <h2>导出设置</h2>
-            <p>当前仅展示项目导出能力，复杂导出规则后续补充。</p>
+            <p>当前展示导出偏好入口，完整规则后续接入导出模块。</p>
+          </header>
+
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <label for="export-format">默认导出格式</label>
+                <p>当前版本由导出模块决定实际格式。</p>
+              </div>
+              <div class="row-control compact-control">
+                <select id="export-format" disabled>
+                  <option>文本 + 报告包</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>只导出已审核</span>
+                <p>后续用于发布前过滤未审核内容。</p>
+              </div>
+              <div class="row-control checkbox-control">
+                <input id="reviewed-only" type="checkbox" disabled />
+                <label for="reviewed-only">后续支持</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>包含原文</span>
+                <p>用于生成对照检查报告。</p>
+              </div>
+              <div class="row-control checkbox-control">
+                <input id="include-source" type="checkbox" checked disabled />
+                <label for="include-source">当前报告会保留必要检查信息</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>包含键值</span>
+                <p>用于定位源文件中的词条。</p>
+              </div>
+              <div class="row-control checkbox-control">
+                <input id="include-key" type="checkbox" checked disabled />
+                <label for="include-key">后续支持自定义</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>生成报告</span>
+                <p>未翻译、争议和术语检查报告。</p>
+              </div>
+              <div class="row-control checkbox-control">
+                <input id="generate-report" type="checkbox" checked disabled />
+                <label for="generate-report">由现有导出流程生成</label>
+              </div>
+            </div>
           </div>
 
-          <dl class="info-list">
-            <div>
-              <dt>允许修改包</dt>
-              <dd>{{ localProject.settings.allow_change_package ? "允许" : "不允许" }}</dd>
-            </div>
-            <div>
-              <dt>成品导出</dt>
-              <dd>使用导入 / 导出页的现有导出流程</dd>
-            </div>
-            <div>
-              <dt>导出规则</dt>
-              <dd>后续支持自定义文件命名和检查项</dd>
-            </div>
-          </dl>
+          <p class="placeholder-note">
+            导出规则暂未接入设置保存；请在导入 / 导出页执行实际导出。
+          </p>
         </section>
 
-        <section v-else-if="activeSection === 'sync'" class="content-panel">
-          <div class="panel-heading">
+        <section v-else-if="activeSection === 'sync'" class="settings-card">
+          <header class="card-header">
             <h2>同步与备份</h2>
-            <p>同步底层由 sync.ts 包装，当前页面只展示状态和协作入口。</p>
-          </div>
+            <p>这里仅显示面向成员的协作入口，不暴露底层技术细节。</p>
+          </header>
 
-          <div class="sync-box">
+          <div class="sync-status">
             <strong>{{ syncStateText }}</strong>
             <p v-if="syncStatus?.fallbackMessage">{{ syncStatus.fallbackMessage }}</p>
           </div>
 
-          <div class="button-row">
-            <button
-              class="secondary-button"
-              type="button"
-              :disabled="isRefreshingSync"
-              @click="refreshSyncStatus"
-            >
-              {{ isRefreshingSync ? "正在检查..." : "刷新同步状态" }}
-            </button>
-            <button
-              class="primary-button"
-              type="button"
-              @click="emit('openImportExport')"
-            >
-              导出修改包
-            </button>
-          </div>
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <span>同步项目</span>
+                <p>获取负责人合并后的最新内容。</p>
+              </div>
+              <div class="row-control button-control">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="!canSyncProject || isSyncing"
+                  @click="handleSyncProject"
+                >
+                  {{ isSyncing ? "正在同步..." : "同步项目" }}
+                </button>
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="isRefreshingSync"
+                  @click="refreshSyncStatus"
+                >
+                  {{ isRefreshingSync ? "正在检查..." : "刷新状态" }}
+                </button>
+              </div>
+            </div>
 
-          <p class="muted-text">
-            .hproj 项目包与自动备份仍是后续支持项，当前版本不会生成或导入 .hproj。
-          </p>
+            <div class="form-row">
+              <div class="row-label">
+                <span>导出修改包</span>
+                <p>同步不可用时，把本地修改交给负责人合并。</p>
+              </div>
+              <div class="row-control button-control">
+                <button
+                  class="primary-button"
+                  type="button"
+                  @click="emit('openImportExport')"
+                >
+                  导出修改包
+                </button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>备份 / .hproj</span>
+                <p>后续用于项目打包、导入和离线备份。</p>
+              </div>
+              <div class="row-control button-control">
+                <button class="secondary-button" type="button" disabled>
+                  后续支持
+                </button>
+              </div>
+            </div>
+          </div>
         </section>
 
-        <section v-else class="content-panel danger-panel">
-          <div class="panel-heading">
+        <section v-else class="settings-card danger-card">
+          <header class="card-header">
             <h2>危险操作</h2>
-            <p>所有危险操作都会二次确认。当前版本只提供入口和安全占位。</p>
-          </div>
+            <p>这些操作可能影响项目数据。已实现的操作需要二次确认。</p>
+          </header>
 
-          <button
-            class="secondary-button"
-            type="button"
-            :disabled="!canManageProject"
-            @click="handleDangerAction('重建统计')"
-          >
-            重建统计
-          </button>
-          <button
-            class="secondary-button"
-            type="button"
-            :disabled="!canManageProject"
-            @click="handleDangerAction('清理导出缓存')"
-          >
-            清理导出缓存
-          </button>
-          <button
-            class="danger-button"
-            type="button"
-            :disabled="!canManageProject"
-            @click="handleDangerAction('删除项目')"
-          >
-            删除项目占位
-          </button>
+          <div class="danger-list">
+            <div class="danger-row">
+              <div>
+                <strong>重建统计</strong>
+                <p>重新刷新项目摘要。当前统计按词条实时计算，不会删除数据。</p>
+              </div>
+              <button
+                class="secondary-button"
+                type="button"
+                :disabled="!canManageProject"
+                @click="handleDangerAction('重建统计')"
+              >
+                重建统计
+              </button>
+            </div>
+
+            <div class="danger-row disabled-row">
+              <div>
+                <strong>清理缓存</strong>
+                <p>导出缓存清理尚未接入。当前版本不会删除任何文件。</p>
+              </div>
+              <button class="secondary-button" type="button" disabled>
+                尚未实现
+              </button>
+            </div>
+
+            <div class="danger-row disabled-row">
+              <div>
+                <strong>删除项目</strong>
+                <p>项目删除需要更完整的备份和确认流程，当前仅显示占位。</p>
+              </div>
+              <button class="danger-button" type="button" disabled>
+                尚未实现
+              </button>
+            </div>
+          </div>
         </section>
       </section>
     </div>
@@ -680,24 +921,33 @@ onMounted(() => {
 
 <style scoped>
 .settings-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 2px 8px 28px;
   display: grid;
   gap: 16px;
   color: #1f2937;
 }
 
-.page-header {
+.settings-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
+  min-height: 0;
 }
 
 .eyebrow,
 .summary,
-.panel-heading p,
-.muted-text,
-.info-list dt,
-.table-row span {
+.card-header p,
+.row-label p,
+.placeholder-note,
+.notice-text,
+.member-row span,
+.role-card p,
+.sync-status p,
+.danger-row p {
   color: #5b6472;
 }
 
@@ -705,161 +955,243 @@ onMounted(() => {
 h1,
 h2,
 h3,
-p,
-dl,
-dd {
+p {
   margin: 0;
 }
 
 .eyebrow {
-  margin-bottom: 6px;
-  font-size: 14px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 h1 {
   color: #111827;
-  font-size: 28px;
+  font-size: 26px;
   line-height: 1.2;
 }
 
 h2 {
   color: #111827;
   font-size: 20px;
+  line-height: 1.25;
 }
 
 h3 {
   color: #111827;
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .summary,
-.panel-heading p,
-.muted-text,
+.card-header p,
+.row-label p,
+.placeholder-note,
+.notice-text,
 .error-message,
 .message,
 .empty-state,
-.warning-text,
-.message-inline {
-  line-height: 1.7;
+.success-text,
+.error-inline,
+.sync-status p,
+.danger-row p {
+  line-height: 1.6;
 }
 
-.error-message {
+.error-message,
+.error-inline {
   color: #b42318;
 }
 
 .message,
-.message-inline {
+.success-text {
   color: #166534;
 }
 
-.warning-text {
-  color: #b45309;
+.error-message,
+.message {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.error-message {
+  border: 1px solid #f0b8aa;
+}
+
+.message {
+  border: 1px solid #b7dfc2;
 }
 
 .empty-state {
-  padding: 18px;
+  padding: 16px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
   color: #4b5563;
 }
 
-.settings-layout {
+.settings-shell {
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+  gap: 22px;
 }
 
 .settings-nav,
-.content-panel {
+.settings-card {
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .settings-nav {
+  position: sticky;
+  top: 76px;
   display: grid;
   align-content: start;
-  gap: 4px;
-  padding: 10px;
+  gap: 3px;
+  padding: 12px;
 }
 
-.section-button {
-  min-height: 38px;
-  padding: 0 10px;
+.nav-title {
+  padding: 4px 10px 8px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #374151;
   font: inherit;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
 
-.section-button:hover,
-.section-button.active {
-  background: #eef6f4;
+.nav-item:hover,
+.nav-item.active {
+  background: #e8f3f1;
   color: #194b4f;
 }
 
-.section-button.active {
+.nav-item.active {
+  font-weight: 700;
+  box-shadow: inset 4px 0 0 #2f6f73;
+}
+
+.settings-content {
+  min-width: 0;
+}
+
+.settings-card {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.card-header {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.form-stack {
+  display: grid;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  padding: 16px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.form-row:last-child {
+  border-bottom: 0;
+}
+
+.row-label {
+  display: grid;
+  gap: 5px;
+}
+
+.row-label label,
+.row-label span,
+.danger-row strong {
+  color: #111827;
   font-weight: 700;
 }
 
-.settings-content,
-.content-panel,
-.role-list {
-  display: grid;
-  gap: 14px;
-}
-
-.content-panel {
-  padding: 18px;
-}
-
-.panel-heading {
-  display: grid;
-  gap: 6px;
-}
-
-.form-grid,
-.weight-grid {
-  display: grid;
-  gap: 12px;
-}
-
-.weight-grid {
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
-}
-
-label {
-  display: grid;
-  gap: 7px;
-}
-
-label span {
-  color: #5b6472;
+.row-label p,
+.placeholder-note,
+.notice-text,
+.danger-row p {
   font-size: 13px;
+}
+
+.row-control {
+  min-width: 0;
+  max-width: 560px;
+}
+
+.compact-control {
+  max-width: 260px;
 }
 
 input,
 select,
 textarea {
+  appearance: none;
   width: 100%;
   min-height: 40px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
+  padding: 0 11px;
+  border: 1px solid #c3ccd8;
   border-radius: 6px;
   background: #ffffff;
   color: #1f2937;
   font: inherit;
+  font-size: 14px;
+  box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.03);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 textarea {
-  min-height: 104px;
-  padding: 10px;
+  min-height: 116px;
+  padding: 10px 11px;
   resize: vertical;
-  line-height: 1.6;
+  line-height: 1.55;
+}
+
+select {
+  background-image:
+    linear-gradient(45deg, transparent 50%, #6b7280 50%),
+    linear-gradient(135deg, #6b7280 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 17px,
+    calc(100% - 11px) 17px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #2f6f73;
+  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.14);
 }
 
 input:disabled,
@@ -867,24 +1199,89 @@ select:disabled,
 textarea:disabled {
   background: #f3f4f6;
   color: #6b7280;
+  box-shadow: none;
+}
+
+.number-control {
+  display: grid;
+  grid-template-columns: 120px auto;
+  align-items: center;
+  gap: 8px;
+  max-width: 190px;
+}
+
+.checkbox-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  color: #374151;
+}
+
+.checkbox-control input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border-radius: 4px;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+}
+
+.checkbox-control input:checked {
+  border-color: #2f6f73;
+  background-color: #2f6f73;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M3.5 8.5 6.7 11.5 12.8 4.7' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.checkbox-control input:disabled:checked {
+  border-color: #94a3b8;
+  background-color: #94a3b8;
+}
+
+.checkbox-control label {
+  color: #374151;
+  font-size: 14px;
+}
+
+.button-control,
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.form-actions {
+  padding-top: 2px;
 }
 
 .primary-button,
 .secondary-button,
 .danger-button {
-  justify-self: start;
-  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
   padding: 0 14px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: 6px;
   color: #ffffff;
   font: inherit;
   font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .primary-button {
+  border-color: #2f6f73;
   background: #2f6f73;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #255f62;
 }
 
 .secondary-button {
@@ -893,8 +1290,18 @@ textarea:disabled {
   color: #1f2937;
 }
 
+.secondary-button:hover:not(:disabled) {
+  border-color: #9aa8b8;
+  background: #f8fafb;
+}
+
 .danger-button {
+  border-color: #b42318;
   background: #b42318;
+}
+
+.danger-button:hover:not(:disabled) {
+  background: #982016;
 }
 
 button:disabled {
@@ -902,37 +1309,66 @@ button:disabled {
   opacity: 0.62;
 }
 
-.user-select {
-  max-width: 360px;
-}
-
-.table-list {
-  display: grid;
-  gap: 8px;
-}
-
-.table-row {
-  display: grid;
-  grid-template-columns: minmax(120px, 0.9fr) minmax(120px, 0.9fr) minmax(180px, 1fr) 72px;
-  gap: 12px;
-  align-items: center;
-  min-height: 44px;
-  padding: 10px 12px;
+.notice-text,
+.placeholder-note,
+.sync-status {
+  padding: 12px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #f8fafb;
 }
 
-.role-row {
+.member-table {
+  display: grid;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(180px, 1.25fr) 80px 96px;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  padding: 9px 12px;
+  border-top: 1px solid #eef1f5;
+  background: #ffffff;
+}
+
+.member-row:first-child {
+  border-top: 0;
+}
+
+.table-head {
+  min-height: 36px;
+  background: #f8fafb;
+  color: #5b6472;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.table-action {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.role-list {
+  display: grid;
+  gap: 10px;
+}
+
+.role-card {
+  position: relative;
   display: grid;
   gap: 10px;
   padding: 14px;
   border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #f8fafb;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
-.permission-list {
+.permission-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -946,64 +1382,95 @@ code {
   font-size: 12px;
 }
 
-.info-list {
+.readonly-badge {
+  justify-self: start;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #5b6472;
+  font-size: 12px;
+}
+
+.sync-status {
   display: grid;
-  gap: 10px;
+  gap: 5px;
 }
 
-.info-list div {
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px;
-  border-radius: 6px;
-  background: #f8fafb;
-}
-
-.info-list dt {
-  font-size: 13px;
-}
-
-.info-list dd {
+.sync-status strong {
   color: #111827;
 }
 
-.sync-box {
-  display: grid;
-  gap: 8px;
-  padding: 14px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #f8fafb;
+.danger-card {
+  border-color: #f0c6bd;
 }
 
-.button-row,
-.danger-panel {
-  display: flex;
-  flex-wrap: wrap;
+.danger-list {
+  display: grid;
   gap: 10px;
 }
 
-.danger-panel {
-  align-items: flex-start;
+.danger-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid #ead7d2;
+  border-radius: 8px;
+  background: #fffafa;
 }
 
-.danger-panel .panel-heading {
-  flex: 1 0 100%;
+.danger-row div {
+  display: grid;
+  gap: 5px;
 }
 
-@media (max-width: 860px) {
-  .page-header,
-  .settings-layout,
-  .weight-grid,
-  .table-row,
-  .info-list div {
+.disabled-row {
+  background: #fafafa;
+  border-color: #e5e7eb;
+}
+
+@media (max-width: 900px) {
+  .settings-shell {
     grid-template-columns: 1fr;
   }
 
-  .page-header {
-    align-items: stretch;
-    flex-direction: column;
+  .settings-nav {
+    position: static;
+    display: flex;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .nav-title {
+    display: none;
+  }
+
+  .nav-item {
+    width: auto;
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 680px) {
+  .settings-header,
+  .form-row,
+  .member-row,
+  .danger-row {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-header {
+    display: grid;
+  }
+
+  .settings-card {
+    padding: 16px;
+  }
+
+  .row-control,
+  .compact-control {
+    max-width: none;
   }
 }
 </style>
