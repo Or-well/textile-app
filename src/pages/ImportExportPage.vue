@@ -2,7 +2,12 @@
 import { computed, ref, watch } from "vue";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
-import type { Member, ProjectConfig, Task } from "../model/types";
+import type {
+  Member,
+  ProjectConfig,
+  ReleaseExportFormat,
+  Task,
+} from "../model/types";
 import { exportProjectPackage } from "../services/projectPackage";
 import {
   applyChangePackage,
@@ -18,7 +23,13 @@ import {
   type ExportChangePackageMode,
   type ReadChangePackage,
 } from "../services/changes";
-import { exportProject, setExporterProjectRoot } from "../services/exporter";
+import {
+  exportProject,
+  getReleaseExportSummary,
+  normalizeReleaseExportOptions,
+  setExporterProjectRoot,
+  type ReleaseExportSummary,
+} from "../services/exporter";
 import {
   canDangerousImportChangePackage,
   canExportChangePackage,
@@ -45,11 +56,19 @@ const localRoot = ref<ProjectDirectoryHandle | null>(null);
 const tasks = ref<Task[]>([]);
 const selectedTaskId = ref("");
 const exportMode = ref<ExportChangePackageMode>("user_changes");
+const releaseFormat = ref<ReleaseExportFormat>("json");
+const releaseOnlyReviewed = ref(false);
+const releaseIncludeSource = ref(true);
+const releaseIncludeKey = ref(true);
+const releaseIncludeReport = ref(true);
+const releaseIncludeManifest = ref(true);
+const releaseSummary = ref<ReleaseExportSummary>();
 const syncStatus = ref<SyncStatus>();
 const isLoading = ref(false);
 const isExporting = ref(false);
 const isExportingRelease = ref(false);
 const isExportingProjectFile = ref(false);
+const isLoadingReleaseSummary = ref(false);
 const isReadingPackage = ref(false);
 const isApplyingPackage = ref(false);
 const errorMessage = ref("");
@@ -152,6 +171,14 @@ const applyDisabledReason = computed(() => {
 
   return "";
 });
+const releaseOptionPayload = computed(() => ({
+  format: releaseFormat.value,
+  only_reviewed: releaseOnlyReviewed.value,
+  include_source: releaseIncludeSource.value,
+  include_key: releaseIncludeKey.value,
+  include_report: releaseIncludeReport.value,
+  include_manifest: releaseIncludeManifest.value,
+}));
 
 function downloadBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
@@ -169,6 +196,34 @@ async function refreshSyncStatus() {
   syncStatus.value = await getSyncStatus(currentUser.value);
 }
 
+function applyReleaseSettings(project: ProjectConfig) {
+  const options = normalizeReleaseExportOptions(project);
+
+  releaseFormat.value = options.format;
+  releaseOnlyReviewed.value = options.only_reviewed;
+  releaseIncludeSource.value = options.include_source;
+  releaseIncludeKey.value = options.include_key;
+  releaseIncludeReport.value = options.include_report;
+  releaseIncludeManifest.value = options.include_manifest;
+}
+
+async function refreshReleaseSummary() {
+  if (!projectName.value) {
+    releaseSummary.value = undefined;
+    return;
+  }
+
+  isLoadingReleaseSummary.value = true;
+
+  try {
+    releaseSummary.value = await getReleaseExportSummary(releaseOptionPayload.value);
+  } catch {
+    releaseSummary.value = undefined;
+  } finally {
+    isLoadingReleaseSummary.value = false;
+  }
+}
+
 async function loadImportExportState() {
   isLoading.value = true;
   errorMessage.value = "";
@@ -182,6 +237,7 @@ async function loadImportExportState() {
     await refreshSyncStatus();
     tasks.value = await loadTasks();
     selectedTaskId.value = tasks.value[0]?.id ?? "";
+    await refreshReleaseSummary();
   } catch (error) {
     tasks.value = [];
     selectedTaskId.value = "";
@@ -201,6 +257,7 @@ async function initializeFromProjectContext() {
 
   projectName.value = props.project.name;
   localRoot.value = props.projectRoot ?? null;
+  applyReleaseSettings(props.project);
 
   await loadImportExportState();
 }
@@ -215,6 +272,7 @@ async function handleOpenProject() {
 
     projectName.value = project.config.name;
     localRoot.value = project.root;
+    applyReleaseSettings(project.config);
 
     setChangesProjectRoot(project.root);
     setExporterProjectRoot(project.root);
@@ -294,9 +352,13 @@ async function handleExportRelease() {
   message.value = "";
 
   try {
-    const result = await exportProject();
+    const result = await exportProject({
+      ...releaseOptionPayload.value,
+      exportedBy: currentUser.value?.id ?? "",
+    });
 
     downloadBlob(result.blob, result.fileName);
+    releaseSummary.value = result.summary;
     message.value = `已导出成品：${result.fileName}`;
   } catch (error) {
     errorMessage.value =
@@ -451,6 +513,19 @@ watch(
     void initializeFromProjectContext();
   },
   { immediate: true },
+);
+
+watch(
+  () => [
+    releaseFormat.value,
+    releaseOnlyReviewed.value,
+    releaseIncludeSource.value,
+    releaseIncludeKey.value,
+    releaseIncludeReport.value,
+  ],
+  () => {
+    void refreshReleaseSummary();
+  },
 );
 </script>
 
@@ -617,8 +692,65 @@ watch(
       <section v-if="projectName" class="release-section">
         <h2>导出成品</h2>
         <p class="section-note">
-          暂时导出为简单文本格式，并包含 manifest 和检查报告。
+          按当前设置生成成品包、项目清单和检查报告。
         </p>
+        <div class="release-settings-grid">
+          <label>
+            <span>导出格式</span>
+            <select v-model="releaseFormat">
+              <option value="json">JSON</option>
+              <option value="txt">TXT 对照</option>
+              <option value="csv">CSV</option>
+              <option value="ks">KS</option>
+            </select>
+          </label>
+
+          <label class="checkbox-line">
+            <input v-model="releaseOnlyReviewed" type="checkbox" />
+            <span>只导出已审核</span>
+          </label>
+
+          <label class="checkbox-line">
+            <input v-model="releaseIncludeSource" type="checkbox" />
+            <span>包含原文</span>
+          </label>
+
+          <label class="checkbox-line">
+            <input v-model="releaseIncludeKey" type="checkbox" />
+            <span>包含键值</span>
+          </label>
+
+          <label class="checkbox-line">
+            <input v-model="releaseIncludeReport" type="checkbox" />
+            <span>生成报告</span>
+          </label>
+        </div>
+
+        <section class="release-summary" aria-label="导出前统计摘要">
+          <h3>导出前统计</h3>
+          <p v-if="isLoadingReleaseSummary" class="section-note">
+            正在刷新统计...
+          </p>
+          <div v-else-if="releaseSummary" class="summary-grid">
+            <span>
+              <strong>{{ releaseSummary.totalEntries }}</strong>
+              总词条数
+            </span>
+            <span>
+              <strong>{{ releaseSummary.reviewedEntries }}</strong>
+              已审核数
+            </span>
+            <span>
+              <strong>{{ releaseSummary.untranslatedEntries }}</strong>
+              未翻译数
+            </span>
+            <span>
+              <strong>{{ releaseSummary.disputedEntries }}</strong>
+              争议数
+            </span>
+          </div>
+        </section>
+
         <button
           v-if="canExportFinalRelease"
           class="export-button"
@@ -743,6 +875,12 @@ h2 {
   font-size: 20px;
 }
 
+h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -764,6 +902,18 @@ label {
 }
 
 .export-mode-field label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.release-settings-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.checkbox-line {
+  display: grid;
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 10px;
@@ -809,6 +959,44 @@ input[type="radio"] {
   padding: 0;
 }
 
+input[type="checkbox"] {
+  min-height: auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.release-summary {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.summary-grid span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.summary-grid strong {
+  color: #111827;
+  font-size: 20px;
+}
+
 .export-button {
   justify-self: start;
 }
@@ -821,6 +1009,10 @@ input[type="radio"] {
   .page-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr 1fr;
   }
 }
 </style>

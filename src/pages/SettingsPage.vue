@@ -5,7 +5,15 @@ import {
   PERMISSION_ACTIONS,
   ROLE_DEFAULT_PERMISSIONS,
 } from "../model/permissions";
-import type { Member, ProjectConfig, Role } from "../model/types";
+import type {
+  Member,
+  ProjectConfig,
+  ReleaseExportFormat,
+  Role,
+} from "../model/types";
+import {
+  normalizeProjectExportSettings,
+} from "../services/exporter";
 import {
   can,
   canConfigureStats,
@@ -121,12 +129,21 @@ const weightDraft = ref({
   proofread: 30,
   review: 30,
 });
+const exportDraft = ref({
+  default_format: "json" as ReleaseExportFormat,
+  only_reviewed: false,
+  include_source: true,
+  include_key: true,
+  include_report: true,
+  include_manifest: true,
+});
 const syncStatus = ref<SyncStatus>();
 const updateState = ref<AppUpdateState>(getAppUpdateState());
 const selectedUpdateChannel = ref<UpdateChannel>(getUpdateChannel());
 const isLoading = ref(false);
 const isSavingProject = ref(false);
 const isSavingWeights = ref(false);
+const isSavingExportSettings = ref(false);
 const isRefreshingSync = ref(false);
 const isSyncing = ref(false);
 const isExportingProjectFile = ref(false);
@@ -226,6 +243,7 @@ function applyProject(project: ProjectConfig): void {
     proofread: proofreadPercent,
     review: 100 - translationPercent - proofreadPercent,
   };
+  exportDraft.value = normalizeProjectExportSettings(project.settings.export);
 }
 
 function applyMembers(members: Member[]): void {
@@ -369,6 +387,38 @@ async function handleSaveProgressWeights() {
       error instanceof Error ? error.message : "进度权重保存失败。请稍后再试。";
   } finally {
     isSavingWeights.value = false;
+  }
+}
+
+async function handleSaveExportSettings() {
+  if (!localProject.value) {
+    return;
+  }
+
+  if (!canManageProject.value) {
+    errorMessage.value = "当前用户没有管理导出设置的权限。";
+    return;
+  }
+
+  isSavingExportSettings.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const nextProject: EditableProjectConfig = {
+      ...localProject.value,
+      settings: {
+        ...localProject.value.settings,
+        export: { ...exportDraft.value },
+      },
+    };
+
+    await persistProject(nextProject, "导出设置已保存。");
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "导出设置保存失败。请稍后再试。";
+  } finally {
+    isSavingExportSettings.value = false;
   }
 }
 
@@ -809,18 +859,25 @@ onBeforeUnmount(() => {
         <section v-else-if="activeSection === 'export'" class="settings-card">
           <header class="card-header">
             <h2>导出设置</h2>
-            <p>当前展示导出偏好入口，完整规则后续接入导出模块。</p>
+            <p>设置成品导出的默认格式、过滤和报告生成方式。</p>
           </header>
 
           <div class="form-stack">
             <div class="form-row">
               <div class="row-label">
                 <label for="export-format">默认导出格式</label>
-                <p>当前版本由导出模块决定实际格式。</p>
+                <p>导入 / 导出页会默认使用这里的格式。</p>
               </div>
               <div class="row-control compact-control">
-                <select id="export-format" disabled>
-                  <option>文本 + 报告包</option>
+                <select
+                  id="export-format"
+                  v-model="exportDraft.default_format"
+                  :disabled="!canManageProject"
+                >
+                  <option value="json">JSON</option>
+                  <option value="txt">TXT 对照</option>
+                  <option value="csv">CSV</option>
+                  <option value="ks">KS</option>
                 </select>
               </div>
             </div>
@@ -831,8 +888,13 @@ onBeforeUnmount(() => {
                 <p>后续用于发布前过滤未审核内容。</p>
               </div>
               <div class="row-control checkbox-control">
-                <input id="reviewed-only" type="checkbox" disabled />
-                <label for="reviewed-only">后续支持</label>
+                <input
+                  id="reviewed-only"
+                  v-model="exportDraft.only_reviewed"
+                  type="checkbox"
+                  :disabled="!canManageProject"
+                />
+                <label for="reviewed-only">只把已审核词条放入成品数据</label>
               </div>
             </div>
 
@@ -842,8 +904,13 @@ onBeforeUnmount(() => {
                 <p>用于生成对照检查报告。</p>
               </div>
               <div class="row-control checkbox-control">
-                <input id="include-source" type="checkbox" checked disabled />
-                <label for="include-source">当前报告会保留必要检查信息</label>
+                <input
+                  id="include-source"
+                  v-model="exportDraft.include_source"
+                  type="checkbox"
+                  :disabled="!canManageProject"
+                />
+                <label for="include-source">在成品数据中包含原文</label>
               </div>
             </div>
 
@@ -853,8 +920,13 @@ onBeforeUnmount(() => {
                 <p>用于定位源文件中的词条。</p>
               </div>
               <div class="row-control checkbox-control">
-                <input id="include-key" type="checkbox" checked disabled />
-                <label for="include-key">后续支持自定义</label>
+                <input
+                  id="include-key"
+                  v-model="exportDraft.include_key"
+                  type="checkbox"
+                  :disabled="!canManageProject"
+                />
+                <label for="include-key">在成品数据中包含键值</label>
               </div>
             </div>
 
@@ -864,15 +936,43 @@ onBeforeUnmount(() => {
                 <p>未翻译、争议和术语检查报告。</p>
               </div>
               <div class="row-control checkbox-control">
-                <input id="generate-report" type="checkbox" checked disabled />
-                <label for="generate-report">由现有导出流程生成</label>
+                <input
+                  id="generate-report"
+                  v-model="exportDraft.include_report"
+                  type="checkbox"
+                  :disabled="!canManageProject"
+                />
+                <label for="generate-report">导出检查报告</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>生成清单</span>
+                <p>记录项目、导出时间、格式和本次设置。</p>
+              </div>
+              <div class="row-control checkbox-control">
+                <input
+                  id="generate-manifest"
+                  v-model="exportDraft.include_manifest"
+                  type="checkbox"
+                  :disabled="!canManageProject"
+                />
+                <label for="generate-manifest">导出项目清单</label>
               </div>
             </div>
           </div>
 
-          <p class="placeholder-note">
-            导出规则暂未接入设置保存；请在导入 / 导出页执行实际导出。
-          </p>
+          <footer class="form-actions">
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="isSavingExportSettings || !canManageProject"
+              @click="handleSaveExportSettings"
+            >
+              {{ isSavingExportSettings ? "正在保存..." : "保存导出设置" }}
+            </button>
+          </footer>
         </section>
 
         <section v-else-if="activeSection === 'sync'" class="settings-card">

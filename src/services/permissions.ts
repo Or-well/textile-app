@@ -52,7 +52,13 @@ function storeCurrentUser(user: Member | null): void {
 }
 
 function normalizeAction(action: PermissionAction | string): string {
-  return action.trim();
+  const actionName = action.trim();
+
+  if (actionName === "export.release") {
+    return PERMISSION_ACTIONS.RELEASE_EXPORT;
+  }
+
+  return actionName;
 }
 
 export function getCurrentUser(): Member | null {
@@ -79,6 +85,14 @@ export function can(
   }
 
   const actionName = normalizeAction(action);
+
+  if (
+    actionName === PERMISSION_ACTIONS.RELEASE_EXPORT &&
+    (hasRole(user, "owner") || hasRole(user, "admin") || hasRole(user, "publisher"))
+  ) {
+    return true;
+  }
+
   const permissions = new Set<string>();
 
   for (const role of user.roles) {
@@ -230,7 +244,12 @@ export function canImportMaintenanceChangePackage(
 }
 
 export function canExportRelease(user: Member | null | undefined): boolean {
-  return can(user, PERMISSION_ACTIONS.RELEASE_EXPORT);
+  return (
+    can(user, PERMISSION_ACTIONS.RELEASE_EXPORT) ||
+    hasRole(user, "owner") ||
+    hasRole(user, "admin") ||
+    hasRole(user, "publisher")
+  );
 }
 
 export function canViewSync(user: Member | null | undefined): boolean {

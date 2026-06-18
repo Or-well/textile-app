@@ -344,6 +344,14 @@ export async function checkTermUsage(
 ): Promise<TermUsageResult[]> {
   const terms = await matchTerms(sourceText);
 
+  return checkTermUsageWithTerms(terms, sourceText, targetText);
+}
+
+export function checkTermUsageWithTerms(
+  terms: Term[],
+  sourceText: string,
+  targetText: string,
+): TermUsageResult[] {
   return terms.map((term) => ({
     term,
     matchedText: findMatchedText(term, sourceText) ?? term.source,

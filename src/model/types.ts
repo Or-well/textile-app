@@ -37,6 +37,17 @@ export type TaskSubmitMethod =
   | "git_hidden"
   | "git_manual";
 
+export type ReleaseExportFormat = "json" | "txt" | "csv" | "ks";
+
+export interface ReleaseExportSettings {
+  default_format?: ReleaseExportFormat;
+  only_reviewed?: boolean;
+  include_source?: boolean;
+  include_key?: boolean;
+  include_report?: boolean;
+  include_manifest?: boolean;
+}
+
 export interface ProjectConfig {
   schema_version: number;
   project_id: string;
@@ -56,6 +67,7 @@ export interface ProjectConfig {
       proofreadWeight?: number;
       reviewWeight?: number;
     };
+    export?: ReleaseExportSettings;
   };
 }
 

@@ -1,13 +1,53 @@
-import type { Entry, ProjectConfig, ProjectFile, Term } from "../model/types";
+import type {
+  Entry,
+  ProjectConfig,
+  ProjectFile,
+  ReleaseExportFormat,
+  ReleaseExportSettings,
+  Term,
+} from "../model/types";
 import { normalizeEntries } from "../model/status";
 import { nowIso } from "../utils/time";
 import { createZip, type ZipContent } from "../utils/zip";
+import { exportCsvFile } from "./exporters/csvExporter";
+import { exportJsonFile } from "./exporters/jsonExporter";
+import { exportKsFile } from "./exporters/ksExporter";
+import { exportTxtFile } from "./exporters/txtExporter";
 import {
   listFiles,
   readJson,
   readJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
+import { calculateEntryProgress, type BasicProjectStats } from "./stats";
+import { checkTermUsageWithTerms } from "./terms";
+
+export interface ReleaseExportOptions {
+  format: ReleaseExportFormat;
+  only_reviewed: boolean;
+  include_source: boolean;
+  include_key: boolean;
+  include_report: boolean;
+  include_manifest: boolean;
+}
+
+export interface ExportProjectOptions extends Partial<ReleaseExportSettings> {
+  format?: ReleaseExportFormat;
+  exportedBy?: string;
+}
+
+export interface ExportAdapterContext {
+  project: ProjectConfig;
+  projectFile: ProjectFile;
+  baseName: string;
+  entries: Entry[];
+  options: ReleaseExportOptions;
+}
+
+export interface ExportedReleaseAsset {
+  fileName: string;
+  content: string;
+}
 
 export interface ReleaseFile {
   fileId: string;
@@ -20,8 +60,16 @@ export interface ReleaseFile {
 export interface ReleaseManifest {
   schema_version: number;
   project_id: string;
-  name: string;
-  created_at: string;
+  project_name: string;
+  exported_at: string;
+  exported_by: string;
+  app_version: string;
+  entry_count: number;
+  format: ReleaseExportFormat;
+  only_reviewed: boolean;
+  include_source: boolean;
+  include_key: boolean;
+  reports: string[];
   files: {
     id: string;
     name: string;
@@ -30,9 +78,18 @@ export interface ReleaseManifest {
   }[];
 }
 
+export interface ReleaseExportSummary {
+  totalEntries: number;
+  reviewedEntries: number;
+  untranslatedEntries: number;
+  disputedEntries: number;
+  exportEntries: number;
+}
+
 export interface ReleaseProjectData {
   manifest: ReleaseManifest;
   files: ReleaseFile[];
+  options: ReleaseExportOptions;
   untranslatedReport: string;
   disputeReport: string;
   termCheckReport: string;
@@ -42,7 +99,20 @@ export interface ExportProjectResult {
   fileName: string;
   blob: Blob;
   manifest: ReleaseManifest;
+  summary: ReleaseExportSummary;
 }
+
+const EXPORT_APP_VERSION = "0.3.0";
+const REPORT_NAMES = ["untranslated", "disputes", "term-check"] as const;
+
+export const DEFAULT_RELEASE_EXPORT_SETTINGS: Required<ReleaseExportSettings> = {
+  default_format: "json",
+  only_reviewed: false,
+  include_source: true,
+  include_key: true,
+  include_report: true,
+  include_manifest: true,
+};
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 
@@ -56,6 +126,47 @@ function getProjectRoot(): ProjectDirectoryHandle {
   }
 
   return currentProjectRoot;
+}
+
+function isReleaseExportFormat(
+  value: ReleaseExportSettings["default_format"],
+): value is ReleaseExportFormat {
+  return value === "json" || value === "txt" || value === "csv" || value === "ks";
+}
+
+export function normalizeProjectExportSettings(
+  settings?: ReleaseExportSettings,
+): Required<ReleaseExportSettings> {
+  return {
+    default_format: isReleaseExportFormat(settings?.default_format)
+      ? settings.default_format
+      : DEFAULT_RELEASE_EXPORT_SETTINGS.default_format,
+    only_reviewed:
+      settings?.only_reviewed ?? DEFAULT_RELEASE_EXPORT_SETTINGS.only_reviewed,
+    include_source:
+      settings?.include_source ?? DEFAULT_RELEASE_EXPORT_SETTINGS.include_source,
+    include_key: settings?.include_key ?? DEFAULT_RELEASE_EXPORT_SETTINGS.include_key,
+    include_report:
+      settings?.include_report ?? DEFAULT_RELEASE_EXPORT_SETTINGS.include_report,
+    include_manifest:
+      settings?.include_manifest ?? DEFAULT_RELEASE_EXPORT_SETTINGS.include_manifest,
+  };
+}
+
+export function normalizeReleaseExportOptions(
+  project: ProjectConfig,
+  options: ExportProjectOptions = {},
+): ReleaseExportOptions {
+  const projectSettings = normalizeProjectExportSettings(project.settings.export);
+
+  return {
+    format: options.format ?? options.default_format ?? projectSettings.default_format,
+    only_reviewed: options.only_reviewed ?? projectSettings.only_reviewed,
+    include_source: options.include_source ?? projectSettings.include_source,
+    include_key: options.include_key ?? projectSettings.include_key,
+    include_report: options.include_report ?? projectSettings.include_report,
+    include_manifest: options.include_manifest ?? projectSettings.include_manifest,
+  };
 }
 
 async function loadProjectConfig(): Promise<ProjectConfig> {
@@ -79,7 +190,7 @@ async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
 }
 
-async function loadTerms(): Promise<Term[]> {
+async function loadTermsForReport(): Promise<Term[]> {
   try {
     return readJsonl<Term>(getProjectRoot(), "terms/terms.jsonl");
   } catch {
@@ -87,39 +198,46 @@ async function loadTerms(): Promise<Term[]> {
   }
 }
 
-function buildReleaseText(entries: Entry[]): string {
-  return `${entries.map((entry) => `${entry.key}\t${entry.target}`).join("\n")}\n`;
-}
-
 function fileNameWithoutExtension(name: string): string {
   return name.replace(/\.[^.]+$/, "");
 }
 
-function termAppearsInSource(term: Term, source: string): boolean {
-  return (
-    source.includes(term.source) ||
-    term.variants.some((variant) => source.includes(variant))
-  );
+function filterReleaseEntries(
+  entries: Entry[],
+  options: ReleaseExportOptions,
+): Entry[] {
+  return options.only_reviewed
+    ? entries.filter((entry) => entry.status === "reviewed")
+    : entries;
 }
 
-export async function exportFile(fileId: string): Promise<ReleaseFile> {
-  const config = await loadProjectConfig();
-  const projectFile = config.files.find((file) => file.id === fileId);
-
-  if (!projectFile) {
-    throw new Error("没有找到要导出的文件。请检查项目配置。");
+function exportWithAdapter(
+  context: ExportAdapterContext,
+): ExportedReleaseAsset {
+  if (context.options.format === "json") {
+    return exportJsonFile(context);
   }
 
-  const entries = await loadEntryChunks(projectFile);
-  const releaseName = `${fileNameWithoutExtension(projectFile.name)}.txt`;
+  if (context.options.format === "csv") {
+    return exportCsvFile(context);
+  }
 
-  return {
-    fileId: projectFile.id,
-    fileName: releaseName,
-    path: `release/${releaseName}`,
-    content: buildReleaseText(entries),
-    entries,
-  };
+  if (context.options.format === "ks") {
+    return exportKsFile(context);
+  }
+
+  return exportTxtFile(context);
+}
+
+function formatReportEntry(entry: Entry): string {
+  return [
+    entry.id,
+    entry.key,
+    entry.speaker || "-",
+    entry.status,
+    entry.source,
+    entry.target || "-",
+  ].join("\t");
 }
 
 export function generateUntranslatedReport(entries: Entry[]): string {
@@ -131,8 +249,8 @@ export function generateUntranslatedReport(entries: Entry[]): string {
 
   return [
     `未翻译词条：${rows.length}`,
-    "",
-    ...rows.map((entry) => `${entry.id}\t${entry.speaker}\t${entry.source}`),
+    "词条\t键值\t说话人\t状态\t原文\t译文",
+    ...rows.map(formatReportEntry),
     "",
   ].join("\n");
 }
@@ -146,38 +264,168 @@ export function generateDisputeReport(entries: Entry[]): string {
 
   return [
     `争议词条：${rows.length}`,
-    "",
-    ...rows.map((entry) => `${entry.id}\t${entry.speaker}\t${entry.source}`),
+    "词条\t键值\t说话人\t状态\t原文\t译文",
+    ...rows.map(formatReportEntry),
     "",
   ].join("\n");
 }
 
 export function generateTermCheckReport(entries: Entry[], terms: Term[]): string {
   const issues = entries.flatMap((entry) =>
-    terms
-      .filter((term) => termAppearsInSource(term, entry.source))
-      .filter((term) => !entry.target.includes(term.target))
-      .map((term) => `${entry.id}\t${term.source} -> ${term.target}`),
+    checkTermUsageWithTerms(terms, entry.source, entry.target)
+      .filter((result) => !result.isRecommendedUsed)
+      .map((result) =>
+        [
+          entry.id,
+          entry.key,
+          result.matchedText,
+          result.term.target,
+          entry.source,
+          entry.target || "-",
+        ].join("\t"),
+      ),
   );
 
   if (issues.length === 0) {
     return "术语问题：0\n";
   }
 
-  return [`术语问题：${issues.length}`, "", ...issues, ""].join("\n");
+  return [
+    `术语问题：${issues.length}`,
+    "词条\t键值\t命中术语\t推荐译名\t原文\t译文",
+    ...issues,
+    "",
+  ].join("\n");
+}
+
+function buildSummary(entries: Entry[], exportEntries: Entry[]): ReleaseExportSummary {
+  const stats: BasicProjectStats = calculateEntryProgress(entries);
+
+  return {
+    totalEntries: stats.totalEntries,
+    reviewedEntries: stats.reviewedEntries,
+    untranslatedEntries: stats.untranslatedEntries,
+    disputedEntries: stats.disputedEntries,
+    exportEntries: exportEntries.length,
+  };
+}
+
+async function collectReleaseFiles(
+  project: ProjectConfig,
+  options: ReleaseExportOptions,
+): Promise<{
+  files: ReleaseFile[];
+  allEntries: Entry[];
+  exportEntries: Entry[];
+}> {
+  const files: ReleaseFile[] = [];
+  const allEntries: Entry[] = [];
+
+  for (const projectFile of project.files.filter((file) => !file.hidden)) {
+    const entries = await loadEntryChunks(projectFile);
+    const releaseEntries = filterReleaseEntries(entries, options);
+    const baseName = fileNameWithoutExtension(projectFile.name);
+    const asset = exportWithAdapter({
+      project,
+      projectFile,
+      baseName,
+      entries: releaseEntries,
+      options,
+    });
+
+    allEntries.push(...entries);
+    files.push({
+      fileId: projectFile.id,
+      fileName: asset.fileName,
+      path: `release/${asset.fileName}`,
+      content: asset.content,
+      entries: releaseEntries,
+    });
+  }
+
+  return {
+    files,
+    allEntries,
+    exportEntries: files.flatMap((file) => file.entries),
+  };
+}
+
+function buildManifest(
+  project: ProjectConfig,
+  files: ReleaseFile[],
+  options: ReleaseExportOptions,
+  exportedAt: string,
+  exportedBy = "",
+): ReleaseManifest {
+  return {
+    schema_version: 1,
+    project_id: project.project_id,
+    project_name: project.name,
+    exported_at: exportedAt,
+    exported_by: exportedBy || "unknown_user",
+    app_version: EXPORT_APP_VERSION,
+    entry_count: files.reduce((total, file) => total + file.entries.length, 0),
+    format: options.format,
+    only_reviewed: options.only_reviewed,
+    include_source: options.include_source,
+    include_key: options.include_key,
+    reports: options.include_report ? [...REPORT_NAMES] : [],
+    files: files.map((file) => ({
+      id: file.fileId,
+      name: file.fileName,
+      path: file.path,
+      entries: file.entries.length,
+    })),
+  };
+}
+
+export async function exportFile(
+  fileId: string,
+  options: ExportProjectOptions = {},
+): Promise<ReleaseFile> {
+  const config = await loadProjectConfig();
+  const releaseOptions = normalizeReleaseExportOptions(config, options);
+  const projectFile = config.files.find((file) => file.id === fileId);
+
+  if (!projectFile) {
+    throw new Error("没有找到要导出的文件。请检查项目配置。");
+  }
+
+  const entries = filterReleaseEntries(await loadEntryChunks(projectFile), releaseOptions);
+  const asset = exportWithAdapter({
+    project: config,
+    projectFile,
+    baseName: fileNameWithoutExtension(projectFile.name),
+    entries,
+    options: releaseOptions,
+  });
+
+  return {
+    fileId: projectFile.id,
+    fileName: asset.fileName,
+    path: `release/${asset.fileName}`,
+    content: asset.content,
+    entries,
+  };
 }
 
 export async function generateReleaseZip(
   data: ReleaseProjectData,
 ): Promise<Blob> {
   const files: ZipContent = {
-    "manifest.json": `${JSON.stringify(data.manifest, null, 2)}\n`,
     "release/": null,
-    "reports/": null,
-    "reports/untranslated.txt": data.untranslatedReport,
-    "reports/disputes.txt": data.disputeReport,
-    "reports/term-check.txt": data.termCheckReport,
   };
+
+  if (data.options.include_manifest) {
+    files["manifest.json"] = `${JSON.stringify(data.manifest, null, 2)}\n`;
+  }
+
+  if (data.options.include_report) {
+    files["reports/"] = null;
+    files["reports/untranslated.txt"] = data.untranslatedReport;
+    files["reports/disputes.txt"] = data.disputeReport;
+    files["reports/term-check.txt"] = data.termCheckReport;
+  }
 
   for (const file of data.files) {
     files[file.path] = file.content;
@@ -186,39 +434,55 @@ export async function generateReleaseZip(
   return createZip(files);
 }
 
-export async function exportProject(): Promise<ExportProjectResult> {
+export async function getReleaseExportSummary(
+  options: ExportProjectOptions = {},
+): Promise<ReleaseExportSummary> {
   const config = await loadProjectConfig();
-  const files = await Promise.all(
-    config.files
-      .filter((file) => !file.hidden)
-      .map((file) => exportFile(file.id)),
+  const releaseOptions = normalizeReleaseExportOptions(config, options);
+  const { allEntries, exportEntries } = await collectReleaseFiles(
+    config,
+    releaseOptions,
   );
-  const entries = files.flatMap((file) => file.entries);
-  const terms = await loadTerms();
-  const createdAt = nowIso();
-  const manifest: ReleaseManifest = {
-    schema_version: 1,
-    project_id: config.project_id,
-    name: config.name,
-    created_at: createdAt,
-    files: files.map((file) => ({
-      id: file.fileId,
-      name: file.fileName,
-      path: file.path,
-      entries: file.entries.length,
-    })),
-  };
+
+  return buildSummary(allEntries, exportEntries);
+}
+
+export async function exportProject(
+  options: ExportProjectOptions = {},
+): Promise<ExportProjectResult> {
+  const config = await loadProjectConfig();
+  const releaseOptions = normalizeReleaseExportOptions(config, options);
+  const { files, allEntries, exportEntries } = await collectReleaseFiles(
+    config,
+    releaseOptions,
+  );
+
+  if (files.length === 0) {
+    throw new Error("当前项目没有可导出的文件。");
+  }
+
+  const terms = await loadTermsForReport();
+  const exportedAt = nowIso();
+  const manifest = buildManifest(
+    config,
+    files,
+    releaseOptions,
+    exportedAt,
+    options.exportedBy,
+  );
   const data: ReleaseProjectData = {
     manifest,
     files,
-    untranslatedReport: generateUntranslatedReport(entries),
-    disputeReport: generateDisputeReport(entries),
-    termCheckReport: generateTermCheckReport(entries, terms),
+    options: releaseOptions,
+    untranslatedReport: generateUntranslatedReport(allEntries),
+    disputeReport: generateDisputeReport(allEntries),
+    termCheckReport: generateTermCheckReport(allEntries, terms),
   };
 
   return {
-    fileName: `release-${config.project_id}-${createdAt.slice(0, 10)}.zip`,
+    fileName: `release-${config.project_id}-${exportedAt.slice(0, 10)}.zip`,
     blob: await generateReleaseZip(data),
     manifest,
+    summary: buildSummary(allEntries, exportEntries),
   };
 }
