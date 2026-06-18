@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import ProjectLayout from "./components/ProjectLayout.vue";
 import UpdateNotice from "./components/UpdateNotice.vue";
 import CommentsPage from "./pages/CommentsPage.vue";
+import CreateProjectPage from "./pages/CreateProjectPage.vue";
 import EntryPage from "./pages/EntryPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
 import HomePage from "./pages/HomePage.vue";
@@ -23,7 +24,25 @@ import { setHistoryProjectRoot } from "./services/history";
 import { loginMember } from "./services/auth";
 import { getCurrentUser, setCurrentUser } from "./services/permissions";
 import { checkForUpdates, setupPwaUpdateListener } from "./services/appUpdate";
-import { openProject, openProjectFile, type OpenedProject } from "./services/project";
+import {
+  openProject,
+  openProjectRoot,
+  type OpenedProject,
+} from "./services/project";
+import {
+  getRecentProjectHandle,
+  hasRecentProjectAccess,
+  listRecentProjects,
+  rememberRecentProject,
+  removeRecentProject,
+  updateRecentProjectUser,
+  type RecentProjectRecord,
+} from "./services/recentProjects";
+import {
+  clearProjectSession,
+  restoreProjectSession,
+  saveProjectSession,
+} from "./services/session";
 import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectRoot } from "./services/tasks";
 import { setTermsProjectRoot } from "./services/terms";
@@ -64,12 +83,14 @@ const sectionLabels: Record<ProjectSection, string> = {
 
 const routePath = ref(window.location.pathname);
 const currentProject = ref<OpenedProject | null>(null);
-const currentUser = ref<Member | null>(getCurrentUser());
+const currentUser = ref<Member | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
 const taskCount = ref(0);
+const recentProjects = ref<RecentProjectRecord[]>(listRecentProjects());
 const isOpeningProject = ref(false);
 const isOpeningProjectFile = ref(false);
 const isLoggingIn = ref(false);
+const isRestoringProject = ref(false);
 const appErrorMessage = ref("");
 const loginErrorMessage = ref("");
 const packedProjectNotice = ref("");
@@ -101,6 +122,10 @@ function parseRoute(path: string) {
 
   if (parts[0] !== "projects") {
     return { page: "not-found" as const };
+  }
+
+  if (parts[1] === "create") {
+    return { page: "create-project" as const };
   }
 
   if (parts.length === 1) {
@@ -162,6 +187,74 @@ function configureProjectServices(project: OpenedProject) {
   updatePackedProjectNotice(project);
 }
 
+function getProjectDisplayPath(project: OpenedProject): string {
+  if (project.storageKind === "packed") {
+    return project.sourceFileName ?? project.root.sourceFileName ?? "项目文件";
+  }
+
+  return project.root.name || "本地项目文件夹";
+}
+
+async function rememberOpenedProject(
+  project: OpenedProject,
+  lastUserId?: string,
+): Promise<void> {
+  recentProjects.value = await rememberRecentProject(
+    {
+      projectId: project.config.project_id,
+      name: project.config.name,
+      sourceType: project.storageKind === "packed" ? "hproj" : "folder",
+      displayPath: getProjectDisplayPath(project),
+      lastUserId,
+    },
+    project.root,
+  );
+}
+
+function restoreUserFromSession(project: OpenedProject): Member | null {
+  const member = restoreProjectSession(project.config.project_id, project.members);
+
+  if (!member) {
+    setCurrentUser(null);
+    currentUser.value = null;
+    return null;
+  }
+
+  setCurrentUser(member);
+  currentUser.value = getCurrentUser();
+  return currentUser.value;
+}
+
+async function enterOpenedProject(
+  project: OpenedProject,
+  options: {
+    preferredSection?: ProjectSection;
+    loginAs?: Member;
+  } = {},
+) {
+  currentProject.value = project;
+  configureProjectServices(project);
+  await refreshProjectSummary();
+
+  const loginMember = options.loginAs ?? restoreUserFromSession(project);
+
+  if (options.loginAs) {
+    setCurrentUser(options.loginAs);
+    currentUser.value = getCurrentUser();
+    saveProjectSession(project.config.project_id, options.loginAs.id);
+  }
+
+  await rememberOpenedProject(project, loginMember?.id);
+
+  if (loginMember) {
+    navigate(
+      `/projects/${encodeURIComponent(project.config.project_id)}/${options.preferredSection ?? "files"}`,
+    );
+  } else {
+    navigate(`/projects/${encodeURIComponent(project.config.project_id)}`);
+  }
+}
+
 function buildProjectSummary(
   config: ProjectConfig,
   members: Member[],
@@ -205,10 +298,7 @@ async function handleOpenLocalProject() {
   try {
     const project = await openProject();
 
-    currentProject.value = project;
-    configureProjectServices(project);
-    await refreshProjectSummary();
-    navigate(`/projects/${encodeURIComponent(project.config.project_id)}/files`);
+    await enterOpenedProject(project);
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       appErrorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
@@ -222,26 +312,59 @@ async function handleOpenLocalProject() {
   }
 }
 
-async function handleOpenProjectFile(file: File) {
-  isOpeningProjectFile.value = true;
+function handleOpenProjectFilePlaceholder() {
+  appErrorMessage.value = "单文件项目将在 .hproj 项目包模块中支持。";
+}
+
+async function handleOpenRecentProject(record: RecentProjectRecord) {
+  isOpeningProject.value = true;
   appErrorMessage.value = "";
 
   try {
-    const project = await openProjectFile(file);
+    const storedRoot = await getRecentProjectHandle(record.projectId);
 
-    currentProject.value = project;
-    configureProjectServices(project);
-    await refreshProjectSummary();
-    navigate(`/projects/${encodeURIComponent(project.config.project_id)}/files`);
+    if (!storedRoot || !(await hasRecentProjectAccess(storedRoot))) {
+      appErrorMessage.value =
+        "浏览器需要重新授权此项目文件夹，请重新选择该项目所在文件夹。";
+      return;
+    }
+
+    const project = await openProjectRoot(storedRoot);
+
+    if (project.config.project_id !== record.projectId) {
+      appErrorMessage.value =
+        "你选择的项目和最近项目记录不一致，请重新选择正确的项目文件夹。";
+      return;
+    }
+
+    await enterOpenedProject(project);
   } catch (error) {
     if (error instanceof Error) {
       appErrorMessage.value = error.message;
     } else {
-      appErrorMessage.value = "打开项目文件失败。请确认选择的是 .hproj 项目文件。";
+      appErrorMessage.value =
+        "浏览器需要重新授权此项目文件夹，请重新选择该项目所在文件夹。";
     }
   } finally {
-    isOpeningProjectFile.value = false;
+    isOpeningProject.value = false;
   }
+}
+
+async function handleRemoveRecentProject(projectId: string) {
+  recentProjects.value = await removeRecentProject(projectId);
+}
+
+async function handleProjectCreated(project: OpenedProject, owner: Member) {
+  appErrorMessage.value = "";
+  await enterOpenedProject(project, {
+    preferredSection: "files",
+    loginAs: owner,
+  });
+}
+
+function handleImportProjectPlaceholder() {
+  appErrorMessage.value =
+    "导入项目 / 修改包请先进入项目后的导入导出页处理；启动页导入入口暂未接入。";
 }
 
 function handleEnterCurrentProject() {
@@ -275,6 +398,12 @@ async function handleLogin(memberName: string, password: string) {
 
     setCurrentUser(member);
     currentUser.value = getCurrentUser();
+    saveProjectSession(currentProject.value.config.project_id, member.id);
+    recentProjects.value = updateRecentProjectUser(
+      currentProject.value.config.project_id,
+      member.id,
+    );
+    navigate(`/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files`);
   } catch {
     loginErrorMessage.value = "登录失败。请稍后再试。";
   } finally {
@@ -283,6 +412,10 @@ async function handleLogin(memberName: string, password: string) {
 }
 
 function handleLogout() {
+  if (currentProject.value) {
+    clearProjectSession(currentProject.value.config.project_id);
+  }
+
   setCurrentUser(null);
   currentUser.value = null;
   loginErrorMessage.value = "";
@@ -360,6 +493,48 @@ function handlePackedProjectExported() {
     "已导出新的 .hproj 项目文件。之后的修改仍需要再次导出为项目文件。";
 }
 
+async function restoreProjectFromRoute() {
+  const currentRoute = route.value;
+
+  if (currentRoute.page !== "project" || currentProject.value) {
+    return;
+  }
+
+  isRestoringProject.value = true;
+
+  try {
+    const root = await getRecentProjectHandle(currentRoute.projectId);
+
+    if (!root || !(await hasRecentProjectAccess(root))) {
+      appErrorMessage.value =
+        "浏览器需要重新授权此项目文件夹，请重新选择该项目所在文件夹。";
+      replace("/projects");
+      return;
+    }
+
+    const project = await openProjectRoot(root);
+
+    if (project.config.project_id !== currentRoute.projectId) {
+      appErrorMessage.value =
+        "最近项目记录和当前地址不一致，请从项目启动页重新打开。";
+      replace("/projects");
+      return;
+    }
+
+    await enterOpenedProject(project, {
+      preferredSection: currentRoute.section === "file-entry" ? "files" : currentRoute.section,
+    });
+  } catch (error) {
+    appErrorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "项目恢复失败，请从项目启动页重新打开。";
+    replace("/projects");
+  } finally {
+    isRestoringProject.value = false;
+  }
+}
+
 onMounted(() => {
   window.addEventListener("popstate", handlePopState);
   window.addEventListener("hproj-project-dirty", handlePackedProjectDirty);
@@ -370,6 +545,8 @@ onMounted(() => {
   if (window.location.pathname === "/") {
     replace("/projects");
   }
+
+  void restoreProjectFromRoute();
 });
 
 onBeforeUnmount(() => {
@@ -382,17 +559,26 @@ onBeforeUnmount(() => {
 <template>
   <HomePage v-if="route.page === 'home'" />
 
+  <CreateProjectPage
+    v-else-if="route.page === 'create-project'"
+    @created="handleProjectCreated"
+    @cancel="navigate('/projects')"
+  />
+
   <section v-else-if="route.page === 'projects'" class="project-list-shell">
-    <button class="home-link-button" type="button" @click="navigate('/home')">
-      打开项目入口
-    </button>
     <ProjectListPage
       :current-project="currentProjectSummary"
       :is-opening="isOpeningProject"
       :is-opening-file="isOpeningProjectFile"
+      :is-restoring="isRestoringProject"
       :error-message="appErrorMessage"
+      :recent-projects="recentProjects"
+      @create-project="navigate('/projects/create')"
       @open-local-project="handleOpenLocalProject"
-      @open-project-file="handleOpenProjectFile"
+      @open-project-file="handleOpenProjectFilePlaceholder"
+      @import-project="handleImportProjectPlaceholder"
+      @open-recent-project="handleOpenRecentProject"
+      @remove-recent-project="handleRemoveRecentProject"
       @enter-current-project="handleEnterCurrentProject"
     />
   </section>
@@ -511,27 +697,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .project-list-shell {
   position: relative;
-}
-
-.home-link-button {
-  position: absolute;
-  top: 82px;
-  right: max(28px, calc((100vw - 1220px) / 2));
-  z-index: 2;
-  min-height: 38px;
-  padding: 0 13px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
-  cursor: pointer;
-}
-
-@media (max-width: 820px) {
-  .home-link-button {
-    position: static;
-    margin: 18px 18px 0;
-  }
 }
 
 .packed-project-notice {

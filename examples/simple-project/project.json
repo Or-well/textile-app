@@ -2,8 +2,8 @@
   "schema_version": 1,
   "project_id": "simple_project",
   "name": "样例汉化项目",
-  "source_language": "ja",
-  "target_language": "zh-Hans",
+  "source_language": "日语",
+  "target_language": "汉语",
   "files": [
     {
       "id": "script_001",
@@ -19,5 +19,6 @@
     "chunk_size": 500,
     "auto_save": true,
     "allow_change_package": true
-  }
+  },
+  "description": ""
 }

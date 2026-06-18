@@ -1,0 +1,225 @@
+import { nowIso } from "../utils/time";
+import type { ProjectDirectoryHandle } from "./projectFs";
+
+export type RecentProjectSourceType = "folder" | "hproj";
+
+export interface RecentProjectRecord {
+  projectId: string;
+  name: string;
+  sourceType: RecentProjectSourceType;
+  displayPath: string;
+  lastOpenedAt: string;
+  lastUserId?: string;
+}
+
+export interface RecentProjectInput {
+  projectId: string;
+  name: string;
+  sourceType: RecentProjectSourceType;
+  displayPath: string;
+  lastUserId?: string;
+}
+
+const RECENT_PROJECTS_STORAGE_KEY = "textile.recentProjects.v1";
+const RECENT_PROJECTS_DB_NAME = "textile-recent-projects";
+const RECENT_PROJECTS_DB_VERSION = 1;
+const PROJECT_HANDLES_STORE = "projectHandles";
+const MAX_RECENT_PROJECTS = 12;
+
+function canUseBrowserStorage(): boolean {
+  return typeof window !== "undefined";
+}
+
+function readRecentProjects(): RecentProjectRecord[] {
+  if (!canUseBrowserStorage()) {
+    return [];
+  }
+
+  const text = window.localStorage.getItem(RECENT_PROJECTS_STORAGE_KEY);
+
+  if (!text) {
+    return [];
+  }
+
+  try {
+    const rows = JSON.parse(text) as RecentProjectRecord[];
+
+    return Array.isArray(rows) ? sortRecentProjects(rows) : [];
+  } catch {
+    window.localStorage.removeItem(RECENT_PROJECTS_STORAGE_KEY);
+    return [];
+  }
+}
+
+function writeRecentProjects(records: RecentProjectRecord[]): void {
+  if (!canUseBrowserStorage()) {
+    return;
+  }
+
+  window.localStorage.setItem(
+    RECENT_PROJECTS_STORAGE_KEY,
+    JSON.stringify(sortRecentProjects(records).slice(0, MAX_RECENT_PROJECTS)),
+  );
+}
+
+function sortRecentProjects(
+  records: RecentProjectRecord[],
+): RecentProjectRecord[] {
+  return [...records].sort((left, right) =>
+    right.lastOpenedAt.localeCompare(left.lastOpenedAt),
+  );
+}
+
+function openRecentProjectDatabase(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const request = indexedDB.open(
+      RECENT_PROJECTS_DB_NAME,
+      RECENT_PROJECTS_DB_VERSION,
+    );
+
+    request.onupgradeneeded = () => {
+      const database = request.result;
+
+      if (!database.objectStoreNames.contains(PROJECT_HANDLES_STORE)) {
+        database.createObjectStore(PROJECT_HANDLES_STORE);
+      }
+    };
+
+    request.onerror = () => resolve(null);
+    request.onsuccess = () => resolve(request.result);
+  });
+}
+
+async function writeProjectHandle(
+  projectId: string,
+  root?: ProjectDirectoryHandle,
+): Promise<void> {
+  if (!root || root.storageKind === "packed") {
+    return;
+  }
+
+  const database = await openRecentProjectDatabase();
+
+  if (!database) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(PROJECT_HANDLES_STORE, "readwrite");
+
+    try {
+      transaction.objectStore(PROJECT_HANDLES_STORE).put(root, projectId);
+    } catch {
+      resolve();
+      return;
+    }
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+  });
+  database.close();
+}
+
+async function deleteProjectHandle(projectId: string): Promise<void> {
+  const database = await openRecentProjectDatabase();
+
+  if (!database) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(PROJECT_HANDLES_STORE, "readwrite");
+
+    transaction.objectStore(PROJECT_HANDLES_STORE).delete(projectId);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+  });
+  database.close();
+}
+
+export function listRecentProjects(): RecentProjectRecord[] {
+  return readRecentProjects();
+}
+
+export async function rememberRecentProject(
+  input: RecentProjectInput,
+  root?: ProjectDirectoryHandle,
+): Promise<RecentProjectRecord[]> {
+  const existing = readRecentProjects().filter(
+    (record) => record.projectId !== input.projectId,
+  );
+  const record: RecentProjectRecord = {
+    ...input,
+    lastOpenedAt: nowIso(),
+  };
+
+  writeRecentProjects([record, ...existing]);
+  await writeProjectHandle(input.projectId, root);
+
+  return listRecentProjects();
+}
+
+export function updateRecentProjectUser(
+  projectId: string,
+  userId: string,
+): RecentProjectRecord[] {
+  const records = readRecentProjects().map((record) =>
+    record.projectId === projectId ? { ...record, lastUserId: userId } : record,
+  );
+
+  writeRecentProjects(records);
+
+  return listRecentProjects();
+}
+
+export async function removeRecentProject(
+  projectId: string,
+): Promise<RecentProjectRecord[]> {
+  writeRecentProjects(
+    readRecentProjects().filter((record) => record.projectId !== projectId),
+  );
+  await deleteProjectHandle(projectId);
+
+  return listRecentProjects();
+}
+
+export async function getRecentProjectHandle(
+  projectId: string,
+): Promise<ProjectDirectoryHandle | null> {
+  const database = await openRecentProjectDatabase();
+
+  if (!database) {
+    return null;
+  }
+
+  const handle = await new Promise<ProjectDirectoryHandle | null>((resolve) => {
+    const transaction = database.transaction(PROJECT_HANDLES_STORE, "readonly");
+    const request = transaction.objectStore(PROJECT_HANDLES_STORE).get(projectId);
+
+    request.onsuccess = () =>
+      resolve((request.result as ProjectDirectoryHandle | undefined) ?? null);
+    request.onerror = () => resolve(null);
+  });
+
+  database.close();
+
+  return handle;
+}
+
+export async function hasRecentProjectAccess(
+  root: ProjectDirectoryHandle,
+): Promise<boolean> {
+  if (!root.queryPermission) {
+    return true;
+  }
+
+  try {
+    return (await root.queryPermission({ mode: "readwrite" })) === "granted";
+  } catch {
+    return false;
+  }
+}

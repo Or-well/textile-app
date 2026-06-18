@@ -52,6 +52,7 @@ export interface ProjectConfig {
   schema_version: number;
   project_id: string;
   name: string;
+  description?: string;
   source_language: string;
   target_language: string;
   files: ProjectFile[];
@@ -59,6 +60,12 @@ export interface ProjectConfig {
     chunk_size: number;
     auto_save: boolean;
     allow_change_package: boolean;
+    workflow?: {
+      enable_tasks: boolean;
+      enable_proofread: boolean;
+      enable_review: boolean;
+      proofread_required: number;
+    };
     progress_weights?: {
       translation?: number;
       proofread?: number;

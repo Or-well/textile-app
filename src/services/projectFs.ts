@@ -18,6 +18,12 @@ export interface ProjectDirectoryHandle {
   sourceFileName?: string;
   isDirty?: () => boolean;
   markClean?: () => void;
+  queryPermission?: (descriptor?: {
+    mode?: "read" | "readwrite";
+  }) => Promise<PermissionState>;
+  requestPermission?: (descriptor?: {
+    mode?: "read" | "readwrite";
+  }) => Promise<PermissionState>;
   getFileHandle(
     name: string,
     options?: { create?: boolean },
