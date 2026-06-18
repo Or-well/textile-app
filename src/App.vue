@@ -26,6 +26,7 @@ import { getCurrentUser, setCurrentUser } from "./services/permissions";
 import { checkForUpdates, setupPwaUpdateListener } from "./services/appUpdate";
 import {
   openProject,
+  openProjectFile,
   openProjectRoot,
   type OpenedProject,
 } from "./services/project";
@@ -312,8 +313,23 @@ async function handleOpenLocalProject() {
   }
 }
 
-function handleOpenProjectFilePlaceholder() {
-  appErrorMessage.value = "单文件项目将在 .hproj 项目包模块中支持。";
+async function handleOpenProjectFile(file: File) {
+  isOpeningProjectFile.value = true;
+  appErrorMessage.value = "";
+
+  try {
+    const project = await openProjectFile(file);
+
+    await enterOpenedProject(project);
+  } catch (error) {
+    if (error instanceof Error) {
+      appErrorMessage.value = error.message;
+    } else {
+      appErrorMessage.value = "导入 .hproj 项目失败。请确认选择的是项目文件。";
+    }
+  } finally {
+    isOpeningProjectFile.value = false;
+  }
 }
 
 async function handleOpenRecentProject(record: RecentProjectRecord) {
@@ -321,6 +337,11 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
   appErrorMessage.value = "";
 
   try {
+    if (record.sourceType === "hproj") {
+      appErrorMessage.value = "请重新选择这个 .hproj 项目文件。";
+      return;
+    }
+
     const storedRoot = await getRecentProjectHandle(record.projectId);
 
     if (!storedRoot || !(await hasRecentProjectAccess(storedRoot))) {
@@ -360,11 +381,6 @@ async function handleProjectCreated(project: OpenedProject, owner: Member) {
     preferredSection: "files",
     loginAs: owner,
   });
-}
-
-function handleImportProjectPlaceholder() {
-  appErrorMessage.value =
-    "导入项目 / 修改包请先进入项目后的导入导出页处理；启动页导入入口暂未接入。";
 }
 
 function handleEnterCurrentProject() {
@@ -575,8 +591,7 @@ onBeforeUnmount(() => {
       :recent-projects="recentProjects"
       @create-project="navigate('/projects/create')"
       @open-local-project="handleOpenLocalProject"
-      @open-project-file="handleOpenProjectFilePlaceholder"
-      @import-project="handleImportProjectPlaceholder"
+      @open-project-file="handleOpenProjectFile"
       @open-recent-project="handleOpenRecentProject"
       @remove-recent-project="handleRemoveRecentProject"
       @enter-current-project="handleEnterCurrentProject"

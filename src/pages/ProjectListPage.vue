@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import LauncherActionCard from "../components/LauncherActionCard.vue";
 import RecentProjectCard from "../components/RecentProjectCard.vue";
 import type { RecentProjectRecord } from "../services/recentProjects";
@@ -28,17 +28,28 @@ const props = defineProps<{
 const emit = defineEmits<{
   createProject: [];
   openLocalProject: [];
-  openProjectFile: [];
-  importProject: [];
+  openProjectFile: [file: File];
   openRecentProject: [project: RecentProjectRecord];
   removeRecentProject: [projectId: string];
   enterCurrentProject: [];
 }>();
 
 const hasRecentProjects = computed(() => props.recentProjects.length > 0);
+const projectFileInput = ref<HTMLInputElement | null>(null);
 
 function getSourceTypeText(sourceType: RecentProjectRecord["sourceType"]): string {
   return sourceType === "folder" ? "文件夹" : ".hproj";
+}
+
+function handleSelectProjectFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (file) {
+    emit("openProjectFile", file);
+  }
+
+  input.value = "";
 }
 
 </script>
@@ -75,17 +86,17 @@ function getSourceTypeText(sourceType: RecentProjectRecord["sourceType"]): strin
           />
 
           <LauncherActionCard
-            title="打开 .hproj 项目文件"
-            description="单文件项目入口尚未接入；相关模块存在，但本任务不启用真实读写"
-            eyebrow="未启用"
-            disabled
-            @activate="emit('openProjectFile')"
+            :title="isOpeningFile ? '正在导入...' : '导入 .hproj 项目'"
+            description="选择本地 .hproj 项目包并进入项目"
+            :busy="isOpeningFile"
+            @activate="projectFileInput?.click()"
           />
-
-          <LauncherActionCard
-            title="导入项目 / 修改包"
-            description="打开项目后，在导入导出页处理修改包。"
-            @activate="emit('importProject')"
+          <input
+            ref="projectFileInput"
+            class="hidden-file-input"
+            type="file"
+            accept=".hproj,application/zip"
+            @change="handleSelectProjectFile"
           />
 
           <LauncherActionCard
@@ -369,6 +380,10 @@ dl div {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
+}
+
+.hidden-file-input {
+  display: none;
 }
 
 @media (max-width: 900px) {
