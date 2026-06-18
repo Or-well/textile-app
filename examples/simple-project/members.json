@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "members": [
+    {
+      "id": "user_a",
+      "name": "小A",
+      "roles": ["translator", "proofreader"],
+      "allow_permissions": [],
+      "deny_permissions": [],
+      "active": true
+    },
+    {
+      "id": "leader",
+      "name": "负责人",
+      "roles": ["owner", "reviewer", "publisher"],
+      "allow_permissions": [],
+      "deny_permissions": [],
+      "active": true
+    }
+  ]
+}

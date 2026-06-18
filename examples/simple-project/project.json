@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "project_id": "simple_project",
+  "name": "样例汉化项目",
+  "source_language": "ja",
+  "target_language": "zh-Hans",
+  "files": [
+    {
+      "id": "script_001",
+      "name": "script_001.ks",
+      "source_path": "source/script_001.ks",
+      "entries_path": "entries/script_001",
+      "type": "ks",
+      "hidden": false,
+      "locked": false
+    }
+  ],
+  "settings": {
+    "chunk_size": 500,
+    "auto_save": true,
+    "allow_change_package": true
+  }
+}
