@@ -4,7 +4,10 @@
     {
       "id": "user_a",
       "name": "小A",
-      "roles": ["translator", "proofreader"],
+      "roles": [
+        "translator",
+        "proofreader"
+      ],
       "allow_permissions": [],
       "deny_permissions": [],
       "active": true,
@@ -17,7 +20,9 @@
     {
       "id": "admin",
       "name": "管理员",
-      "roles": ["admin"],
+      "roles": [
+        "admin"
+      ],
       "allow_permissions": [],
       "deny_permissions": [],
       "active": true,
@@ -30,7 +35,11 @@
     {
       "id": "leader",
       "name": "负责人",
-      "roles": ["owner", "reviewer", "publisher"],
+      "roles": [
+        "owner",
+        "reviewer",
+        "publisher"
+      ],
       "allow_permissions": [],
       "deny_permissions": [],
       "active": true,
@@ -38,7 +47,11 @@
       "password_salt": "dGV4dGlsZS1zYWx0LWxlYWRlcg==",
       "password_updated_at": "2026-06-19T00:00:00.000Z",
       "created_at": "2026-06-19T00:00:00.000Z",
-      "updated_at": "2026-06-19T00:00:00.000Z"
+      "updated_at": "2026-06-19T12:09:30.614Z",
+      "public_key": "{\"crv\":\"P-256\",\"ext\":true,\"key_ops\":[\"verify\"],\"kty\":\"EC\",\"x\":\"ecqZIlJdvGJr7d-NP9zE0aKl75fhEg91qG--fa0Em1g\",\"y\":\"bxfVNRJny62-2ZUJvoXlFmrqR-WwIgQAuTnxYC80vHI\"}",
+      "key_id": "key_a80447cfaa3d18af",
+      "key_created_at": "2026-06-19T12:09:30.614Z",
+      "key_revoked_at": ""
     }
   ]
 }

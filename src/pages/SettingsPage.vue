@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import KeyManagementPanel from "../components/KeyManagementPanel.vue";
 import MemberManagementPanel from "../components/settings/MemberManagementPanel.vue";
 import {
   PERMISSION_ACTIONS,
@@ -41,6 +42,7 @@ import { normalizeProgressWeights } from "../services/stats";
 
 type SettingsSection =
   | "project"
+  | "keys"
   | "members"
   | "roles"
   | "workflow"
@@ -69,6 +71,7 @@ const emit = defineEmits<{
 
 const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "project", label: "项目设置" },
+  { key: "keys", label: "我的身份密钥" },
   { key: "members", label: "成员管理" },
   { key: "roles", label: "角色与权限" },
   { key: "workflow", label: "工作流" },
@@ -583,6 +586,11 @@ function handleDangerAction(actionName: string) {
   }
 }
 
+function handleMembersUpdated(members: Member[]): void {
+  localMembers.value = members;
+  emit("membersUpdated", members);
+}
+
 watch(
   () => [props.project, props.members, props.projectRoot] as const,
   ([project, members, root]) => {
@@ -737,6 +745,20 @@ onBeforeUnmount(() => {
           </footer>
         </section>
 
+        <section v-else-if="activeSection === 'keys'" class="settings-card">
+          <header class="card-header">
+            <h2>我的身份密钥</h2>
+            <p>登录密码只用于登录项目；身份密钥只用于修改包签名和验签。</p>
+          </header>
+
+          <KeyManagementPanel
+            :members="localMembers"
+            :current-user="currentUser"
+            :project-root="props.projectRoot ?? localRoot ?? undefined"
+            @members-updated="handleMembersUpdated"
+          />
+        </section>
+
         <section v-else-if="activeSection === 'members'" class="settings-card">
           <header class="card-header">
             <h2>成员管理</h2>
@@ -747,7 +769,7 @@ onBeforeUnmount(() => {
             :members="localMembers"
             :current-user="currentUser"
             :project-root="props.projectRoot ?? localRoot ?? undefined"
-            @members-updated="emit('membersUpdated', $event)"
+            @members-updated="handleMembersUpdated"
           />
         </section>
 

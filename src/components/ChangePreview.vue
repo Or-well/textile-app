@@ -21,12 +21,12 @@ function projectMatchText(preview: ChangePackagePreview): string {
 function contentIntegrityText(preview: ChangePackagePreview): string {
   if (preview.validation.contentIntegrity === "passed") {
     return preview.contentHashShort
-      ? `已通过（${preview.contentHashShort}）`
-      : "已通过";
+      ? `通过，${preview.contentHashShort}`
+      : "通过";
   }
 
   if (preview.validation.contentIntegrity === "failed") {
-    return "未通过";
+    return "内容已被修改";
   }
 
   return "旧格式未校验";
@@ -42,10 +42,10 @@ function signatureStatusText(preview: ChangePackagePreview): string {
   }
 
   if (preview.validation.signatureStatus === "missing_public_key") {
-    return "未配置成员公钥";
+    return "未找到成员公钥";
   }
 
-  return preview.isLegacyPackage ? "未签名旧格式修改包" : "未签名";
+  return "未签名";
 }
 
 function packageTypeText(preview: ChangePackagePreview): string {
@@ -96,7 +96,7 @@ function riskLevelText(preview: ChangePackagePreview): string {
       </div>
       <div>
         <dt>任务</dt>
-        <dd>{{ preview.manifest.task_id }}</dd>
+        <dd>{{ preview.manifest.task_id || "无" }}</dd>
       </div>
       <div>
         <dt>修改词条</dt>
@@ -151,6 +151,10 @@ function riskLevelText(preview: ChangePackagePreview): string {
         <dd>{{ signatureStatusText(preview) }}</dd>
       </div>
       <div>
+        <dt>签名密钥</dt>
+        <dd>{{ preview.signatureKeyId || "无" }}</dd>
+      </div>
+      <div>
         <dt>风险级别</dt>
         <dd>{{ riskLevelText(preview) }}</dd>
       </div>
@@ -159,10 +163,7 @@ function riskLevelText(preview: ChangePackagePreview): string {
     <section v-if="preview.validation.riskMessages.length > 0" class="risk-panel">
       <h3>导入风险提示</h3>
       <ul>
-        <li
-          v-for="risk in preview.validation.riskMessages"
-          :key="risk"
-        >
+        <li v-for="risk in preview.validation.riskMessages" :key="risk">
           {{ risk }}
         </li>
       </ul>

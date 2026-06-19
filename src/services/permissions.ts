@@ -374,6 +374,14 @@ export function canReviewChangePackage(user: Member | null | undefined): boolean
   return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW);
 }
 
+export function canSignChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN);
+}
+
+export function canVerifyChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_VERIFY);
+}
+
 export function canDangerousImportChangePackage(
   user: Member | null | undefined,
 ): boolean {
@@ -403,6 +411,30 @@ export function canExportRelease(user: Member | null | undefined): boolean {
 
 export function canProjectBackup(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.PROJECT_BACKUP);
+}
+
+export function canViewKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_VIEW);
+}
+
+export function canGenerateKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_GENERATE);
+}
+
+export function canImportPrivateKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_IMPORT_PRIVATE);
+}
+
+export function canExportPrivateKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE);
+}
+
+export function canRotateKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_ROTATE);
+}
+
+export function canRevokeKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_REVOKE);
 }
 
 export function canConfigureStats(user: Member | null | undefined): boolean {

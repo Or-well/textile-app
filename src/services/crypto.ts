@@ -101,6 +101,36 @@ export function stableStringify(value: unknown): string {
   return JSON.stringify(normalizeJson(value));
 }
 
+export async function generateSigningKeyPair(): Promise<{
+  publicKey: string;
+  privateKey: string;
+  keyId: string;
+}> {
+  const subtle = getSubtleCrypto();
+  const keyPair = await subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const publicJwk = await subtle.exportKey("jwk", keyPair.publicKey);
+  const privateJwk = await subtle.exportKey("jwk", keyPair.privateKey);
+  const publicKey = stableStringify(publicJwk);
+
+  return {
+    publicKey,
+    privateKey: stableStringify(privateJwk),
+    keyId: await createKeyId(publicKey),
+  };
+}
+
+export async function createKeyId(publicKey: JsonWebKey | string): Promise<string> {
+  const publicKeyText =
+    typeof publicKey === "string" ? stableStringify(normalizeJwk(publicKey)) : stableStringify(publicKey);
+  const hash = await sha256Hex(publicKeyText);
+
+  return hash.replace("sha256:", "key_").slice(0, 20);
+}
+
 export async function sha256Hex(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(text);
   const hash = await getSubtleCrypto().digest("SHA-256", bytes);

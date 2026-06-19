@@ -39,6 +39,8 @@ import {
   canImportMaintenanceChangePackage,
   canProjectBackup,
   canReviewChangePackage,
+  canSignChangePackage,
+  canVerifyChangePackage,
   getCurrentUser,
 } from "../services/permissions";
 import { openProject } from "../services/project";
@@ -88,6 +90,8 @@ const canImportMaintenance = computed(() =>
   canImportMaintenanceChangePackage(currentUser.value),
 );
 const canReviewPackages = computed(() => canReviewChangePackage(currentUser.value));
+const canSignPackages = computed(() => canSignChangePackage(currentUser.value));
+const canVerifyPackages = computed(() => canVerifyChangePackage(currentUser.value));
 const canDangerousImport = computed(() =>
   canDangerousImportChangePackage(currentUser.value),
 );
@@ -95,7 +99,7 @@ const canExportFinalRelease = computed(() => canExportRelease(currentUser.value)
 const canExportProjectBackup = computed(() => canProjectBackup(currentUser.value));
 const projectRootForExport = computed(() => props.projectRoot ?? localRoot.value);
 const canSelectImportFile = computed(
-  () => canImportPackages.value || canImportMaintenance.value,
+  () => canVerifyPackages.value && (canImportPackages.value || canImportMaintenance.value),
 );
 const canExportSelectedMode = computed(() =>
   exportMode.value === "maintenance_changes"
@@ -313,6 +317,7 @@ async function handleExportChanges() {
     const result = await exportChangePackage(currentUser.value.id, {
       mode: exportMode.value,
       taskId: exportMode.value === "task_changes" ? selectedTaskId.value : undefined,
+      sign: canSignPackages.value,
     });
 
     downloadBlob(result.blob, result.fileName);

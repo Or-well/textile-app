@@ -103,7 +103,10 @@ export interface Member {
   allow_permissions?: string[];
   deny_permissions?: string[];
   active: boolean;
-  public_key?: JsonWebKey | string;
+  public_key?: string;
+  key_id?: string;
+  key_created_at?: string;
+  key_revoked_at?: string;
   password_hash?: string;
   password_salt?: string;
   password_updated_at?: string;
@@ -237,6 +240,7 @@ export interface ChangePackageSignature {
   schema_version: number;
   package_id?: string;
   user_id: string;
+  content_hash?: string;
   algorithm: string;
   signed_at: string;
   signature: string;

@@ -28,7 +28,7 @@ import {
   writeJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
-import { getSigningPrivateKeyForMember } from "./auth";
+import { getSigningPrivateKeyForMember } from "./keyManager";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
   sha256Hex,
@@ -51,6 +51,7 @@ export type ExportChangePackageMode =
 export interface ExportChangePackageOptions {
   mode: ExportChangePackageMode;
   taskId?: string;
+  sign?: boolean;
 }
 
 export interface ExportedChangePackage {
@@ -89,6 +90,7 @@ export interface ChangePackagePreview {
   entryPaths: string[];
   validation: ChangePackageValidation;
   contentHashShort: string;
+  signatureKeyId: string;
   isLegacyPackage: boolean;
   packageType: ChangePackageType;
   riskLevel: ChangePackageRiskLevel;
@@ -299,8 +301,11 @@ async function calculateContentHash(payload: ChangePackagePayload): Promise<stri
   return sha256Hex(stableStringify(buildContentHashPayload(payload)));
 }
 
-function buildSignaturePayload(manifest: ChangePackageManifest): string {
-  return stableStringify({ manifest });
+function buildSignaturePayload(
+  manifest: ChangePackageManifest,
+  contentHash: string,
+): string {
+  return stableStringify({ manifest, content_hash: contentHash });
 }
 
 function buildPackageId(
@@ -516,10 +521,17 @@ async function verifySignatureStatus(
 
   const isValid =
     changePackage.signature.user_id === changePackage.manifest.user_id &&
+    changePackage.signature.content_hash === changePackage.manifest.content_hash &&
+    (!changePackage.signature.key_id ||
+      changePackage.signature.key_id === signer.key_id) &&
+    !signer.key_revoked_at &&
     changePackage.signature.algorithm === CHANGE_PACKAGE_SIGNATURE_ALGORITHM &&
     (await verifyTextSignature(
       signer.public_key,
-      buildSignaturePayload(changePackage.manifest),
+      buildSignaturePayload(
+        changePackage.manifest,
+        changePackage.manifest.content_hash ?? "",
+      ),
       changePackage.signature.signature,
     ));
 
@@ -531,10 +543,11 @@ async function verifySignatureStatus(
 
 async function createSignature(
   manifest: ChangePackageManifest,
+  signer?: Member,
 ): Promise<ChangePackageSignature | undefined> {
   const privateKey = getSigningPrivateKeyForMember(manifest.user_id);
 
-  if (!privateKey) {
+  if (!privateKey || !manifest.content_hash) {
     return undefined;
   }
 
@@ -542,9 +555,14 @@ async function createSignature(
     schema_version: 1,
     package_id: manifest.package_id,
     user_id: manifest.user_id,
+    content_hash: manifest.content_hash,
     algorithm: CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
     signed_at: nowIso(),
-    signature: await signTextWithPrivateKey(privateKey, buildSignaturePayload(manifest)),
+    signature: await signTextWithPrivateKey(
+      privateKey,
+      buildSignaturePayload(manifest, manifest.content_hash),
+    ),
+    key_id: signer?.key_id,
   };
 }
 
@@ -1029,7 +1047,9 @@ export async function exportChangePackage(
     source_project_version: String(project.schema_version),
     summary,
   };
-  const signature = await createSignature(manifest);
+  const members = options.sign ? await loadProjectMembers(root) : [];
+  const signer = members.find((member) => member.id === userId);
+  const signature = options.sign ? await createSignature(manifest, signer) : undefined;
   const files: ZipContent = {
     "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
     "entries/": null,
@@ -1264,6 +1284,7 @@ export function previewChangePackage(
     entryPaths: Object.keys(changePackage.entries),
     validation,
     contentHashShort: shortHash(changePackage.manifest.content_hash),
+    signatureKeyId: changePackage.signature?.key_id ?? "",
     isLegacyPackage:
       getPackageType(changePackage.manifest) === "legacy" ||
       !changePackage.manifest.package_id ||
