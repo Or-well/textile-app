@@ -283,6 +283,7 @@ async function refreshProjectSummary() {
   currentStats.value = await getProjectStats(
     undefined,
     currentProject.value?.config.settings.progress_weights,
+    currentProject.value?.config.settings.workflow,
   );
 
   try {

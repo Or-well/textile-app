@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { Entry, EntryStatus } from "../model/types";
-import { ENTRY_STATUS_LABELS, applyEntryWorkflowStatus } from "../model/status";
+import type { Entry, EntryStatus, ProjectWorkflowSettings } from "../model/types";
+import {
+  applyEntryWorkflowStatus,
+  getEntryWorkflowLabel,
+  getNextProofreadLabel,
+} from "../model/status";
 import {
   canEditEntry,
   canMarkDisputed,
@@ -19,6 +23,7 @@ const props = defineProps<{
   isSaving?: boolean;
   canGoPrevious?: boolean;
   canGoNext?: boolean;
+  workflow?: ProjectWorkflowSettings;
 }>();
 
 const emit = defineEmits<{
@@ -45,9 +50,11 @@ const canSaveAsTranslated = computed(
     canTranslateEntry(currentUser.value, props.entry),
 );
 const canProofread = computed(() =>
-  canProofreadEntry(currentUser.value, props.entry),
+  canProofreadEntry(currentUser.value, props.entry, props.workflow),
 );
-const canReview = computed(() => canReviewEntry(currentUser.value, props.entry));
+const canReview = computed(() =>
+  canReviewEntry(currentUser.value, props.entry, props.workflow),
+);
 const canRollback = computed(() =>
   canRollbackEntry(currentUser.value, props.entry),
 );
@@ -77,6 +84,12 @@ const permissionMessage = computed(() =>
   props.entry && !canSaveEntry.value && !hasWorkflowActions.value
     ? "当前用户没有此操作权限。"
     : "",
+);
+const workflowStatusLabel = computed(() =>
+  props.entry ? getEntryWorkflowLabel(props.entry, props.workflow) : "",
+);
+const proofreadButtonLabel = computed(() =>
+  props.entry ? getNextProofreadLabel(props.entry, props.workflow) : "校对通过",
 );
 
 watch(
@@ -131,6 +144,7 @@ function buildWorkflowEntry(status: EntryStatus): Entry | undefined {
     draftEntry,
     status,
     currentUser.value?.id ?? draftEntry.updated_by,
+    props.workflow,
   );
 }
 
@@ -178,7 +192,7 @@ async function copyEntryId() {
       <div>
         <div class="status-row">
           <span class="status-badge" :class="entry.status">
-            {{ ENTRY_STATUS_LABELS[entry.status] }}
+            {{ workflowStatusLabel }}
           </span>
           <span v-if="entry.disputed" class="dispute-badge">有争议</span>
         </div>
@@ -262,7 +276,7 @@ async function copyEntryId() {
         :disabled="isSaving || entry.locked"
         @click="handleWorkflowStatus('proofread')"
       >
-        校对通过
+        {{ proofreadButtonLabel }}
       </button>
       <button
         v-if="canReview"

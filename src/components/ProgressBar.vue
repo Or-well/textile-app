@@ -1,18 +1,24 @@
 <script setup lang="ts">
-defineProps<{
+import { computed } from "vue";
+
+const props = defineProps<{
   percent: number;
   label?: string;
 }>();
+
+const safePercent = computed(() =>
+  Math.max(0, Math.min(100, Math.round(Number(props.percent) || 0))),
+);
 </script>
 
 <template>
   <div class="progress-bar" aria-label="项目进度">
     <div class="progress-header">
       <span>{{ label || "基础进度" }}</span>
-      <strong>{{ percent }}%</strong>
+      <strong>{{ safePercent }}%</strong>
     </div>
     <div class="progress-track">
-      <div class="progress-fill" :style="{ width: `${percent}%` }" />
+      <div class="progress-fill" :style="{ width: `${safePercent}%` }" />
     </div>
   </div>
 </template>

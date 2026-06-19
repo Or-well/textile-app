@@ -217,6 +217,7 @@ async function loadFileSummaries() {
         const progress = calculateEntryProgress(
           visibleEntries,
           currentProject.value.settings.progress_weights,
+          currentProject.value.settings.workflow,
         );
 
         return {

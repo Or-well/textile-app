@@ -27,6 +27,13 @@ const emit = defineEmits<{
         范围：{{ task.file_id }} 第 {{ task.range_start }}-{{ task.range_end }} 条
       </p>
 
+      <p v-if="task.type === 'proofread' && task.proofread_round" class="task-meta">
+        校对轮次：第 {{ task.proofread_round }} 轮
+      </p>
+      <p v-if="progress && progress.proofreadRequired > 0" class="task-meta">
+        校对要求：{{ progress.proofreadRequired }} 次
+      </p>
+
       <ProgressBar
         v-if="progress"
         :percent="progress.progressPercent"

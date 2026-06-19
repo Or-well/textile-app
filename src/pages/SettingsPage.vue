@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import MemberManagementPanel from "../components/settings/MemberManagementPanel.vue";
 import {
@@ -8,9 +8,12 @@ import {
 import type {
   Member,
   ProjectConfig,
+  ProjectWorkflowSettings,
+  ProofreadRequired,
   ReleaseExportFormat,
   Role,
 } from "../model/types";
+import { normalizeWorkflowSettings } from "../model/status";
 import {
   normalizeProjectExportSettings,
 } from "../services/exporter";
@@ -45,6 +48,7 @@ type SettingsSection =
   | "project"
   | "members"
   | "roles"
+  | "workflow"
   | "progress"
   | "export"
   | "sync"
@@ -72,6 +76,7 @@ const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "project", label: "项目设置" },
   { key: "members", label: "成员管理" },
   { key: "roles", label: "角色与权限" },
+  { key: "workflow", label: "工作流" },
   { key: "progress", label: "进度权重" },
   { key: "export", label: "导出设置" },
   { key: "sync", label: "同步与备份" },
@@ -129,6 +134,16 @@ const weightDraft = ref({
   proofread: 30,
   review: 30,
 });
+const workflowDraft = ref<Required<ProjectWorkflowSettings>>({
+  enable_tasks: true,
+  enable_proofread: true,
+  enable_review: true,
+  proofread_required: 1,
+  review_required: true,
+  allow_self_proofread: false,
+  allow_self_review: false,
+  allow_same_user_multi_proofread: false,
+});
 const exportDraft = ref({
   default_format: "json" as ReleaseExportFormat,
   only_reviewed: false,
@@ -142,6 +157,7 @@ const updateState = ref<AppUpdateState>(getAppUpdateState());
 const selectedUpdateChannel = ref<UpdateChannel>(getUpdateChannel());
 const isLoading = ref(false);
 const isSavingProject = ref(false);
+const isSavingWorkflow = ref(false);
 const isSavingWeights = ref(false);
 const isSavingExportSettings = ref(false);
 const isRefreshingSync = ref(false);
@@ -244,6 +260,17 @@ function applyProject(project: ProjectConfig): void {
     review: 100 - translationPercent - proofreadPercent,
   };
   exportDraft.value = normalizeProjectExportSettings(project.settings.export);
+  const workflow = normalizeWorkflowSettings(project.settings.workflow);
+  workflowDraft.value = {
+    enable_tasks: workflow.enable_tasks,
+    enable_proofread: workflow.proofread_required > 0,
+    enable_review: workflow.review_required,
+    proofread_required: workflow.proofread_required,
+    review_required: workflow.review_required,
+    allow_self_proofread: workflow.allow_self_proofread,
+    allow_self_review: workflow.allow_self_review,
+    allow_same_user_multi_proofread: workflow.allow_same_user_multi_proofread,
+  };
 }
 
 function applyMembers(members: Member[]): void {
@@ -346,6 +373,54 @@ async function handleSaveProjectInfo() {
       error instanceof Error ? error.message : "项目设置保存失败。请稍后再试。";
   } finally {
     isSavingProject.value = false;
+  }
+}
+
+async function handleSaveWorkflowSettings() {
+  if (!localProject.value) {
+    return;
+  }
+
+  if (!canManageProject.value) {
+    errorMessage.value = "当前用户没有管理项目工作流的权限。";
+    return;
+  }
+
+  isSavingWorkflow.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const proofreadRequired = Math.max(
+      0,
+      Math.min(3, Math.trunc(Number(workflowDraft.value.proofread_required))),
+    ) as ProofreadRequired;
+    const nextWorkflow: ProjectWorkflowSettings = {
+      ...localProject.value.settings.workflow,
+      enable_tasks: workflowDraft.value.enable_tasks,
+      enable_proofread: proofreadRequired > 0,
+      enable_review: workflowDraft.value.review_required,
+      proofread_required: proofreadRequired,
+      review_required: workflowDraft.value.review_required,
+      allow_self_proofread: workflowDraft.value.allow_self_proofread,
+      allow_self_review: workflowDraft.value.allow_self_review,
+      allow_same_user_multi_proofread:
+        workflowDraft.value.allow_same_user_multi_proofread,
+    };
+    const nextProject: EditableProjectConfig = {
+      ...localProject.value,
+      settings: {
+        ...localProject.value.settings,
+        workflow: nextWorkflow,
+      },
+    };
+
+    await persistProject(nextProject, "工作流设置已保存。");
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "工作流设置保存失败，请稍后再试。";
+  } finally {
+    isSavingWorkflow.value = false;
   }
 }
 
@@ -767,6 +842,101 @@ onBeforeUnmount(() => {
               <span class="readonly-badge">暂不可编辑</span>
             </article>
           </div>
+        </section>
+
+        <section v-else-if="activeSection === 'workflow'" class="settings-card">
+          <header class="card-header">
+            <h2>工作流</h2>
+            <p>设置校对次数，以及同一成员是否可以参与自己的译文校对或审核。</p>
+          </header>
+
+          <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <label for="proofread-required">校对次数</label>
+                <p>校对次数会影响词条状态、按钮、统计、文件进度和任务进度。</p>
+              </div>
+              <div class="row-control compact-control">
+                <select
+                  id="proofread-required"
+                  v-model.number="workflowDraft.proofread_required"
+                  :disabled="!canManageProject"
+                >
+                  <option :value="0">不需要校对</option>
+                  <option :value="1">一次校对</option>
+                  <option :value="2">二次校对</option>
+                  <option :value="3">三次校对</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>审核阶段</span>
+                <p>关闭后，校对完成即可视为主要流程完成。</p>
+              </div>
+              <div class="row-control checkbox-control">
+                <input
+                  id="review-required"
+                  v-model="workflowDraft.review_required"
+                  type="checkbox"
+                  :disabled="!canManageProject"
+                />
+                <label for="review-required">需要审核</label>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
+                <span>人员限制</span>
+                <p>默认避免译者自校、自审，以及同一成员重复完成多轮校对。</p>
+              </div>
+              <div class="row-control workflow-options">
+                <label class="checkbox-control">
+                  <input
+                    v-model="workflowDraft.allow_self_proofread"
+                    type="checkbox"
+                    :disabled="!canManageProject"
+                  />
+                  <span>允许译者校对自己的译文</span>
+                </label>
+                <label class="checkbox-control">
+                  <input
+                    v-model="workflowDraft.allow_self_review"
+                    type="checkbox"
+                    :disabled="!canManageProject"
+                  />
+                  <span>允许译者审核自己的译文</span>
+                </label>
+                <label class="checkbox-control">
+                  <input
+                    v-model="workflowDraft.allow_same_user_multi_proofread"
+                    type="checkbox"
+                    :disabled="!canManageProject"
+                  />
+                  <span>允许同一成员完成多轮校对</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <p
+            v-if="workflowDraft.proofread_required === 0 && weightDraft.proofread > 0"
+            class="notice-text"
+          >
+            当前项目不需要校对，建议在进度权重中把校对权重设为 0。
+          </p>
+
+          <footer class="form-actions">
+            <button
+              class="primary-button"
+              type="button"
+              :disabled="isSavingWorkflow || !canManageProject"
+              @click="handleSaveWorkflowSettings"
+            >
+              {{ isSavingWorkflow ? "正在保存..." : "保存工作流设置" }}
+            </button>
+          </footer>
         </section>
 
         <section v-else-if="activeSection === 'progress'" class="settings-card">
@@ -1525,6 +1695,16 @@ textarea:disabled {
 .checkbox-control label {
   color: #374151;
   font-size: 14px;
+}
+
+.workflow-options {
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-options .checkbox-control {
+  justify-content: flex-start;
+  min-height: 32px;
 }
 
 .button-control,

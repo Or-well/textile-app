@@ -3,7 +3,13 @@ import {
   ROLE_DEFAULT_PERMISSIONS,
   type PermissionAction,
 } from "../model/permissions";
-import type { Entry, Member, Role } from "../model/types";
+import {
+  getEntryProofreadCount,
+  isEntryProofreadComplete,
+  normalizeProofreadUsers,
+  normalizeWorkflowSettings,
+} from "../model/status";
+import type { Entry, Member, ProjectWorkflowSettings, Role } from "../model/types";
 
 const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 
@@ -152,25 +158,70 @@ export function canTranslateEntry(
 export function canProofreadEntry(
   user: Member | null | undefined,
   entry: Entry | null | undefined,
+  workflow?: ProjectWorkflowSettings,
 ): boolean {
-  return Boolean(
-    entry &&
-      entry.status === "translated" &&
-      !entry.disputed &&
-      canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_PROOFREAD),
-  );
+  if (
+    !entry ||
+    !user?.id ||
+    entry.disputed ||
+    !entry.target.trim() ||
+    !canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_PROOFREAD)
+  ) {
+    return false;
+  }
+
+  const settings = normalizeWorkflowSettings(workflow);
+
+  if (settings.proofread_required <= 0 || entry.status === "reviewed") {
+    return false;
+  }
+
+  if (getEntryProofreadCount(entry) >= settings.proofread_required) {
+    return false;
+  }
+
+  if (!settings.allow_self_proofread && entry.translated_by === user.id) {
+    return false;
+  }
+
+  if (
+    !settings.allow_same_user_multi_proofread &&
+    normalizeProofreadUsers(entry.proofread_by).includes(user.id)
+  ) {
+    return false;
+  }
+
+  return entry.status === "translated" || entry.status === "proofread";
 }
 
 export function canReviewEntry(
   user: Member | null | undefined,
   entry: Entry | null | undefined,
+  workflow?: ProjectWorkflowSettings,
 ): boolean {
-  return Boolean(
-    entry &&
-      entry.status === "proofread" &&
-      !entry.disputed &&
-      canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_REVIEW),
-  );
+  if (
+    !entry ||
+    !user?.id ||
+    entry.disputed ||
+    entry.status === "untranslated" ||
+    entry.status === "reviewed" ||
+    !entry.target.trim() ||
+    !canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_REVIEW)
+  ) {
+    return false;
+  }
+
+  const settings = normalizeWorkflowSettings(workflow);
+
+  if (!settings.review_required || !isEntryProofreadComplete(entry, settings)) {
+    return false;
+  }
+
+  if (!settings.allow_self_review && entry.translated_by === user.id) {
+    return false;
+  }
+
+  return true;
 }
 
 export function canRollbackEntry(
@@ -179,7 +230,9 @@ export function canRollbackEntry(
 ): boolean {
   return Boolean(
     entry &&
-      (entry.status === "proofread" || entry.status === "reviewed") &&
+      (entry.status === "proofread" ||
+        entry.status === "reviewed" ||
+        getEntryProofreadCount(entry) > 0) &&
       canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_ROLLBACK),
   );
 }

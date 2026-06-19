@@ -1,4 +1,4 @@
-import type { Member, ProjectConfig, ProjectFile } from "../model/types";
+import type { Member, ProjectConfig, ProjectFile, ProofreadRequired } from "../model/types";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { createPasswordFields } from "./auth";
@@ -46,7 +46,7 @@ export interface CreateProjectInput {
   enableTasks: boolean;
   enableProofread: boolean;
   enableReview: boolean;
-  proofreadRequired: number;
+  proofreadRequired: ProofreadRequired;
   progressWeights: {
     translation: number;
     proofread: number;
@@ -444,9 +444,9 @@ function normalizeCreateProjectInput(
     sourceLanguage: input.sourceLanguage.trim() || "ja",
     targetLanguage: input.targetLanguage.trim() || "zh-Hans",
     ownerName: input.ownerName.trim(),
-    proofreadRequired: input.enableProofread
+    proofreadRequired: (input.enableProofread
       ? Math.max(0, Math.min(3, Math.trunc(Number(input.proofreadRequired))))
-      : 0,
+      : 0) as ProofreadRequired,
     progressWeights: {
       translation: Math.max(0, Number(input.progressWeights.translation) || 0),
       proofread: Math.max(0, Number(input.progressWeights.proofread) || 0),
@@ -558,9 +558,13 @@ export async function createProjectInDirectory(
       allow_change_package: true,
       workflow: {
         enable_tasks: input.enableTasks,
-        enable_proofread: input.enableProofread,
+        enable_proofread: input.proofreadRequired > 0,
         enable_review: input.enableReview,
         proofread_required: input.proofreadRequired,
+        review_required: input.enableReview,
+        allow_self_proofread: false,
+        allow_self_review: false,
+        allow_same_user_multi_proofread: false,
       },
       progress_weights: {
         translation: input.progressWeights.translation,

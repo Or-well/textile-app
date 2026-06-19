@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { Member } from "../model/types";
+import type { Member, ProofreadRequired } from "../model/types";
 import {
   createProjectInDirectory,
   selectProjectCreationDirectory,
@@ -21,7 +21,7 @@ const targetLanguage = ref("zh-Hans");
 const enableTasks = ref(true);
 const enableProofread = ref(true);
 const enableReview = ref(true);
-const proofreadRequired = ref(1);
+const proofreadRequired = ref<ProofreadRequired>(1);
 const translationWeight = ref(40);
 const proofreadWeight = ref(30);
 const reviewWeight = ref(30);

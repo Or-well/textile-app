@@ -1,5 +1,10 @@
 import type { Entry, ProjectConfig } from "../model/types";
-import { normalizeEntries } from "../model/status";
+import {
+  isEntryProofreadComplete,
+  isEntryReviewComplete,
+  normalizeEntries,
+  normalizeWorkflowSettings,
+} from "../model/status";
 import { loadAllEntries } from "./entries";
 
 export interface ProgressWeights {
@@ -21,9 +26,12 @@ export interface BasicProjectStats {
   reviewProgress: number;
   progressPercent: number;
   progressWeights: ProgressWeights;
+  proofreadRequired: number;
+  reviewRequired: boolean;
 }
 
 type ProgressWeightInput = ProjectConfig["settings"]["progress_weights"];
+type WorkflowInput = ProjectConfig["settings"]["workflow"];
 
 export const DEFAULT_PROGRESS_WEIGHTS: ProgressWeights = {
   translationWeight: 0.4,
@@ -81,23 +89,28 @@ function toPercent(value: number): number {
 export function calculateEntryProgress(
   entries: Entry[],
   weights?: ProgressWeightInput,
+  workflow?: WorkflowInput,
 ): BasicProjectStats {
   const rows = normalizeEntries(entries);
   const progressWeights = normalizeProgressWeights(weights);
+  const workflowSettings = normalizeWorkflowSettings(workflow);
   const totalEntries = rows.length;
   const untranslatedEntries = countByStatus(rows, "untranslated");
   const translatedEntries = countByStatus(rows, "translated");
-  const proofreadEntries = countByStatus(rows, "proofread");
-  const reviewedEntries = countByStatus(rows, "reviewed");
+  const proofreadEntries = rows.filter((entry) =>
+    isEntryProofreadComplete(entry, workflowSettings),
+  ).length;
+  const reviewedEntries = rows.filter((entry) =>
+    isEntryReviewComplete(entry, workflowSettings),
+  ).length;
   const disputedEntries = rows.filter((entry) => entry.disputed === true).length;
   const translatedStageEntries =
-    translatedEntries + proofreadEntries + reviewedEntries;
-  const proofreadStageEntries = proofreadEntries + reviewedEntries;
+    translatedEntries + countByStatus(rows, "proofread") + countByStatus(rows, "reviewed");
 
   const translationRatio =
     totalEntries === 0 ? 0 : translatedStageEntries / totalEntries;
   const proofreadRatio =
-    totalEntries === 0 ? 0 : proofreadStageEntries / totalEntries;
+    totalEntries === 0 ? 0 : proofreadEntries / totalEntries;
   const reviewRatio = totalEntries === 0 ? 0 : reviewedEntries / totalEntries;
   const overallRatio =
     translationRatio * progressWeights.translationWeight +
@@ -117,12 +130,15 @@ export function calculateEntryProgress(
     reviewProgress: toPercent(reviewRatio),
     progressPercent: toPercent(overallRatio),
     progressWeights,
+    proofreadRequired: workflowSettings.proofread_required,
+    reviewRequired: workflowSettings.review_required,
   };
 }
 
 export async function getProjectStats(
   entries?: Entry[],
   weights?: ProgressWeightInput,
+  workflow?: WorkflowInput,
 ): Promise<BasicProjectStats> {
-  return calculateEntryProgress(entries ?? (await loadAllEntries()), weights);
+  return calculateEntryProgress(entries ?? (await loadAllEntries()), weights, workflow);
 }

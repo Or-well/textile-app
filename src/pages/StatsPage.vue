@@ -34,6 +34,7 @@ async function loadStats() {
     stats.value = await getProjectStats(
       undefined,
       props.project?.settings.progress_weights,
+      props.project?.settings.workflow,
     );
   } catch (error) {
     stats.value = undefined;
@@ -48,6 +49,13 @@ onMounted(loadStats);
 
 watch(
   () => props.project?.settings.progress_weights,
+  () => {
+    void loadStats();
+  },
+);
+
+watch(
+  () => props.project?.settings.workflow,
   () => {
     void loadStats();
   },
@@ -75,6 +83,12 @@ watch(
           权重：翻译 {{ Math.round(stats.progressWeights.translationWeight * 100) }}% /
           校对 {{ Math.round(stats.progressWeights.proofreadWeight * 100) }}% /
           审核 {{ Math.round(stats.progressWeights.reviewWeight * 100) }}%
+        </p>
+        <p
+          v-if="stats.proofreadRequired === 0 && stats.progressWeights.proofreadWeight > 0"
+          class="workflow-note"
+        >
+          当前项目不需要校对，建议把校对权重设为 0。
         </p>
       </section>
 
@@ -142,6 +156,7 @@ watch(
 .eyebrow,
 .summary,
 .weight-note,
+.workflow-note,
 .stats-grid span,
 .status-row span {
   color: #5b6472;
@@ -206,6 +221,14 @@ h2 {
 }
 
 .weight-note {
+  line-height: 1.6;
+}
+
+.workflow-note {
+  padding: 10px 12px;
+  border: 1px solid #f0b96a;
+  border-radius: 6px;
+  background: #fffaf0;
   line-height: 1.6;
 }
 

@@ -15,6 +15,19 @@ export type EntryStatus =
   | "proofread"
   | "reviewed";
 
+export type ProofreadRequired = 0 | 1 | 2 | 3;
+
+export interface ProjectWorkflowSettings {
+  enable_tasks?: boolean;
+  enable_proofread?: boolean;
+  enable_review?: boolean;
+  proofread_required?: ProofreadRequired;
+  review_required?: boolean;
+  allow_self_proofread?: boolean;
+  allow_self_review?: boolean;
+  allow_same_user_multi_proofread?: boolean;
+}
+
 export type TaskStatus =
   | "unassigned"
   | "assigned"
@@ -60,12 +73,7 @@ export interface ProjectConfig {
     chunk_size: number;
     auto_save: boolean;
     allow_change_package: boolean;
-    workflow?: {
-      enable_tasks: boolean;
-      enable_proofread: boolean;
-      enable_review: boolean;
-      proofread_required: number;
-    };
+    workflow?: ProjectWorkflowSettings;
     progress_weights?: {
       translation?: number;
       proofread?: number;
@@ -121,7 +129,8 @@ export interface Entry {
   dispute_resolved_by?: string;
   assignee: string;
   translated_by: string;
-  proofread_by: string;
+  proofread_count?: number;
+  proofread_by?: string[];
   reviewed_by: string;
   word_count: number;
   hidden: boolean;
@@ -154,6 +163,7 @@ export interface Task {
   assignee: string;
   status: TaskStatus;
   submit_method: TaskSubmitMethod;
+  proofread_round?: ProofreadRequired;
   created_by: string;
   created_at: string;
   due_at: string;
@@ -238,4 +248,6 @@ export interface ProjectStats {
   total_tasks: number;
   tasks_by_status: Record<TaskStatus, number>;
   progress_percent: number;
+  proofread_required?: ProofreadRequired;
+  review_required?: boolean;
 }

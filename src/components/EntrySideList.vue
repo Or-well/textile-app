@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Entry, EntryStatus } from "../model/types";
-import { ENTRY_STATUS_LABELS } from "../model/status";
+import type { Entry, EntryStatus, ProjectWorkflowSettings } from "../model/types";
+import { getEntryWorkflowLabel } from "../model/status";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
 
@@ -10,6 +10,7 @@ defineProps<{
   searchText: string;
   statusFilter: EntryFilter;
   totalCount: number;
+  workflow?: ProjectWorkflowSettings;
 }>();
 
 const emit = defineEmits<{
@@ -63,7 +64,7 @@ function summarize(text: string): string {
       >
         <span class="entry-source">{{ summarize(entry.source) }}</span>
         <span class="entry-row-meta">
-          <span>{{ ENTRY_STATUS_LABELS[entry.status] }}</span>
+          <span>{{ getEntryWorkflowLabel(entry, workflow) }}</span>
           <span v-if="entry.disputed">有争议</span>
           <span v-if="entry.updated_at">有记录</span>
         </span>

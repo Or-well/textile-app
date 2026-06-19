@@ -23,6 +23,8 @@ export interface TaskProgress {
   reviewProgress: number;
   progressPercent: number;
   progressWeights: ProgressWeights;
+  proofreadRequired: number;
+  reviewRequired: boolean;
 }
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
@@ -90,6 +92,17 @@ export function isEntryInTask(entry: Entry, task: Task): boolean {
   );
 }
 
+function getTaskWorkflow(project: ProjectConfig, task: Task): ProjectConfig["settings"]["workflow"] {
+  if (task.type !== "proofread" || !task.proofread_round) {
+    return project.settings.workflow;
+  }
+
+  return {
+    ...project.settings.workflow,
+    proofread_required: task.proofread_round,
+  };
+}
+
 export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
   const tasks = await loadTasks();
   const task = tasks.find((row) => row.id === taskId);
@@ -108,6 +121,7 @@ export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
   const progress = calculateEntryProgress(
     entries,
     project.settings?.progress_weights,
+    getTaskWorkflow(project, task),
   );
 
   return {
