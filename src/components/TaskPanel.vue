@@ -1,119 +1,536 @@
 <script setup lang="ts">
-import type { Task } from "../model/types";
+import { computed, ref, watch } from "vue";
+import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
-import ProgressBar from "./ProgressBar.vue";
 
-defineProps<{
+const props = defineProps<{
   task?: Task;
   progress?: TaskProgress;
-  isSubmitting?: boolean;
+  members: Member[];
+  files: ProjectFile[];
+  isBusy?: boolean;
+  actions: {
+    update: boolean;
+    assign: boolean;
+    claim: boolean;
+    submit: boolean;
+    complete: boolean;
+    reclaim: boolean;
+    delete: boolean;
+    reopen: boolean;
+  };
 }>();
 
 const emit = defineEmits<{
+  editTask: [task: Task];
+  deleteTask: [taskId: string];
+  assignTask: [taskId: string, assignee: string];
+  claimTask: [taskId: string];
   submitTask: [taskId: string];
+  completeTask: [taskId: string];
+  reclaimTask: [taskId: string];
+  reopenTask: [taskId: string];
+  openTarget: [task: Task];
 }>();
+
+const selectedAssignee = ref("");
+
+const statusLabels: Record<Task["status"], string> = {
+  unassigned: "未分配",
+  assigned: "已分配",
+  in_progress: "进行中",
+  submitted: "已提交",
+  completed: "已完成",
+};
+
+const typeLabels: Record<Task["type"], string> = {
+  translate: "翻译",
+  proofread: "校对",
+  review: "审校",
+  term: "术语",
+  export: "导出",
+  custom: "自定义",
+};
+
+const submitMethodLabels: Record<Task["submit_method"], string> = {
+  change_package: "导出修改包",
+  git_hidden: "同步提交",
+  git_manual: "由负责人处理",
+};
+
+const assigneeName = computed(() => {
+  if (!props.task?.assignee) {
+    return "未分配";
+  }
+
+  return (
+    props.members.find((member) => member.id === props.task?.assignee)?.name ||
+    props.task.assignee
+  );
+});
+
+const fileName = computed(() => {
+  if (!props.task?.file_id) {
+    return "未关联文件";
+  }
+
+  return (
+    props.files.find((file) => file.id === props.task?.file_id)?.name ||
+    props.task.file_id
+  );
+});
+
+const taskSummary = computed(() => {
+  if (!props.task) {
+    return "";
+  }
+
+  return `${typeLabels[props.task.type]} · ${statusLabels[props.task.status]} · ${assigneeName.value}`;
+});
+
+const dueAtText = computed(() => {
+  const value = props.task?.due_at;
+
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const pad = (part: number) => String(part).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+});
+
+const progressPercent = computed(() => props.progress?.progressPercent ?? 0);
+
+watch(
+  () => props.task?.id,
+  () => {
+    selectedAssignee.value = props.task?.assignee ?? "";
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
-  <aside class="task-panel">
-    <h3>当前任务</h3>
-
-    <p v-if="!task" class="empty-text">未选择任务</p>
+  <aside class="task-work-order">
+    <p v-if="!task" class="empty-text">从中间列表选择一个任务。</p>
 
     <template v-else>
-      <p class="task-title">{{ task.title }}</p>
-      <p class="task-meta">状态：{{ task.status }}</p>
-      <p class="task-meta">
-        范围：{{ task.file_id }} 第 {{ task.range_start }}-{{ task.range_end }} 条
-      </p>
+      <header class="work-order-header">
+        <div class="header-copy">
+          <p class="section-label">任务详情</p>
+          <h2>{{ task.title }}</h2>
+          <p class="task-summary">{{ taskSummary }}</p>
+        </div>
+        <button
+          v-if="actions.update"
+          class="secondary-button edit-button"
+          type="button"
+          :disabled="isBusy"
+          @click="emit('editTask', task)"
+        >
+          编辑
+        </button>
+      </header>
 
-      <p v-if="task.type === 'proofread' && task.proofread_round" class="task-meta">
-        校对轮次：第 {{ task.proofread_round }} 轮
-      </p>
-      <p v-if="progress && progress.proofreadRequired > 0" class="task-meta">
-        校对要求：{{ progress.proofreadRequired }} 次
-      </p>
+      <section class="range-card">
+        <dl class="detail-grid">
+          <div>
+            <dt>文件</dt>
+            <dd>{{ fileName }}</dd>
+          </div>
+          <div>
+            <dt>范围</dt>
+            <dd>{{ task.range_start }}-{{ task.range_end }}</dd>
+          </div>
+          <div>
+            <dt>提交方式</dt>
+            <dd>{{ submitMethodLabels[task.submit_method] }}</dd>
+          </div>
+          <div v-if="task.type === 'proofread' && task.proofread_round">
+            <dt>校对轮次</dt>
+            <dd>第 {{ task.proofread_round }} 轮</dd>
+          </div>
+          <div v-if="dueAtText">
+            <dt>截止时间</dt>
+            <dd>{{ dueAtText }}</dd>
+          </div>
+        </dl>
+      </section>
 
-      <ProgressBar
-        v-if="progress"
-        :percent="progress.progressPercent"
-        label="任务进度"
-      />
-
-      <div v-if="progress" class="progress-counts">
-        <span>总词条：{{ progress.totalEntries }}</span>
-        <span>未翻译：{{ progress.untranslatedEntries }}</span>
-        <span>已翻译：{{ progress.translatedEntries }}</span>
-        <span>已校对：{{ progress.proofreadEntries }}</span>
-        <span>已审核：{{ progress.reviewedEntries }}</span>
-        <span>有争议：{{ progress.disputedEntries }}</span>
-      </div>
+      <section v-if="task.description || task.target" class="note-card">
+        <p v-if="task.description">{{ task.description }}</p>
+        <p v-if="task.target">目标：{{ task.target }}</p>
+      </section>
 
       <button
-        class="submit-button"
+        v-if="task.file_id"
+        class="secondary-button open-entry-button"
         type="button"
-        :disabled="isSubmitting || task.status === 'submitted'"
-        @click="emit('submitTask', task.id)"
+        @click="emit('openTarget', task)"
       >
-        {{ isSubmitting ? "提交中..." : "提交任务" }}
+        打开关联词条
       </button>
+
+      <section v-if="progress" class="progress-card">
+        <div class="progress-heading">
+          <span>任务进度</span>
+          <strong>{{ progress.progressPercent }}%</strong>
+        </div>
+        <div class="progress-track" aria-label="任务进度">
+          <span :style="{ width: `${progressPercent}%` }"></span>
+        </div>
+        <div class="stat-chips">
+          <span>总 {{ progress.totalEntries }}</span>
+          <span>未译 {{ progress.untranslatedEntries }}</span>
+          <span>已译 {{ progress.translatedEntries }}</span>
+          <span>校对 {{ progress.proofreadEntries }}</span>
+          <span>审校 {{ progress.reviewedEntries }}</span>
+          <span>争议 {{ progress.disputedEntries }}</span>
+        </div>
+      </section>
+
+      <footer class="action-area">
+        <div v-if="actions.assign" class="assign-row">
+          <select v-model="selectedAssignee" :disabled="isBusy">
+            <option value="">未分配</option>
+            <option
+              v-for="member in members.filter((item) => item.active)"
+              :key="member.id"
+              :value="member.id"
+            >
+              {{ member.name }}
+            </option>
+          </select>
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('assignTask', task.id, selectedAssignee)"
+          >
+            分配
+          </button>
+        </div>
+
+        <div class="action-buttons">
+          <button
+            v-if="actions.claim"
+            class="primary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('claimTask', task.id)"
+          >
+            领取任务
+          </button>
+          <button
+            v-if="actions.submit"
+            class="primary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('submitTask', task.id)"
+          >
+            提交任务
+          </button>
+          <button
+            v-if="actions.complete"
+            class="primary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('completeTask', task.id)"
+          >
+            完成任务
+          </button>
+          <button
+            v-if="actions.reopen"
+            class="secondary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('reopenTask', task.id)"
+          >
+            退回任务
+          </button>
+          <button
+            v-if="actions.reclaim"
+            class="secondary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('reclaimTask', task.id)"
+          >
+            回收任务
+          </button>
+          <button
+            v-if="actions.delete"
+            class="danger-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('deleteTask', task.id)"
+          >
+            删除任务
+          </button>
+        </div>
+      </footer>
     </template>
   </aside>
 </template>
 
 <style scoped>
-.task-panel {
+.task-work-order {
+  --task-action-width: 76px;
+  --task-gap: 10px;
   display: grid;
+  align-content: start;
   gap: 12px;
-  padding: 16px;
+  min-width: 0;
+  padding: 18px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
 }
 
-h3,
-.task-title,
-.task-meta,
-.empty-text {
+.work-order-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--task-action-width);
+  gap: var(--task-gap);
+  align-items: start;
+}
+
+.header-copy {
+  min-width: 0;
+}
+
+.section-label,
+.task-summary,
+h2,
+p,
+dl,
+dd {
   margin: 0;
 }
 
-h3 {
-  font-size: 16px;
+.section-label {
+  color: #4f5f74;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
-.task-title {
-  font-weight: 700;
+h2 {
+  margin-top: 6px;
+  color: #111827;
+  font-size: 22px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.task-summary {
+  margin-top: 4px;
+  color: #4f5f74;
+  font-size: 15px;
   line-height: 1.5;
 }
 
-.task-meta,
-.empty-text,
-.progress-counts {
-  color: #4b5563;
-  font-size: 14px;
-  line-height: 1.6;
+.progress-card {
+  border-radius: 8px;
+  background: #f8fafb;
 }
 
-.progress-counts {
+dt {
+  color: #4f5f74;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.range-card,
+.note-card {
+  padding: 12px;
+  border: 1px solid #ccd4df;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+dd {
+  margin-top: 6px;
+  color: #1f2937;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.note-card {
+  display: grid;
+  gap: 8px;
+}
+
+.note-card p,
+.empty-text {
+  color: #4f5f74;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.open-entry-button {
+  justify-self: stretch;
+  width: 100%;
+}
+
+.progress-card {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+}
+
+.progress-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--task-gap);
+  color: #4f5f74;
+  font-size: 15px;
+}
+
+.progress-heading strong {
+  color: #111827;
+  font-size: 17px;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: #e7ecef;
+  overflow: hidden;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2f6f73;
+}
+
+.stat-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 12px;
+  gap: 6px;
 }
 
-.submit-button {
+.stat-chips span {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #5b6472;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.action-area {
+  display: grid;
+  gap: 12px;
+}
+
+.assign-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--task-action-width);
+  gap: var(--task-gap);
+}
+
+.action-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--task-gap);
+}
+
+select,
+.primary-button,
+.secondary-button,
+.danger-button {
   min-height: 40px;
-  padding: 0 15px;
-  border: 0;
+  padding: 0 14px;
   border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
+  font: inherit;
   font-size: 15px;
-  cursor: pointer;
+  font-weight: 700;
 }
 
-.submit-button:disabled {
-  cursor: wait;
-  opacity: 0.68;
+select {
+  min-width: 0;
+  border: 1px solid #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
+  font-weight: 500;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.primary-button {
+  border: 1px solid #2f6f73;
+  background: #2f6f73;
+  color: #ffffff;
+}
+
+.secondary-button {
+  border: 1px solid #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.danger-button {
+  border: 1px solid #f0b8aa;
+  background: #ffffff;
+  color: #b42318;
+}
+
+.edit-button {
+  min-height: 38px;
+  width: var(--task-action-width);
+  padding: 0;
+}
+
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+select:focus,
+button:focus-visible {
+  outline: none;
+  border-color: #2f6f73;
+  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.14);
+}
+
+@media (max-width: 720px) {
+  .work-order-header,
+  .detail-grid,
+  .assign-row {
+    grid-template-columns: 1fr;
+  }
+
+  .action-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .edit-button,
+  .open-entry-button {
+    justify-self: start;
+    width: auto;
+  }
 }
 </style>

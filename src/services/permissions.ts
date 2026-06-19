@@ -64,6 +64,10 @@ function normalizeAction(action: PermissionAction | string): string {
     return PERMISSION_ACTIONS.RELEASE_EXPORT;
   }
 
+  if (actionName === "task.read") {
+    return PERMISSION_ACTIONS.TASK_VIEW;
+  }
+
   return actionName;
 }
 
@@ -264,6 +268,46 @@ export function canResolveDispute(
 
 export function canManageTask(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.TASK_MANAGE);
+}
+
+export function canViewTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_VIEW);
+}
+
+export function canCreateTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_CREATE);
+}
+
+export function canUpdateTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_UPDATE) || canManageTask(user);
+}
+
+export function canAssignTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_ASSIGN) || canManageTask(user);
+}
+
+export function canClaimTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_CLAIM);
+}
+
+export function canSubmitTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_SUBMIT);
+}
+
+export function canCompleteTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_COMPLETE) || canManageTask(user);
+}
+
+export function canReclaimTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_RECLAIM) || canManageTask(user);
+}
+
+export function canDeleteTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_DELETE) || canManageTask(user);
+}
+
+export function canReopenTask(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.TASK_REOPEN) || canManageTask(user);
 }
 
 export function canResolveComment(user: Member | null | undefined): boolean {

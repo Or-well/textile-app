@@ -19,8 +19,6 @@ export const TASK_STATUSES = [
   "in_progress",
   "submitted",
   "completed",
-  "reclaimed",
-  "blocked",
 ] as const satisfies readonly TaskStatus[];
 
 export const ENTRY_STATUS_LABELS: Record<EntryStatus, string> = {
@@ -36,8 +34,6 @@ export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   in_progress: "进行中",
   submitted: "已提交",
   completed: "已完成",
-  reclaimed: "已回收",
-  blocked: "有问题",
 };
 
 type LegacyEntryStatus = EntryStatus | "disputed" | string;

@@ -33,9 +33,7 @@ export type TaskStatus =
   | "assigned"
   | "in_progress"
   | "submitted"
-  | "completed"
-  | "reclaimed"
-  | "blocked";
+  | "completed";
 
 export type TaskType =
   | "translate"
@@ -156,16 +154,19 @@ export interface Task {
   id: string;
   type: TaskType;
   title: string;
+  description: string;
   file_id: string;
   range_start: number;
   range_end: number;
   entry_ids: string[];
   assignee: string;
   status: TaskStatus;
+  target: string;
   submit_method: TaskSubmitMethod;
   proofread_round?: ProofreadRequired;
   created_by: string;
   created_at: string;
+  updated_at: string;
   due_at: string;
 }
 

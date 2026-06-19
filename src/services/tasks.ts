@@ -1,7 +1,18 @@
-import type { Entry, ProjectConfig, Task } from "../model/types";
+import type {
+  Entry,
+  ProjectConfig,
+  ProofreadRequired,
+  Task,
+  TaskStatus,
+  TaskSubmitMethod,
+  TaskType,
+} from "../model/types";
 import { normalizeEntries } from "../model/status";
+import { createId } from "../utils/id";
+import { nowIso } from "../utils/time";
 import { calculateEntryProgress, type ProgressWeights } from "./stats";
 import {
+  ensureDirectory,
   listFiles,
   readJson,
   readJsonl,
@@ -27,6 +38,53 @@ export interface TaskProgress {
   reviewRequired: boolean;
 }
 
+export interface TaskFileEntryBounds {
+  fileId: string;
+  totalEntries: number;
+  firstIndex: number;
+  lastIndex: number;
+}
+
+export interface TaskDraft {
+  title: string;
+  description?: string;
+  type: TaskType;
+  file_id: string;
+  range_start: number;
+  range_end: number;
+  entry_ids?: string[];
+  assignee?: string;
+  status?: TaskStatus;
+  target?: string;
+  proofread_round?: ProofreadRequired;
+  submit_method?: TaskSubmitMethod;
+  due_at?: string;
+}
+
+export type TaskPatch = Partial<TaskDraft>;
+
+const TASKS_PATH = "tasks/tasks.jsonl";
+const TASK_STATUSES: readonly TaskStatus[] = [
+  "unassigned",
+  "assigned",
+  "in_progress",
+  "submitted",
+  "completed",
+];
+const TASK_TYPES: readonly TaskType[] = [
+  "translate",
+  "proofread",
+  "review",
+  "term",
+  "export",
+  "custom",
+];
+const SUBMIT_METHODS: readonly TaskSubmitMethod[] = [
+  "change_package",
+  "git_hidden",
+  "git_manual",
+];
+
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 let cachedTasks: Task[] | null = null;
 
@@ -41,6 +99,123 @@ function getProjectRoot(): ProjectDirectoryHandle {
   }
 
   return currentProjectRoot;
+}
+
+function isTaskStatus(value: unknown): value is TaskStatus {
+  return TASK_STATUSES.includes(value as TaskStatus);
+}
+
+function normalizeTaskStatus(
+  status: unknown,
+  assignee: string,
+): TaskStatus {
+  if (isTaskStatus(status)) {
+    return status;
+  }
+
+  if (status === "reclaimed") {
+    return "unassigned";
+  }
+
+  if (status === "blocked") {
+    return assignee ? "in_progress" : "unassigned";
+  }
+
+  return assignee ? "assigned" : "unassigned";
+}
+
+function isTaskType(value: unknown): value is TaskType {
+  return TASK_TYPES.includes(value as TaskType);
+}
+
+function isSubmitMethod(value: unknown): value is TaskSubmitMethod {
+  return SUBMIT_METHODS.includes(value as TaskSubmitMethod);
+}
+
+function normalizeNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
+}
+
+function normalizeEntryIds(entryIds: unknown): string[] {
+  if (Array.isArray(entryIds)) {
+    return entryIds.map(String).map((id) => id.trim()).filter(Boolean);
+  }
+
+  if (typeof entryIds === "string") {
+    return entryIds
+      .split(/[\n,，\s]+/)
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizeProofreadRound(value: unknown): ProofreadRequired | undefined {
+  const parsed = Number(value);
+
+  if (parsed === 1 || parsed === 2 || parsed === 3) {
+    return parsed;
+  }
+
+  return undefined;
+}
+
+function normalizeTask(row: Partial<Task>): Task {
+  const now = nowIso();
+  const rangeStart = normalizeNumber(row.range_start, 1) || 1;
+  const rangeEnd = Math.max(rangeStart, normalizeNumber(row.range_end, rangeStart));
+  const assignee = row.assignee?.trim() ?? "";
+  const status = normalizeTaskStatus(row.status, assignee);
+  const type = isTaskType(row.type) ? row.type : "custom";
+
+  return {
+    id: row.id?.trim() || createId("task"),
+    title: row.title?.trim() || "未命名任务",
+    description: row.description ?? "",
+    type,
+    file_id: row.file_id?.trim() ?? "",
+    range_start: rangeStart,
+    range_end: rangeEnd,
+    entry_ids: normalizeEntryIds(row.entry_ids),
+    assignee,
+    status,
+    target: row.target ?? "",
+    submit_method: isSubmitMethod(row.submit_method)
+      ? row.submit_method
+      : "change_package",
+    proofread_round:
+      type === "proofread" ? normalizeProofreadRound(row.proofread_round) : undefined,
+    created_by: row.created_by?.trim() ?? "",
+    created_at: row.created_at || now,
+    updated_at: row.updated_at || row.created_at || now,
+    due_at: row.due_at ?? "",
+  };
+}
+
+function sortTasks(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => {
+    const statusOrder =
+      TASK_STATUSES.indexOf(a.status) - TASK_STATUSES.indexOf(b.status);
+
+    if (statusOrder !== 0) {
+      return statusOrder;
+    }
+
+    return b.updated_at.localeCompare(a.updated_at) || a.title.localeCompare(b.title);
+  });
+}
+
+async function saveTasks(tasks: Task[]): Promise<Task[]> {
+  const nextTasks = sortTasks(tasks.map(normalizeTask));
+
+  await ensureDirectory(getProjectRoot(), "tasks");
+  await writeJsonl(getProjectRoot(), TASKS_PATH, nextTasks);
+  cachedTasks = nextTasks;
+
+  return nextTasks;
 }
 
 async function loadEntriesForFile(fileId: string): Promise<Entry[]> {
@@ -67,11 +242,22 @@ export async function loadTasks(): Promise<Task[]> {
   }
 
   try {
-    cachedTasks = await readJsonl<Task>(getProjectRoot(), "tasks/tasks.jsonl");
+    cachedTasks = sortTasks(
+      (await readJsonl<Partial<Task>>(getProjectRoot(), TASKS_PATH)).map(
+        normalizeTask,
+      ),
+    );
     return cachedTasks;
   } catch {
-    throw new Error("任务列表无法读取。请确认项目里包含任务数据文件。");
+    cachedTasks = [];
+    return cachedTasks;
   }
+}
+
+export async function getTaskById(taskId: string): Promise<Task | undefined> {
+  const tasks = await loadTasks();
+
+  return tasks.find((task) => task.id === taskId);
 }
 
 export async function getTasksByUser(userId: string): Promise<Task[]> {
@@ -80,19 +266,46 @@ export async function getTasksByUser(userId: string): Promise<Task[]> {
   return tasks.filter((task) => task.assignee === userId);
 }
 
+export async function getTaskFileEntryBounds(
+  fileId: string,
+): Promise<TaskFileEntryBounds> {
+  if (!fileId) {
+    return {
+      fileId,
+      totalEntries: 0,
+      firstIndex: 0,
+      lastIndex: 0,
+    };
+  }
+
+  const entries = await loadEntriesForFile(fileId);
+  const indexes = entries.map((entry) => entry.index);
+
+  return {
+    fileId,
+    totalEntries: entries.length,
+    firstIndex: indexes.length > 0 ? Math.min(...indexes) : 0,
+    lastIndex: indexes.length > 0 ? Math.max(...indexes) : 0,
+  };
+}
+
 export function isEntryInTask(entry: Entry, task: Task): boolean {
   if (task.entry_ids.length > 0) {
     return task.entry_ids.includes(entry.id);
   }
 
   return (
+    Boolean(task.file_id) &&
     entry.file_id === task.file_id &&
     entry.index >= task.range_start &&
     entry.index <= task.range_end
   );
 }
 
-function getTaskWorkflow(project: ProjectConfig, task: Task): ProjectConfig["settings"]["workflow"] {
+function getTaskWorkflow(
+  project: ProjectConfig,
+  task: Task,
+): ProjectConfig["settings"]["workflow"] {
   if (task.type !== "proofread" || !task.proofread_round) {
     return project.settings.workflow;
   }
@@ -104,20 +317,18 @@ function getTaskWorkflow(project: ProjectConfig, task: Task): ProjectConfig["set
 }
 
 export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
-  const tasks = await loadTasks();
-  const task = tasks.find((row) => row.id === taskId);
+  const task = await getTaskById(taskId);
 
   if (!task) {
     throw new Error("没有找到这个任务。请重新打开项目后再试。");
   }
 
-  const entries = (await loadEntriesForFile(task.file_id)).filter((entry) =>
-    isEntryInTask(entry, task),
-  );
-  const project = await readJson<ProjectConfig>(
-    getProjectRoot(),
-    "project.json",
-  );
+  const project = await readJson<ProjectConfig>(getProjectRoot(), "project.json");
+  const entries = task.file_id
+    ? (await loadEntriesForFile(task.file_id)).filter((entry) =>
+        isEntryInTask(entry, task),
+      )
+    : [];
   const progress = calculateEntryProgress(
     entries,
     project.settings?.progress_weights,
@@ -130,24 +341,119 @@ export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
   };
 }
 
-export async function submitTask(taskId: string): Promise<Task> {
+function mergeTaskPatch(task: Task, patch: TaskPatch): Task {
+  return normalizeTask({
+    ...task,
+    ...patch,
+    updated_at: nowIso(),
+  });
+}
+
+async function updateTaskById(
+  taskId: string,
+  updater: (task: Task) => Task,
+): Promise<Task> {
   const tasks = await loadTasks();
   const taskIndex = tasks.findIndex((task) => task.id === taskId);
 
   if (taskIndex < 0) {
-    throw new Error("没有找到要提交的任务。请重新打开项目后再试。");
+    throw new Error("没有找到要更新的任务。请重新打开项目后再试。");
   }
 
-  const submittedTask: Task = {
-    ...tasks[taskIndex],
-    status: "submitted",
-  };
-
+  const updatedTask = normalizeTask(updater(tasks[taskIndex]));
   const nextTasks = [...tasks];
-  nextTasks[taskIndex] = submittedTask;
+  nextTasks[taskIndex] = updatedTask;
 
-  await writeJsonl(getProjectRoot(), "tasks/tasks.jsonl", nextTasks);
-  cachedTasks = nextTasks;
+  await saveTasks(nextTasks);
 
-  return submittedTask;
+  return updatedTask;
+}
+
+export async function createTask(draft: TaskDraft, userId: string): Promise<Task> {
+  const now = nowIso();
+  const task = normalizeTask({
+    ...draft,
+    id: createId("task"),
+    status: draft.status ?? (draft.assignee ? "assigned" : "unassigned"),
+    created_by: userId,
+    created_at: now,
+    updated_at: now,
+  });
+  const tasks = await loadTasks();
+
+  await saveTasks([...tasks, task]);
+
+  return task;
+}
+
+export async function updateTask(
+  taskId: string,
+  patch: TaskPatch,
+): Promise<Task> {
+  return updateTaskById(taskId, (task) => mergeTaskPatch(task, patch));
+}
+
+export async function deleteTask(taskId: string): Promise<void> {
+  const tasks = await loadTasks();
+  const nextTasks = tasks.filter((task) => task.id !== taskId);
+
+  if (nextTasks.length === tasks.length) {
+    throw new Error("没有找到要删除的任务。请重新打开项目后再试。");
+  }
+
+  await saveTasks(nextTasks);
+}
+
+export async function assignTask(
+  taskId: string,
+  assignee: string,
+): Promise<Task> {
+  return updateTaskById(taskId, (task) =>
+    mergeTaskPatch(task, {
+      assignee,
+      status: assignee ? "assigned" : "unassigned",
+    }),
+  );
+}
+
+export async function claimTask(taskId: string, userId: string): Promise<Task> {
+  return updateTaskById(taskId, (task) =>
+    mergeTaskPatch(task, {
+      assignee: userId,
+      status: "in_progress",
+    }),
+  );
+}
+
+export async function submitTask(taskId: string): Promise<Task> {
+  return updateTaskById(taskId, (task) =>
+    mergeTaskPatch(task, {
+      status: "submitted",
+    }),
+  );
+}
+
+export async function completeTask(taskId: string): Promise<Task> {
+  return updateTaskById(taskId, (task) =>
+    mergeTaskPatch(task, {
+      status: "completed",
+    }),
+  );
+}
+
+export async function reclaimTask(taskId: string): Promise<Task> {
+  return updateTaskById(taskId, (task) =>
+    mergeTaskPatch(task, {
+      assignee: "",
+      status: "unassigned",
+    }),
+  );
+}
+
+export async function reopenTask(taskId: string): Promise<Task> {
+  return updateTaskById(taskId, (task) =>
+    mergeTaskPatch(task, {
+      status: task.assignee ? "in_progress" : "unassigned",
+    }),
+  );
 }

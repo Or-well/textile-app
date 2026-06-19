@@ -13,6 +13,8 @@ type AssistTab = "terms" | "comments" | "context" | "history";
 const props = defineProps<{
   project: ProjectConfig;
   fileId: string;
+  targetEntryId?: string;
+  targetEntryIndex?: number;
 }>();
 
 const entries = ref<Entry[]>([]);
@@ -69,6 +71,18 @@ const canGoNext = computed(
   () => selectedIndex.value >= 0 && selectedIndex.value < filteredEntries.value.length - 1,
 );
 
+function getRequestedEntry(loadedEntries: Entry[]): Entry | undefined {
+  if (props.targetEntryId) {
+    return loadedEntries.find((entry) => entry.id === props.targetEntryId);
+  }
+
+  if (props.targetEntryIndex && props.targetEntryIndex > 0) {
+    return loadedEntries.find((entry) => entry.index === props.targetEntryIndex);
+  }
+
+  return undefined;
+}
+
 async function loadFileEntries() {
   isLoading.value = true;
   errorMessage.value = "";
@@ -84,7 +98,7 @@ async function loadFileEntries() {
       locked: entry.locked || Boolean(file?.locked),
       hidden: entry.hidden || Boolean(file?.hidden),
     }));
-    selectedEntry.value = entries.value[0];
+    selectedEntry.value = getRequestedEntry(entries.value) ?? entries.value[0];
     draftTarget.value = selectedEntry.value?.target ?? "";
   } catch (error) {
     entries.value = [];
@@ -234,6 +248,17 @@ watch(
   () => [props.project.project_id, props.fileId],
   () => {
     void loadFileEntries();
+  },
+);
+
+watch(
+  () => [props.targetEntryId, props.targetEntryIndex],
+  () => {
+    const requestedEntry = getRequestedEntry(entries.value);
+
+    if (requestedEntry) {
+      void handleSelectEntry(requestedEntry);
+    }
   },
 );
 

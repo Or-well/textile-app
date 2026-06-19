@@ -82,7 +82,7 @@ const sectionLabels: Record<ProjectSection, string> = {
   "file-entry": "词条",
 };
 
-const routePath = ref(window.location.pathname);
+const routePath = ref(`${window.location.pathname}${window.location.search}`);
 const currentProject = ref<OpenedProject | null>(null);
 const currentUser = ref<Member | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
@@ -111,7 +111,9 @@ const currentProjectSummary = computed<ProjectSummary | null>(() => {
 });
 
 function parseRoute(path: string) {
-  const parts = path.split("/").filter(Boolean);
+  const [pathname, queryString = ""] = path.split("?");
+  const query = new URLSearchParams(queryString);
+  const parts = pathname.split("/").filter(Boolean);
 
   if (parts.length === 0) {
     return { page: "projects" as const };
@@ -136,12 +138,15 @@ function parseRoute(path: string) {
   const projectId = decodeURIComponent(parts[1]);
   const section = (parts[2] ?? "overview") as ProjectSection;
   const fileId = parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : "";
+  const entryIndex = Number(query.get("index") ?? "0") || 0;
 
   return {
     page: "project" as const,
     projectId,
     section: fileId ? ("file-entry" as ProjectSection) : section,
     fileId,
+    entryId: query.get("entry") ?? "",
+    entryIndex,
   };
 }
 
@@ -161,7 +166,7 @@ function replace(path: string) {
 }
 
 function handlePopState() {
-  routePath.value = window.location.pathname;
+  routePath.value = `${window.location.pathname}${window.location.search}`;
 }
 
 function updatePackedProjectNotice(project: OpenedProject | null) {
@@ -492,6 +497,22 @@ function handleOpenFile(fileId: string) {
   );
 }
 
+function handleOpenTaskTarget(fileId: string, entryId: string, entryIndex: number) {
+  if (!currentProject.value || !fileId) {
+    return;
+  }
+
+  const query = entryId
+    ? `?entry=${encodeURIComponent(entryId)}`
+    : entryIndex > 0
+      ? `?index=${encodeURIComponent(String(entryIndex))}`
+      : "";
+
+  navigate(
+    `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files/${encodeURIComponent(fileId)}${query}`,
+  );
+}
+
 function handlePackedProjectDirty() {
   if (currentProject.value?.storageKind !== "packed") {
     return;
@@ -641,6 +662,8 @@ onBeforeUnmount(() => {
         v-else-if="route.section === 'file-entry'"
         :project="currentProject.config"
         :file-id="route.fileId"
+        :target-entry-id="route.entryId"
+        :target-entry-index="route.entryIndex"
       />
 
       <TasksPage
@@ -648,6 +671,8 @@ onBeforeUnmount(() => {
         :project="currentProject.config"
         :members="currentProject.members"
         :current-user="currentUser"
+        @open-task-target="handleOpenTaskTarget"
+        @tasks-changed="refreshProjectSummary"
       />
 
       <TermsPage v-else-if="route.section === 'terms'" />
