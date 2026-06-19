@@ -135,7 +135,7 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
       { action: PERMISSION_ACTIONS.PROJECT_READ, label: "查看项目" },
       { action: PERMISSION_ACTIONS.PROJECT_MANAGE, label: "管理项目" },
       { action: PERMISSION_ACTIONS.PROJECT_BACKUP, label: "导出项目备份" },
-      { action: PERMISSION_ACTIONS.PROJECT_DELETE, label: "删除项目" },
+      { action: PERMISSION_ACTIONS.PROJECT_DELETE, label: "移除项目记录" },
       { action: PERMISSION_ACTIONS.PROJECT_MAINTENANCE, label: "项目维护" },
     ],
   },

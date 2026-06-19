@@ -32,7 +32,7 @@ const manifest = {
   download_url:
     typeof previousManifest?.download_url === "string"
       ? previousManifest.download_url
-      : "https://github.com/example/textile/releases/latest",
+      : "",
   notes: Array.isArray(previousManifest?.notes)
     ? previousManifest.notes.filter((note) => typeof note === "string")
     : ["更新 Textile 应用资源。"],

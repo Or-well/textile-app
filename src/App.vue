@@ -559,13 +559,11 @@ async function handleDeleteProjectRequested() {
     loginErrorMessage.value = "";
     packedProjectNotice.value = "";
     appErrorMessage.value = "";
-    appNoticeMessage.value = result.diskFilesDeleted
-      ? "项目内容已删除，项目已从最近项目中移除。项目根文件夹可能仍为空文件夹。"
-      : "项目删除未完全完成，已关闭当前项目并从最近项目中移除。请手动检查失败项。";
+    appNoticeMessage.value = result.message;
     replace("/projects");
   } catch (error) {
     appErrorMessage.value =
-      error instanceof Error ? error.message : "删除项目失败。请稍后再试。";
+      error instanceof Error ? error.message : "移除项目记录失败。请稍后再试。";
   }
 }
 

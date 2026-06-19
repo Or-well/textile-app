@@ -45,8 +45,7 @@ export type TaskType =
 
 export type TaskSubmitMethod =
   | "change_package"
-  | "git_hidden"
-  | "git_manual";
+  | "owner_manual";
 
 export type ReleaseExportFormat = "json" | "txt" | "csv" | "ks";
 

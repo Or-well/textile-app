@@ -17,7 +17,7 @@ const emit = defineEmits<{
 const backupConfirmed = ref(false);
 const projectNameInput = ref("");
 const deletePhraseInput = ref("");
-const requiredPhrase = "彻底删除";
+const requiredPhrase = "移除项目";
 const canSubmit = computed(
   () =>
     Boolean(props.scan?.canDelete) &&
@@ -37,28 +37,31 @@ const canSubmit = computed(
     >
       <header>
         <p class="eyebrow">危险操作</p>
-        <h2 id="delete-project-title">彻底删除当前项目</h2>
+        <h2 id="delete-project-title">从启动页移除当前项目</h2>
         <p>
-          此操作会删除当前项目来源中的项目数据，删除后无法从程序内恢复。请先确认已经备份。
+          此操作只会从最近项目移除、清除当前项目会话并返回项目启动页。磁盘文件不会被删除。
+        </p>
+        <p>
+          当前版本不会自动删除磁盘上的项目文件。如需彻底删除，请确认备份后手动删除项目文件夹。
         </p>
       </header>
 
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
       <section v-if="scan" class="danger-summary">
-        <strong>{{ scan.canDelete ? "将删除" : "无法由程序直接删除" }}</strong>
+        <strong>{{ scan.canDelete ? "将移除本机记录" : "无法继续" }}</strong>
         <dl>
           <div>
-            <dt>项目来源</dt>
+            <dt>处理范围</dt>
             <dd>{{ scan.deleteTarget }}</dd>
           </div>
           <div>
-            <dt>预计文件</dt>
-            <dd>{{ scan.fileCount }} 个</dd>
+            <dt>项目文件</dt>
+            <dd>不会删除</dd>
           </div>
           <div>
-            <dt>预计文件夹</dt>
-            <dd>{{ scan.directoryCount }} 个</dd>
+            <dt>返回位置</dt>
+            <dd>项目启动页</dd>
           </div>
         </dl>
 
@@ -78,7 +81,7 @@ const canSubmit = computed(
 
       <label class="confirm-check">
         <input v-model="backupConfirmed" type="checkbox" :disabled="busy || !scan?.canDelete" />
-        <span>我已备份或确认不再需要此项目。</span>
+        <span>我理解此操作只移除本机记录，不删除磁盘文件。</span>
       </label>
 
       <label class="confirm-field">
@@ -116,7 +119,7 @@ const canSubmit = computed(
           :disabled="busy || !canSubmit"
           @click="emit('confirm')"
         >
-          {{ busy ? "正在删除..." : "彻底删除项目" }}
+          {{ busy ? "正在移除..." : "移除项目记录" }}
         </button>
       </footer>
     </article>

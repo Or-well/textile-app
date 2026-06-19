@@ -81,8 +81,7 @@ const TASK_TYPES: readonly TaskType[] = [
 ];
 const SUBMIT_METHODS: readonly TaskSubmitMethod[] = [
   "change_package",
-  "git_hidden",
-  "git_manual",
+  "owner_manual",
 ];
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
@@ -130,6 +129,18 @@ function isTaskType(value: unknown): value is TaskType {
 
 function isSubmitMethod(value: unknown): value is TaskSubmitMethod {
   return SUBMIT_METHODS.includes(value as TaskSubmitMethod);
+}
+
+function normalizeSubmitMethod(value: unknown): TaskSubmitMethod {
+  if (value === "git_manual") {
+    return "owner_manual";
+  }
+
+  if (value === "git_hidden") {
+    return "change_package";
+  }
+
+  return isSubmitMethod(value) ? value : "change_package";
 }
 
 function normalizeNumber(value: unknown, fallback: number): number {
@@ -183,9 +194,7 @@ function normalizeTask(row: Partial<Task>): Task {
     assignee,
     status,
     target: row.target ?? "",
-    submit_method: isSubmitMethod(row.submit_method)
-      ? row.submit_method
-      : "change_package",
+    submit_method: normalizeSubmitMethod(row.submit_method),
     proofread_round:
       type === "proofread" ? normalizeProofreadRound(row.proofread_round) : undefined,
     created_by: row.created_by?.trim() ?? "",

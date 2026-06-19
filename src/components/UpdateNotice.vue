@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   dismissUpdate,
   getAppUpdateState,
+  hasConfiguredDownloadUrl,
   installUpdate,
   openDownloadPage,
   subscribeAppUpdate,
@@ -39,6 +40,9 @@ const latestVersionText = computed(() =>
   updateState.value.latest ? `v${updateState.value.latest.latest_version}` : "",
 );
 const currentVersionText = computed(() => `v${updateState.value.currentVersion}`);
+const downloadUrlConfigured = computed(() =>
+  hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
+);
 const refreshMessage = computed(
   () =>
     updateState.value.refreshBlockedReason ||
@@ -91,6 +95,7 @@ onBeforeUnmount(() => {
         <p class="notice-title">发现 Textile 新版本 {{ latestVersionText }}</p>
         <p class="notice-text">当前版本：{{ currentVersionText }}</p>
         <p class="notice-source">更新来源：{{ updateState.sourceUrl }}</p>
+        <p v-if="!downloadUrlConfigured" class="notice-source">未配置发布地址</p>
 
         <div v-if="releaseNotes.length" class="release-notes">
           <p>更新内容：</p>
@@ -101,8 +106,13 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="notice-actions">
-        <button class="primary-button" type="button" @click="handleOpenDownloadPage">
-          查看下载页
+        <button
+          class="primary-button"
+          type="button"
+          :disabled="!downloadUrlConfigured"
+          @click="handleOpenDownloadPage"
+        >
+          {{ downloadUrlConfigured ? "查看下载页" : "未配置发布地址" }}
         </button>
         <button class="secondary-button" type="button" @click="handleDismiss">
           稍后

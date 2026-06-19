@@ -47,8 +47,7 @@ const taskStatuses: Array<{ value: TaskStatus; label: string }> = [
 
 const submitMethods: Array<{ value: TaskSubmitMethod; label: string }> = [
   { value: "change_package", label: "导出修改包" },
-  { value: "git_hidden", label: "同步提交" },
-  { value: "git_manual", label: "由负责人处理" },
+  { value: "owner_manual", label: "由负责人处理" },
 ];
 
 const form = reactive({

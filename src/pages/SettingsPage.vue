@@ -42,6 +42,7 @@ import {
   getAppUpdateState,
   getCurrentVersion,
   getUpdateChannel,
+  hasConfiguredDownloadUrl,
   installUpdate,
   openDownloadPage,
   setUpdateChannel,
@@ -216,6 +217,14 @@ const latestBuildText = computed(() =>
   updateState.value.latest?.build_id ? updateState.value.latest.build_id : "尚未获取",
 );
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
+const downloadUrlConfigured = computed(() =>
+  hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
+);
+const downloadUrlText = computed(() =>
+  downloadUrlConfigured.value
+    ? updateState.value.latest?.download_url
+    : "未配置发布地址",
+);
 
 function applyProject(project: ProjectConfig): void {
   const editableProject = project as EditableProjectConfig;
@@ -538,7 +547,13 @@ async function handleCheckForUpdates() {
 }
 
 function handleOpenDownloadPage() {
-  openDownloadPage(updateState.value.latest?.download_url);
+  if (openDownloadPage(updateState.value.latest?.download_url)) {
+    message.value = "已打开下载页。";
+    errorMessage.value = "";
+    return;
+  }
+
+  errorMessage.value = "未配置发布地址。请联系负责人配置发布地址。";
 }
 
 async function handleInstallProgramUpdate() {
@@ -628,7 +643,7 @@ async function handleClearCache(items: CacheCleanupItemId[]): Promise<void> {
 
 async function handleRequestDeleteProject(): Promise<void> {
   if (!canRemoveProject.value) {
-    errorMessage.value = "当前用户没有删除项目的权限。";
+    errorMessage.value = "当前用户没有移除项目记录的权限。";
     return;
   }
 
@@ -648,7 +663,7 @@ async function handleRequestDeleteProject(): Promise<void> {
     );
   } catch (error) {
     projectDeletionError.value =
-      error instanceof Error ? error.message : "项目目录检查失败，不能删除。";
+      error instanceof Error ? error.message : "项目来源检查失败，不能继续。";
   } finally {
     isScanningProjectDeletion.value = false;
   }
@@ -1289,9 +1304,10 @@ onBeforeUnmount(() => {
                 <button
                   class="primary-button"
                   type="button"
+                  :disabled="!downloadUrlConfigured"
                   @click="handleOpenDownloadPage"
                 >
-                  打开下载页
+                  {{ downloadUrlConfigured ? "打开下载页" : "未配置发布地址" }}
                 </button>
                 <button
                   v-if="updateState.pwaRefreshReady"
@@ -1314,6 +1330,7 @@ onBeforeUnmount(() => {
                 <span>检查时间：{{ lastUpdateCheckText }}</span>
                 <span>最新版本：{{ latestProgramVersion }}</span>
                 <span>构建编号：{{ latestBuildText }}</span>
+                <span>发布地址：{{ downloadUrlText }}</span>
                 <span v-if="updateState.latest">
                   发布日期：{{ updateState.latest.release_date }} ·
                   通道：{{ updateState.latest.channel }}
@@ -1344,7 +1361,7 @@ onBeforeUnmount(() => {
         <section v-else class="settings-card danger-card">
           <header class="card-header">
             <h2>危险操作</h2>
-            <p>这些操作会影响本机记录或当前项目来源，执行前需要明确确认。</p>
+            <p>这些操作会影响本机记录或当前项目视图，执行前需要明确确认。</p>
           </header>
 
           <div class="danger-list">
@@ -1380,8 +1397,8 @@ onBeforeUnmount(() => {
 
             <div class="danger-row">
               <div>
-                <strong>彻底删除项目</strong>
-                <p>删除当前项目来源中的项目数据；如果浏览器没有源文件删除权限，会明确提示并禁止执行。</p>
+                <strong>从启动页移除项目</strong>
+                <p>从最近项目移除并清除当前项目会话。当前版本不会自动删除磁盘上的项目文件。如需彻底删除，请确认备份后手动删除项目文件夹。</p>
               </div>
               <button
                 class="danger-button"
@@ -1389,7 +1406,7 @@ onBeforeUnmount(() => {
                 :disabled="!canRemoveProject"
                 @click="handleRequestDeleteProject"
               >
-                彻底删除项目
+                移除项目记录
               </button>
             </div>
           </div>

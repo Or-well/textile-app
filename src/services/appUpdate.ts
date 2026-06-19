@@ -60,8 +60,7 @@ type BroadcastMessage =
 const UPDATE_CHANNEL_STORAGE_KEY = "textile.update.channel";
 const DISMISSED_VERSION_STORAGE_KEY = "textile.update.dismissed_version";
 const VERSION_MANIFEST_URL = "/version.json";
-const OFFICIAL_DOWNLOAD_URL =
-  "https://github.com/example/textile/releases/latest";
+const UNCONFIGURED_DOWNLOAD_URL = "";
 const UPDATE_BROADCAST_CHANNEL = "textile.update.broadcast.v1";
 const SERVICE_WORKER_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -170,7 +169,7 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     const errorMessage =
       error instanceof Error
         ? error.message
-        : "检查更新失败。请稍后重试，或打开下载页手动确认。";
+        : "检查更新失败。请稍后重试，或联系负责人确认发布地址。";
     const result = buildResult({
       status: "failed",
       checkedAt,
@@ -197,13 +196,22 @@ export function dismissUpdate(): void {
   notifyListeners();
 }
 
-export function openDownloadPage(downloadUrl = OFFICIAL_DOWNLOAD_URL): void {
+export function hasConfiguredDownloadUrl(downloadUrl?: string): boolean {
+  return Boolean(getSafeDownloadUrl(downloadUrl));
+}
+
+export function openDownloadPage(downloadUrl?: string): boolean {
   if (typeof window === "undefined") {
-    return;
+    return false;
   }
 
   const safeUrl = getSafeDownloadUrl(downloadUrl);
+  if (!safeUrl) {
+    return false;
+  }
+
   window.open(safeUrl, "_blank", "noopener,noreferrer");
+  return true;
 }
 
 export async function installUpdate(): Promise<UpdateCheckResult> {
@@ -217,16 +225,17 @@ export async function installUpdate(): Promise<UpdateCheckResult> {
     });
   }
 
-  openDownloadPage(state.latest?.download_url);
+  const openedDownloadPage = openDownloadPage(state.latest?.download_url);
 
   return buildResult({
     status: state.status,
     latest: state.latest,
     checkedAt: state.checkedAt || new Date().toISOString(),
-    message:
-      state.status === "update-available"
+    message: openedDownloadPage
+      ? state.status === "update-available"
         ? "已打开下载页。Web / PWA 版本也会在后台准备可刷新更新。"
-        : "已打开下载页。当前还没有可直接刷新的新版。",
+        : "已打开下载页。当前还没有可直接刷新的新版。"
+      : "未配置发布地址。请联系负责人配置发布地址。",
   });
 }
 
@@ -407,7 +416,7 @@ async function fetchVersionManifest(): Promise<VersionManifest> {
   });
 
   if (!response.ok) {
-    throw new Error("无法读取版本信息。请稍后重试，或打开下载页手动确认。");
+    throw new Error("无法读取版本信息。请稍后重试，或联系负责人确认发布地址。");
   }
 
   const data = (await response.json()) as Partial<VersionManifest>;
@@ -534,14 +543,19 @@ function isUpdateChannel(value: unknown): value is UpdateChannel {
 
 function getSafeDownloadUrl(url?: string): string {
   if (!url) {
-    return OFFICIAL_DOWNLOAD_URL;
+    return UNCONFIGURED_DOWNLOAD_URL;
   }
 
   try {
     const parsedUrl = new URL(url);
-    return parsedUrl.protocol === "https:" ? parsedUrl.toString() : OFFICIAL_DOWNLOAD_URL;
+    const isExampleUrl = parsedUrl.hostname === "github.com" &&
+      parsedUrl.pathname.startsWith("/example/");
+
+    return parsedUrl.protocol === "https:" && !isExampleUrl
+      ? parsedUrl.toString()
+      : UNCONFIGURED_DOWNLOAD_URL;
   } catch {
-    return OFFICIAL_DOWNLOAD_URL;
+    return UNCONFIGURED_DOWNLOAD_URL;
   }
 }
 

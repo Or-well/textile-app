@@ -54,8 +54,7 @@ const typeLabels: Record<Task["type"], string> = {
 
 const submitMethodLabels: Record<Task["submit_method"], string> = {
   change_package: "导出修改包",
-  git_hidden: "同步提交",
-  git_manual: "由负责人处理",
+  owner_manual: "由负责人处理",
 };
 
 const assigneeName = computed(() => {
