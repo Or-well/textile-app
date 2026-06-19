@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import EntryAssistPanel from "../components/EntryAssistPanel.vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntrySideList from "../components/EntrySideList.vue";
-import type { Entry, EntryStatus, ProjectConfig } from "../model/types";
+import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
 import { getEntryById, loadEntries, saveEntry } from "../services/entries";
 
@@ -15,6 +15,12 @@ const props = defineProps<{
   fileId: string;
   targetEntryId?: string;
   targetEntryIndex?: number;
+  targetAssistTab?: AssistTab;
+  targetCommentId?: string;
+}>();
+
+const emit = defineEmits<{
+  openCommentTarget: [comment: Comment];
 }>();
 
 const entries = ref<Entry[]>([]);
@@ -100,6 +106,9 @@ async function loadFileEntries() {
     }));
     selectedEntry.value = getRequestedEntry(entries.value) ?? entries.value[0];
     draftTarget.value = selectedEntry.value?.target ?? "";
+    if (props.targetAssistTab) {
+      assistTab.value = props.targetAssistTab;
+    }
   } catch (error) {
     entries.value = [];
     errorMessage.value =
@@ -262,6 +271,16 @@ watch(
   },
 );
 
+watch(
+  () => [props.targetAssistTab, props.targetCommentId],
+  () => {
+    if (props.targetAssistTab) {
+      assistTab.value = props.targetAssistTab;
+    }
+  },
+  { immediate: true },
+);
+
 watch(filteredEntries, (nextEntries) => {
   if (
     selectedEntry.value &&
@@ -326,8 +345,10 @@ onMounted(loadFileEntries);
         :entry="selectedEntry"
         :draft-target="draftTarget"
         :active-tab="assistTab"
+        :highlight-comment-id="targetCommentId"
         @entry-updated="handleEntryUpdated"
         @update-active-tab="assistTab = $event"
+        @view-entry-comment="emit('openCommentTarget', $event)"
       />
     </section>
 

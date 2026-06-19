@@ -15,6 +15,19 @@ import { appendEvent } from "./history";
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 
+type CommentStatus = NonNullable<Comment["status"]>;
+
+interface CommentContext {
+  entry?: Entry;
+  fileId?: string;
+}
+
+interface AddCommentOptions {
+  replyTo?: string | null;
+  disputed?: boolean;
+  status?: CommentStatus;
+}
+
 export function setCommentsProjectRoot(root: ProjectDirectoryHandle): void {
   currentProjectRoot = root;
 }
@@ -33,6 +46,23 @@ function getCurrentUserId(): string {
 
 function getEntryCommentPath(entry: Entry): string {
   return `comments/${entry.file_id}/${String(entry.index).padStart(6, "0")}.jsonl`;
+}
+
+function normalizeComment(comment: Comment, context: CommentContext = {}): Comment {
+  const createdAt = comment.created_at || comment.updated_at || nowIso();
+  const status: CommentStatus =
+    comment.status ?? (comment.resolved ? "resolved" : "open");
+
+  return {
+    ...comment,
+    entry_id: comment.entry_id || context.entry?.id || "",
+    file_id: comment.file_id || context.entry?.file_id || context.fileId,
+    reply_to: comment.reply_to ?? null,
+    status,
+    resolved: status === "resolved",
+    created_at: createdAt,
+    updated_at: comment.updated_at || createdAt,
+  };
 }
 
 async function loadEntryChunk(fileId: string): Promise<{
@@ -113,12 +143,15 @@ export async function loadComments(entry: Entry): Promise<Comment[]> {
     return [];
   }
 
-  return readJsonl<Comment>(root, path);
+  return (await readJsonl<Comment>(root, path))
+    .map((comment) => normalizeComment(comment, { entry }))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
 export async function addComment(
   entry: Entry,
   body: string,
+  options: AddCommentOptions = {},
 ): Promise<Comment> {
   const root = getProjectRoot();
   const text = body.trim();
@@ -130,26 +163,98 @@ export async function addComment(
   const path = getEntryCommentPath(entry);
   const userId = getCurrentUserId();
   const comments = await loadComments(entry);
+  const createdAt = nowIso();
   const comment: Comment = {
     id: createId("comment"),
     entry_id: entry.id,
+    file_id: entry.file_id,
     user_id: userId,
-    created_at: nowIso(),
     body: text,
-    reply_to: null,
+    reply_to: options.replyTo ?? null,
+    status: options.status ?? "open",
+    disputed: options.disputed,
+    created_at: createdAt,
+    updated_at: createdAt,
   };
 
   await ensureDirectory(root, `comments/${entry.file_id}`);
   await writeJsonl(root, path, [...comments, comment]);
   await appendEvent({
-    type: "comment.added",
+    type: comment.reply_to ? "comment.replied" : "comment.added",
     user_id: userId,
     entry_id: entry.id,
     file_id: entry.file_id,
-    detail: { comment_id: comment.id },
+    detail: { comment_id: comment.id, reply_to: comment.reply_to },
   });
 
   return comment;
+}
+
+export async function replyComment(
+  entry: Entry,
+  parentCommentId: string,
+  body: string,
+): Promise<Comment> {
+  const comments = await loadComments(entry);
+
+  if (!comments.some((comment) => comment.id === parentCommentId)) {
+    throw new Error("没有找到要回复的评论。请刷新后再试。");
+  }
+
+  return addComment(entry, body, { replyTo: parentCommentId });
+}
+
+async function updateCommentStatus(
+  entry: Entry,
+  commentId: string,
+  status: CommentStatus,
+): Promise<Comment> {
+  const root = getProjectRoot();
+  const path = getEntryCommentPath(entry);
+  const userId = getCurrentUserId();
+  const comments = await loadComments(entry);
+  const commentIndex = comments.findIndex((comment) => comment.id === commentId);
+
+  if (commentIndex < 0) {
+    throw new Error("没有找到要更新的评论。请刷新后再试。");
+  }
+
+  const updatedAt = nowIso();
+  const nextComment: Comment = {
+    ...comments[commentIndex],
+    status,
+    resolved: status === "resolved",
+    updated_at: updatedAt,
+    resolved_at: status === "resolved" ? updatedAt : "",
+    resolved_by: status === "resolved" ? userId : "",
+  };
+  const nextComments = [...comments];
+
+  nextComments[commentIndex] = nextComment;
+  await writeJsonl(root, path, nextComments);
+  await appendEvent({
+    type: status === "resolved" ? "comment.resolved" : "comment.reopened",
+    user_id: userId,
+    entry_id: entry.id,
+    file_id: entry.file_id,
+    detail: { comment_id: commentId },
+  });
+
+  return nextComment;
+}
+
+export async function resolveComment(
+  entry: Entry,
+  commentId: string,
+): Promise<Comment> {
+  return updateCommentStatus(entry, commentId, "resolved");
+}
+
+export async function reopenComment(
+  entry: Entry,
+  commentId: string,
+): Promise<Comment> {
+  return updateCommentStatus(entry, commentId, "open");
 }
 
 export async function deleteComment(
@@ -160,7 +265,21 @@ export async function deleteComment(
   const path = getEntryCommentPath(entry);
   const userId = getCurrentUserId();
   const comments = await loadComments(entry);
-  const nextComments = comments.filter((comment) => comment.id !== commentId);
+  const deleteIds = new Set([commentId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (const comment of comments) {
+      if (comment.reply_to && deleteIds.has(comment.reply_to) && !deleteIds.has(comment.id)) {
+        deleteIds.add(comment.id);
+        changed = true;
+      }
+    }
+  }
+
+  const nextComments = comments.filter((comment) => !deleteIds.has(comment.id));
 
   await writeJsonl(root, path, nextComments);
   await appendEvent({
@@ -168,7 +287,7 @@ export async function deleteComment(
     user_id: userId,
     entry_id: entry.id,
     file_id: entry.file_id,
-    detail: { comment_id: commentId },
+    detail: { comment_id: commentId, deleted_replies: deleteIds.size - 1 },
   });
 }
 
@@ -190,7 +309,7 @@ export async function markDisputed(
   );
 
   if (text) {
-    await addComment(updatedEntry, text);
+    await addComment(updatedEntry, text, { disputed: true });
   }
 
   await appendEvent({
@@ -236,6 +355,10 @@ export async function resolveDispute(
 }
 
 export async function loadRecentComments(): Promise<Comment[]> {
+  return (await loadAllComments()).slice(0, 30);
+}
+
+export async function loadAllComments(): Promise<Comment[]> {
   const root = getProjectRoot();
 
   if (!(await fileExists(root, "comments"))) {
@@ -249,7 +372,11 @@ export async function loadRecentComments(): Promise<Comment[]> {
       const comments = await Promise.all(
         commentFiles
           .filter((name) => name.endsWith(".jsonl"))
-          .map((name) => readJsonl<Comment>(root, `comments/${fileId}/${name}`)),
+          .map(async (name) =>
+            (await readJsonl<Comment>(root, `comments/${fileId}/${name}`)).map(
+              (comment) => normalizeComment(comment, { fileId }),
+            ),
+          ),
       );
 
       return comments.flat();

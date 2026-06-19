@@ -9,7 +9,7 @@ import {
   normalizeProofreadUsers,
   normalizeWorkflowSettings,
 } from "../model/status";
-import type { Entry, Member, ProjectWorkflowSettings, Role } from "../model/types";
+import type { Comment, Entry, Member, ProjectWorkflowSettings, Role } from "../model/types";
 
 const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 
@@ -71,6 +71,21 @@ function normalizeAction(action: PermissionAction | string): string {
   return actionName;
 }
 
+function getPermissionAliases(actionName: string): string[] {
+  if (actionName === PERMISSION_ACTIONS.COMMENT_VIEW) {
+    return [PERMISSION_ACTIONS.COMMENT_READ];
+  }
+
+  if (
+    actionName === PERMISSION_ACTIONS.COMMENT_CREATE ||
+    actionName === PERMISSION_ACTIONS.COMMENT_REPLY
+  ) {
+    return [PERMISSION_ACTIONS.COMMENT_WRITE];
+  }
+
+  return [];
+}
+
 export function getCurrentUser(): Member | null {
   currentUser = currentUser ?? readStoredUser();
 
@@ -119,7 +134,10 @@ export function can(
     permissions.delete(permission);
   }
 
-  return permissions.has(actionName);
+  return (
+    permissions.has(actionName) ||
+    getPermissionAliases(actionName).some((permission) => permissions.has(permission))
+  );
 }
 
 export function canEditEntry(
@@ -310,8 +328,38 @@ export function canReopenTask(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.TASK_REOPEN) || canManageTask(user);
 }
 
+export function canViewComment(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.COMMENT_VIEW);
+}
+
+export function canCreateComment(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.COMMENT_CREATE);
+}
+
+export function canReplyComment(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.COMMENT_REPLY);
+}
+
 export function canResolveComment(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.COMMENT_RESOLVE);
+}
+
+export function canReopenComment(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.COMMENT_REOPEN);
+}
+
+export function canDeleteComment(
+  user: Member | null | undefined,
+  comment: Comment | null | undefined,
+): boolean {
+  if (!comment) {
+    return false;
+  }
+
+  return (
+    can(user, PERMISSION_ACTIONS.COMMENT_DELETE_ANY) ||
+    (comment.user_id === user?.id && can(user, PERMISSION_ACTIONS.COMMENT_DELETE_OWN))
+  );
 }
 
 export function canImportChangePackage(user: Member | null | undefined): boolean {

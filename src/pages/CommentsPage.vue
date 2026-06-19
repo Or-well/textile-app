@@ -1,141 +1,163 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { Comment, Entry, ProjectConfig } from "../model/types";
-import {
-  loadDisputedEntries,
-  loadRecentComments,
-  resolveDispute,
-  setCommentsProjectRoot,
-} from "../services/comments";
-import { setHistoryProjectRoot } from "../services/history";
-import { canResolveDispute, getCurrentUser } from "../services/permissions";
-import { openProject } from "../services/project";
+import CommentListItem from "../components/CommentListItem.vue";
+import type { Comment, Entry, Member, ProjectConfig } from "../model/types";
+import { loadAllComments } from "../services/comments";
+import { loadAllEntries } from "../services/entries";
+import { canViewComment, getCurrentUser } from "../services/permissions";
 
-const props = defineProps<{
-  project?: ProjectConfig;
+type CommentFilter = "all" | "recent" | "open" | "resolved" | "disputed";
+
+interface CommentRow {
+  comment: Comment;
+  entry?: Entry;
+}
+
+const props = withDefaults(
+  defineProps<{
+    project?: ProjectConfig;
+    members?: Member[];
+  }>(),
+  {
+    members: () => [],
+  },
+);
+
+const emit = defineEmits<{
+  openCommentTarget: [comment: Comment];
 }>();
 
-const projectName = ref("");
-const disputedEntries = ref<Entry[]>([]);
-const recentComments = ref<Comment[]>([]);
-const selectedEntry = ref<Entry>();
-const resolution = ref("");
+const comments = ref<Comment[]>([]);
+const entries = ref<Entry[]>([]);
+const activeFilter = ref<CommentFilter>("all");
+const selectedFileId = ref("all");
+const selectedMemberId = ref("all");
+const keyword = ref("");
 const isLoading = ref(false);
-const isResolving = ref(false);
 const errorMessage = ref("");
-const message = ref("");
 
 const currentUser = computed(() => getCurrentUser());
-const canResolveSelectedDispute = computed(() =>
-  canResolveDispute(currentUser.value, selectedEntry.value),
+const canViewComments = computed(() => canViewComment(currentUser.value));
+const entryById = computed(
+  () => new Map(entries.value.map((entry) => [entry.id, entry])),
 );
-const hasProjectContext = computed(() => Boolean(props.project));
-const emptyStateText = computed(() =>
-  projectName.value ? "当前项目暂无评论或争议。" : "请打开项目文件夹，查看评论与争议。",
+const parentCommentById = computed(
+  () => new Map(comments.value.map((comment) => [comment.id, comment])),
+);
+const rows = computed<CommentRow[]>(() =>
+  comments.value.map((comment) => ({
+    comment,
+    entry: entryById.value.get(comment.entry_id),
+  })),
 );
 
-async function refreshCommentsView() {
-  disputedEntries.value = await loadDisputedEntries();
-  recentComments.value = await loadRecentComments();
+const visibleRows = computed(() => {
+  const searchText = keyword.value.trim().toLowerCase();
+  const filteredRows = rows.value.filter(({ comment, entry }) => {
+    const fileId = comment.file_id || entry?.file_id || "";
 
-  if (
-    selectedEntry.value &&
-    !disputedEntries.value.some((entry) => entry.id === selectedEntry.value?.id)
-  ) {
-    selectedEntry.value = disputedEntries.value[0];
-  }
-}
-
-async function initializeFromProjectContext() {
-  if (!props.project) {
-    return;
-  }
-
-  isLoading.value = true;
-  errorMessage.value = "";
-  message.value = "";
-  resolution.value = "";
-  projectName.value = props.project.name;
-
-  try {
-    await refreshCommentsView();
-    selectedEntry.value = disputedEntries.value[0];
-  } catch (error) {
-    disputedEntries.value = [];
-    recentComments.value = [];
-    selectedEntry.value = undefined;
-    errorMessage.value =
-      error instanceof Error
-        ? error.message
-        : "评论与争议加载失败。请确认项目数据可以读取。";
-  } finally {
-    isLoading.value = false;
-  }
-}
-
-async function handleOpenProject() {
-  isLoading.value = true;
-  errorMessage.value = "";
-  message.value = "";
-  resolution.value = "";
-
-  try {
-    const project = await openProject();
-
-    projectName.value = project.config.name;
-    setCommentsProjectRoot(project.root);
-    setHistoryProjectRoot(project.root);
-    await refreshCommentsView();
-    selectedEntry.value = disputedEntries.value[0];
-  } catch (error) {
-    disputedEntries.value = [];
-    recentComments.value = [];
-    selectedEntry.value = undefined;
-
-    if (error instanceof DOMException && error.name === "AbortError") {
-      errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
-    } else if (error instanceof Error) {
-      errorMessage.value = error.message;
-    } else {
-      errorMessage.value = "争议列表加载失败。请确认选择的是项目根目录。";
+    if (selectedFileId.value !== "all" && fileId !== selectedFileId.value) {
+      return false;
     }
+
+    if (
+      selectedMemberId.value !== "all" &&
+      comment.user_id !== selectedMemberId.value
+    ) {
+      return false;
+    }
+
+    if (activeFilter.value === "open" && comment.status === "resolved") {
+      return false;
+    }
+
+    if (activeFilter.value === "resolved" && comment.status !== "resolved") {
+      return false;
+    }
+
+    if (
+      activeFilter.value === "disputed" &&
+      !comment.disputed &&
+      entry?.disputed !== true
+    ) {
+      return false;
+    }
+
+    if (!searchText) {
+      return true;
+    }
+
+    return [
+      comment.body,
+      comment.user_id,
+      getMemberName(comment.user_id),
+      getFileName(fileId),
+      entry?.source,
+      entry?.target,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(searchText);
+  });
+
+  return activeFilter.value === "recent" ? filteredRows.slice(0, 30) : filteredRows;
+});
+
+const filterTabs: Array<{ id: CommentFilter; label: string }> = [
+  { id: "all", label: "全部评论" },
+  { id: "recent", label: "最近评论" },
+  { id: "open", label: "讨论中" },
+  { id: "resolved", label: "已解决" },
+  { id: "disputed", label: "有争议" },
+];
+
+function getFileName(fileId: string): string {
+  return props.project?.files.find((file) => file.id === fileId)?.name || fileId;
+}
+
+function getMemberName(memberId: string): string {
+  return props.members.find((member) => member.id === memberId)?.name || memberId;
+}
+
+async function refreshComments() {
+  if (!props.project || !canViewComments.value) {
+    comments.value = [];
+    entries.value = [];
+    return;
+  }
+
+  isLoading.value = true;
+  errorMessage.value = "";
+
+  try {
+    const [loadedEntries, loadedComments] = await Promise.all([
+      loadAllEntries(),
+      loadAllComments(),
+    ]);
+
+    entries.value = loadedEntries;
+    comments.value = loadedComments;
+  } catch (error) {
+    comments.value = [];
+    entries.value = [];
+    errorMessage.value =
+      error instanceof Error ? error.message : "评论列表加载失败。";
   } finally {
     isLoading.value = false;
   }
 }
 
-function handleSelectEntry(entry: Entry) {
-  selectedEntry.value = entry;
-  resolution.value = "";
-  message.value = "";
-}
-
-async function handleResolveDispute() {
-  if (!selectedEntry.value) {
-    return;
-  }
-
-  isResolving.value = true;
-  errorMessage.value = "";
-  message.value = "";
-
-  try {
-    await resolveDispute(selectedEntry.value, resolution.value);
-    resolution.value = "";
-    await refreshCommentsView();
-    message.value = "争议已解决。";
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "解决争议失败。请稍后再试。";
-  } finally {
-    isResolving.value = false;
-  }
+function handleViewEntry(comment: Comment) {
+  emit("openCommentTarget", comment);
 }
 
 watch(
   () => props.project?.project_id,
   () => {
-    void initializeFromProjectContext();
+    selectedFileId.value = "all";
+    selectedMemberId.value = "all";
+    keyword.value = "";
+    void refreshComments();
   },
   { immediate: true },
 );
@@ -145,251 +167,188 @@ watch(
   <main class="comments-page">
     <header class="page-header">
       <div>
-        <p class="eyebrow">评论与争议</p>
-        <h1>{{ projectName || "打开项目" }}</h1>
+        <p class="eyebrow">评论协作</p>
+        <h1>{{ project?.name || "评论" }}</h1>
       </div>
-
-      <button
-        v-if="!hasProjectContext"
-        class="open-button"
-        type="button"
-        :disabled="isLoading"
-        @click="handleOpenProject"
-      >
-        {{ isLoading ? "正在加载..." : "打开项目文件夹" }}
-      </button>
+      <p class="comment-count">{{ visibleRows.length }} / {{ comments.length }} 条</p>
     </header>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
-    <p v-if="message" class="message">{{ message }}</p>
+    <p v-if="!canViewComments" class="empty-state">当前用户不能查看评论。</p>
 
-    <section v-if="projectName" class="comments-layout">
-      <section class="dispute-list">
-        <h2>争议词条</h2>
+    <section v-if="project && canViewComments" class="comment-toolbar">
+      <div class="filter-tabs" role="tablist" aria-label="评论筛选">
         <button
-          v-for="entry in disputedEntries"
-          :key="entry.id"
-          class="entry-row"
-          :class="{ selected: entry.id === selectedEntry?.id }"
+          v-for="tab in filterTabs"
+          :key="tab.id"
+          class="filter-tab"
+          :class="{ active: activeFilter === tab.id }"
           type="button"
-          @click="handleSelectEntry(entry)"
+          @click="activeFilter = tab.id"
         >
-          <span>#{{ entry.index }} {{ entry.speaker || "旁白" }}</span>
-          <small>{{ entry.source }}</small>
+          {{ tab.label }}
         </button>
+      </div>
 
-        <p v-if="disputedEntries.length === 0" class="empty-text">
-          暂无争议词条
-        </p>
-      </section>
+      <div class="filter-controls">
+        <label>
+          <span>按文件筛选</span>
+          <select v-model="selectedFileId">
+            <option value="all">全部文件</option>
+            <option v-for="file in project.files" :key="file.id" :value="file.id">
+              {{ file.name }}
+            </option>
+          </select>
+        </label>
 
-      <section class="resolve-panel">
-        <h2>处理争议</h2>
-        <template v-if="selectedEntry">
-          <p class="source-text">{{ selectedEntry.source }}</p>
-          <p class="target-text">{{ selectedEntry.target || "未填写译文" }}</p>
-          <label>
-            <span>处理结论</span>
-            <textarea
-              v-model="resolution"
-              rows="5"
-              placeholder="写下处理结论"
-              :disabled="isResolving"
-            />
-          </label>
-          <button
-            v-if="canResolveSelectedDispute"
-            class="resolve-button"
-            type="button"
-            :disabled="isResolving"
-            @click="handleResolveDispute"
-          >
-            {{ isResolving ? "处理中..." : "解决争议" }}
-          </button>
-          <p v-else class="empty-text">当前用户没有解决争议的权限。</p>
-        </template>
-        <p v-else class="empty-text">请选择一个争议词条。</p>
-      </section>
+        <label>
+          <span>按成员筛选</span>
+          <select v-model="selectedMemberId">
+            <option value="all">全部成员</option>
+            <option v-for="member in members" :key="member.id" :value="member.id">
+              {{ member.name }}
+            </option>
+          </select>
+        </label>
 
-      <section class="recent-comments">
-        <h2>最近评论</h2>
-        <ul v-if="recentComments.length > 0">
-          <li v-for="comment in recentComments" :key="comment.id">
-            <p>{{ comment.body }}</p>
-            <small>{{ comment.user_id }} · {{ comment.created_at }}</small>
-          </li>
-        </ul>
-        <p v-else class="empty-text">暂无评论</p>
-      </section>
+        <label class="search-field">
+          <span>关键词搜索</span>
+          <input v-model="keyword" type="search" placeholder="搜索评论、词条或成员" />
+        </label>
+      </div>
     </section>
 
-    <p v-else-if="!isLoading && !errorMessage" class="empty-state">
-      {{ emptyStateText }}
+    <p v-if="isLoading" class="empty-state">正在加载评论...</p>
+    <p v-else-if="project && canViewComments && visibleRows.length === 0" class="empty-state">
+      暂无符合条件的评论
     </p>
+
+    <ul v-else-if="project && canViewComments" class="comment-list">
+      <li v-for="{ comment, entry } in visibleRows" :key="comment.id">
+        <CommentListItem
+          :comment="comment"
+          :entry="entry"
+          :file-name="getFileName(comment.file_id || entry?.file_id || '')"
+          :parent-comment="
+            comment.reply_to ? parentCommentById.get(comment.reply_to) : undefined
+          "
+          :can-reply="false"
+          :can-resolve="false"
+          :can-reopen="false"
+          :can-delete="false"
+          @view-entry="handleViewEntry"
+        />
+      </li>
+    </ul>
+
+    <p v-else-if="!project" class="empty-state">请先打开项目。</p>
   </main>
 </template>
 
 <style scoped>
 .comments-page {
-  min-height: 100vh;
-  padding: 28px;
-  background: #f6f7f9;
-  color: #1f2937;
-}
-
-.page-header,
-.comments-layout,
-.error-message,
-.message,
-.empty-state {
-  max-width: 1120px;
-  margin-left: auto;
-  margin-right: auto;
+  display: grid;
+  gap: 16px;
 }
 
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 20px;
+  gap: 18px;
 }
 
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5b6472;
-  font-size: 14px;
-}
-
+.eyebrow,
 h1,
-h2,
 p {
   margin: 0;
 }
 
+.eyebrow {
+  margin-bottom: 6px;
+  color: #5b6472;
+  font-size: 14px;
+}
+
 h1 {
-  font-size: 30px;
+  color: #111827;
+  font-size: 28px;
   line-height: 1.2;
 }
 
-h2 {
-  margin-bottom: 12px;
-  font-size: 18px;
+.comment-count {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #e6f0ef;
+  color: #174346;
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.open-button,
-.resolve-button {
-  min-height: 42px;
-  padding: 0 16px;
-  border: 0;
-  border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
-  font-size: 15px;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: wait;
-  opacity: 0.68;
-}
-
-.error-message,
-.message,
-.empty-state {
-  line-height: 1.7;
-}
-
-.error-message {
-  color: #b42318;
-}
-
-.message {
-  color: #166534;
-}
-
-.empty-state,
-.empty-text,
-small {
-  color: #4b5563;
-}
-
-.comments-layout {
+.comment-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
-  gap: 20px;
-}
-
-.dispute-list,
-.resolve-panel,
-.recent-comments {
-  padding: 16px;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
 }
 
-.recent-comments {
-  grid-column: 1 / -1;
+.filter-tabs,
+.filter-controls {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.entry-row {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  min-height: 52px;
-  margin-bottom: 8px;
-  padding: 10px 12px;
-  border: 1px solid #d7dde5;
+.filter-tab {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #c8d0dc;
   border-radius: 6px;
   background: #ffffff;
-  color: #1f2937;
-  text-align: left;
+  color: #4b5563;
+  font: inherit;
+  font-size: 14px;
   cursor: pointer;
 }
 
-.entry-row:hover,
-.entry-row.selected {
-  border-color: #2563eb;
-  background: #eff6ff;
-}
-
-.source-text,
-.target-text {
-  line-height: 1.7;
-}
-
-.target-text {
-  margin-top: 10px;
-  color: #4b5563;
+.filter-tab.active {
+  border-color: #2f6f73;
+  background: #e6f0ef;
+  color: #174346;
+  font-weight: 700;
 }
 
 label {
   display: grid;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 5px;
 }
 
 label span {
   color: #5b6472;
+  font-size: 13px;
+}
+
+select,
+input {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+  font: inherit;
   font-size: 14px;
 }
 
-textarea {
-  width: 100%;
-  resize: vertical;
-  padding: 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  font: inherit;
-  line-height: 1.6;
+.search-field {
+  min-width: min(320px, 100%);
+  flex: 1;
 }
 
-.resolve-button {
-  margin-top: 12px;
-}
-
-ul {
+.comment-list {
   display: grid;
   gap: 10px;
   margin: 0;
@@ -397,24 +356,28 @@ ul {
   list-style: none;
 }
 
-li {
-  display: grid;
-  gap: 6px;
-  padding: 12px;
-  border: 1px solid #eef1f5;
-  border-radius: 6px;
-  background: #f9fafb;
+.empty-state {
+  padding: 18px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #4b5563;
+  line-height: 1.7;
 }
 
-@media (max-width: 860px) {
-  .page-header,
-  .comments-layout {
-    grid-template-columns: 1fr;
-  }
+.error-message {
+  color: #b42318;
+  line-height: 1.7;
+}
 
+@media (max-width: 760px) {
   .page-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .filter-controls {
+    display: grid;
   }
 }
 </style>

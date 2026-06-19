@@ -173,14 +173,18 @@ export interface Task {
 export interface Comment {
   id: string;
   entry_id: string;
+  file_id?: string;
   user_id: string;
-  created_at: string;
   body: string;
   reply_to: string | null;
+  status?: "open" | "resolved";
   task_id?: string;
   disputed?: boolean;
   resolved?: boolean;
+  created_at: string;
   updated_at?: string;
+  resolved_at?: string;
+  resolved_by?: string;
 }
 
 export interface ProjectEvent {

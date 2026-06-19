@@ -4,7 +4,7 @@ import CommentPanel from "./CommentPanel.vue";
 import ContextPanel from "./ContextPanel.vue";
 import TermEditDialog from "./TermEditDialog.vue";
 import TermHint from "./TermHint.vue";
-import type { Entry, ProjectEvent, Term } from "../model/types";
+import type { Comment, Entry, ProjectEvent, Term } from "../model/types";
 import { getEntryHistory } from "../services/history";
 import {
   addTerm,
@@ -32,11 +32,13 @@ const props = defineProps<{
   entry?: Entry;
   draftTarget: string;
   activeTab?: AssistTab;
+  highlightCommentId?: string;
 }>();
 
 const emit = defineEmits<{
   entryUpdated: [entry: Entry];
   updateActiveTab: [tab: AssistTab];
+  viewEntryComment: [comment: Comment];
 }>();
 
 const activeTab = ref<AssistTab>(props.activeTab ?? "terms");
@@ -321,7 +323,12 @@ watch(
     </section>
 
     <section v-else-if="activeTab === 'comments'" class="tab-panel">
-      <CommentPanel :entry="entry" @entry-updated="emit('entryUpdated', $event)" />
+      <CommentPanel
+        :entry="entry"
+        :highlight-comment-id="highlightCommentId"
+        @entry-updated="emit('entryUpdated', $event)"
+        @view-entry-comment="emit('viewEntryComment', $event)"
+      />
     </section>
 
     <section v-else-if="activeTab === 'context'" class="tab-panel">

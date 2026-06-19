@@ -15,7 +15,7 @@ import SettingsPage from "./pages/SettingsPage.vue";
 import StatsPage from "./pages/StatsPage.vue";
 import TasksPage from "./pages/TasksPage.vue";
 import TermsPage from "./pages/TermsPage.vue";
-import type { Member, ProjectConfig } from "./model/types";
+import type { Comment, Member, ProjectConfig } from "./model/types";
 import { setChangesProjectRoot } from "./services/changes";
 import { setCommentsProjectRoot } from "./services/comments";
 import { setEntriesProjectRoot } from "./services/entries";
@@ -58,6 +58,8 @@ type ProjectSection =
   | "import-export"
   | "settings"
   | "file-entry";
+
+type AssistTab = "terms" | "comments" | "context" | "history";
 
 interface ProjectSummary {
   id: string;
@@ -139,6 +141,10 @@ function parseRoute(path: string) {
   const section = (parts[2] ?? "overview") as ProjectSection;
   const fileId = parts[2] === "files" && parts[3] ? decodeURIComponent(parts[3]) : "";
   const entryIndex = Number(query.get("index") ?? "0") || 0;
+  const tab = query.get("tab") ?? "";
+  const assistTab = ["terms", "comments", "context", "history"].includes(tab)
+    ? (tab as AssistTab)
+    : undefined;
 
   return {
     page: "project" as const,
@@ -147,6 +153,8 @@ function parseRoute(path: string) {
     fileId,
     entryId: query.get("entry") ?? "",
     entryIndex,
+    assistTab,
+    commentId: query.get("comment") ?? "",
   };
 }
 
@@ -513,6 +521,30 @@ function handleOpenTaskTarget(fileId: string, entryId: string, entryIndex: numbe
   );
 }
 
+function handleOpenCommentTarget(comment: Comment) {
+  if (!currentProject.value) {
+    navigate("/projects");
+    return;
+  }
+
+  const fileId = comment.file_id || comment.entry_id.split(":")[0] || "";
+
+  if (!fileId || !comment.entry_id) {
+    appErrorMessage.value = "这条评论缺少词条位置，无法跳转。";
+    return;
+  }
+
+  const query = new URLSearchParams({
+    entry: comment.entry_id,
+    tab: "comments",
+    comment: comment.id,
+  });
+
+  navigate(
+    `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files/${encodeURIComponent(fileId)}?${query.toString()}`,
+  );
+}
+
 function handlePackedProjectDirty() {
   if (currentProject.value?.storageKind !== "packed") {
     return;
@@ -664,6 +696,9 @@ onBeforeUnmount(() => {
         :file-id="route.fileId"
         :target-entry-id="route.entryId"
         :target-entry-index="route.entryIndex"
+        :target-assist-tab="route.assistTab"
+        :target-comment-id="route.commentId"
+        @open-comment-target="handleOpenCommentTarget"
       />
 
       <TasksPage
@@ -680,6 +715,8 @@ onBeforeUnmount(() => {
       <CommentsPage
         v-else-if="route.section === 'comments'"
         :project="currentProject.config"
+        :members="currentProject.members"
+        @open-comment-target="handleOpenCommentTarget"
       />
 
       <StatsPage
