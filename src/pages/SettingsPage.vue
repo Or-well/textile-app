@@ -93,7 +93,7 @@ const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "progress", label: "进度权重" },
   { key: "export", label: "导出设置" },
   { key: "sync", label: "协作与备份" },
-  { key: "updates", label: "关于 / 更新" },
+  { key: "updates", label: "关于 Textile / 更新" },
   { key: "danger", label: "危险操作" },
 ];
 
@@ -481,7 +481,7 @@ async function handleExportProjectFile() {
   const root = props.projectRoot ?? localRoot.value;
 
   if (!root) {
-    errorMessage.value = "请先打开项目，再导出为项目文件。";
+    errorMessage.value = "请先打开项目，再导出为 Textile 项目文件。";
     return;
   }
 
@@ -493,10 +493,10 @@ async function handleExportProjectFile() {
     const result = await exportProjectPackage(root);
 
     downloadBlob(result.blob, result.fileName);
-    message.value = `已导出为项目文件：${result.fileName}`;
+    message.value = `已导出为 Textile 项目文件：${result.fileName}`;
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "导出项目文件失败。请稍后再试。";
+      error instanceof Error ? error.message : "导出 Textile 项目文件失败。请稍后再试。";
   } finally {
     isExportingProjectFile.value = false;
   }
@@ -1210,8 +1210,8 @@ onBeforeUnmount(() => {
 
             <div class="form-row">
               <div class="row-label">
-                <span>导出项目备份</span>
-                <p>导出为 .hproj 项目文件，方便备份或交给其他成员打开。</p>
+                <span>导出 Textile 项目备份</span>
+                <p>导出为 Textile 项目文件（.hproj），方便备份或交给其他成员打开。</p>
               </div>
               <div class="row-control button-control">
                 <button
@@ -1220,7 +1220,7 @@ onBeforeUnmount(() => {
                   :disabled="isExportingProjectFile"
                   @click="handleExportProjectFile"
                 >
-                  {{ isExportingProjectFile ? "正在导出..." : "导出项目备份" }}
+                  {{ isExportingProjectFile ? "正在导出..." : "导出 Textile 项目备份" }}
                 </button>
               </div>
             </div>
@@ -1229,8 +1229,8 @@ onBeforeUnmount(() => {
 
         <section v-else-if="activeSection === 'updates'" class="settings-card">
           <header class="card-header">
-            <h2>关于 / 更新</h2>
-            <p>检查程序本体版本。项目数据迁移和格式变更不在这里处理。</p>
+            <h2>关于 Textile / 更新</h2>
+            <p>检查 Textile 程序版本。项目数据迁移和格式变更不在这里处理。</p>
           </header>
 
           <div class="sync-status">
@@ -1241,8 +1241,8 @@ onBeforeUnmount(() => {
           <div class="form-stack">
             <div class="form-row">
               <div class="row-label">
-                <span>当前版本</span>
-                <p>来自应用包版本，不读取项目数据。</p>
+                <span>Textile 当前版本</span>
+                <p>来自 Textile 应用包版本，不读取项目数据。</p>
               </div>
               <div class="row-control readonly-control">
                 <strong>{{ currentProgramVersion }}</strong>

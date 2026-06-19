@@ -38,7 +38,7 @@ const hasRecentProjects = computed(() => props.recentProjects.length > 0);
 const projectFileInput = ref<HTMLInputElement | null>(null);
 
 function getSourceTypeText(sourceType: RecentProjectRecord["sourceType"]): string {
-  return sourceType === "folder" ? "文件夹" : ".hproj";
+  return sourceType === "folder" ? "Textile 项目文件夹" : "Textile 项目文件";
 }
 
 function handleSelectProjectFile(event: Event) {
@@ -60,9 +60,9 @@ function handleSelectProjectFile(event: Event) {
       <header class="start-header">
         <div>
           <p class="eyebrow">Textile</p>
-          <h1>项目启动中心</h1>
+          <h1>Textile 项目启动中心</h1>
           <p class="summary">
-            创建新项目，打开本地项目文件夹，或从最近项目继续工作。
+            在 Textile 中创建新项目，打开本地项目文件夹，或从最近项目继续工作。
           </p>
         </div>
 
@@ -79,15 +79,15 @@ function handleSelectProjectFile(event: Event) {
           </header>
 
           <LauncherActionCard
-            :title="isOpening ? '正在打开...' : '打开项目文件夹'"
-            description="选择包含项目配置的本地项目目录"
+            :title="isOpening ? '正在打开...' : '打开 Textile 项目文件夹'"
+            description="选择包含 Textile 项目配置的本地项目目录"
             :busy="isOpening"
             @activate="emit('openLocalProject')"
           />
 
           <LauncherActionCard
-            :title="isOpeningFile ? '正在导入...' : '导入 .hproj 项目'"
-            description="选择本地 .hproj 项目包并进入项目"
+            :title="isOpeningFile ? '正在导入...' : '导入 Textile 项目文件'"
+            description="选择本地 .hproj 项目文件并进入 Textile 项目"
             :busy="isOpeningFile"
             @activate="projectFileInput?.click()"
           />
@@ -101,12 +101,12 @@ function handleSelectProjectFile(event: Event) {
 
           <LauncherActionCard
             title="创建项目"
-            description="新建一个空的本地汉化项目"
+            description="新建一个空的 Textile 本地汉化项目"
             @activate="emit('createProject')"
           />
 
           <section v-if="currentProject" class="current-project">
-            <p class="eyebrow">当前已打开</p>
+            <p class="eyebrow">当前 Textile 项目</p>
             <h3>{{ currentProject.name }}</h3>
             <p>{{ currentProject.description }}</p>
             <dl>
@@ -128,7 +128,7 @@ function handleSelectProjectFile(event: Event) {
               type="button"
               @click="emit('enterCurrentProject')"
             >
-              进入工作台
+              进入 Textile 工作台
             </button>
           </section>
         </section>
@@ -136,7 +136,7 @@ function handleSelectProjectFile(event: Event) {
         <section class="recent-panel">
           <header class="panel-header">
             <div>
-              <p class="eyebrow">最近项目</p>
+              <p class="eyebrow">最近 Textile 项目</p>
               <h2>继续工作</h2>
             </div>
           </header>

@@ -472,12 +472,12 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
 
 async function handleExportProjectFile() {
   if (!canExportProjectBackup.value) {
-    errorMessage.value = "当前成员没有导出项目备份的权限。";
+    errorMessage.value = "当前成员没有导出 Textile 项目备份的权限。";
     return;
   }
 
   if (!projectRootForExport.value) {
-    errorMessage.value = "请先打开项目，再导出项目备份。";
+    errorMessage.value = "请先打开项目，再导出 Textile 项目备份。";
     return;
   }
 
@@ -489,10 +489,10 @@ async function handleExportProjectFile() {
     const result = await exportProjectPackage(projectRootForExport.value);
 
     downloadBlob(result.blob, result.fileName);
-    message.value = `已导出项目备份：${result.fileName}`;
+    message.value = `已导出 Textile 项目备份：${result.fileName}`;
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "导出项目备份失败。请稍后再试。";
+      error instanceof Error ? error.message : "导出 Textile 项目备份失败。请稍后再试。";
   } finally {
     isExportingProjectFile.value = false;
   }
@@ -530,7 +530,7 @@ watch(
     <section class="export-panel">
       <div class="page-header">
         <div>
-          <p class="eyebrow">导入 / 导出</p>
+          <p class="eyebrow">Textile 导入 / 导出</p>
           <h1>{{ projectName || "导出修改包" }}</h1>
         </div>
 
@@ -549,9 +549,9 @@ watch(
       <p v-if="message" class="message">{{ message }}</p>
 
       <section v-if="projectName" class="project-file-section">
-        <h2>导出项目备份</h2>
+        <h2>导出 Textile 项目备份</h2>
         <p class="section-note">
-          导出为 .hproj 项目文件，方便备份或在另一台设备打开。
+          导出为 Textile 项目文件（.hproj），方便备份或在另一台设备打开。
         </p>
         <button
           class="export-button"
@@ -559,7 +559,7 @@ watch(
           :disabled="isExportingProjectFile || !canExportProjectBackup"
           @click="handleExportProjectFile"
         >
-          {{ isExportingProjectFile ? "正在导出..." : "导出项目备份" }}
+          {{ isExportingProjectFile ? "正在导出..." : "导出 Textile 项目备份" }}
         </button>
       </section>
 

@@ -24,9 +24,9 @@ function handleSubmit() {
   <main class="login-page">
     <section class="login-panel">
       <header class="login-header">
-        <p class="eyebrow">项目登录</p>
+        <p class="eyebrow">Textile 项目登录</p>
         <h1>{{ props.projectName }}</h1>
-        <p>请输入项目成员名和密码。</p>
+        <p>请输入 Textile 项目成员名和密码。</p>
       </header>
 
       <form class="login-form" @submit.prevent="handleSubmit">

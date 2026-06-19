@@ -187,7 +187,7 @@ function updatePackedProjectNotice(project: OpenedProject | null) {
   }
 
   packedProjectNotice.value =
-    "当前打开的是 .hproj 项目文件。修改会先保存在本次工作内存中，完成后请导出为项目文件。";
+    "当前打开的是 Textile 项目文件（.hproj）。修改会先保存在本次工作内存中，完成后请导出为 Textile 项目文件。";
 }
 
 function configureProjectServices(project: OpenedProject) {
@@ -206,7 +206,7 @@ function configureProjectServices(project: OpenedProject) {
 
 function getProjectDisplayPath(project: OpenedProject): string {
   if (project.storageKind === "packed") {
-    return project.sourceFileName ?? project.root.sourceFileName ?? "项目文件";
+    return project.sourceFileName ?? project.root.sourceFileName ?? "Textile 项目文件";
   }
 
   return project.root.name || "本地项目文件夹";
@@ -342,7 +342,7 @@ async function handleOpenProjectFile(file: File) {
     if (error instanceof Error) {
       appErrorMessage.value = error.message;
     } else {
-      appErrorMessage.value = "导入 .hproj 项目失败。请确认选择的是项目文件。";
+      appErrorMessage.value = "导入 Textile 项目文件失败。请确认选择的是 .hproj 项目文件。";
     }
   } finally {
     isOpeningProjectFile.value = false;
@@ -355,7 +355,7 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
 
   try {
     if (record.sourceType === "hproj") {
-      appErrorMessage.value = "请重新选择这个 .hproj 项目文件。";
+      appErrorMessage.value = "请重新选择这个 Textile 项目文件（.hproj）。";
       return;
     }
 
@@ -602,7 +602,7 @@ function handlePackedProjectDirty() {
   }
 
   packedProjectNotice.value =
-    "这个 .hproj 项目文件已有未重新导出的修改。离开页面前请导出为项目文件。";
+    "这个 Textile 项目文件（.hproj）已有未重新导出的修改。离开页面前请导出为 Textile 项目文件。";
 }
 
 function handlePackedProjectExported() {
@@ -611,7 +611,7 @@ function handlePackedProjectExported() {
   }
 
   packedProjectNotice.value =
-    "已导出新的 .hproj 项目文件。之后的修改仍需要再次导出为项目文件。";
+    "已导出新的 Textile 项目文件（.hproj）。之后的修改仍需要再次导出为 Textile 项目文件。";
 }
 
 async function restoreProjectFromRoute() {
