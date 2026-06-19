@@ -407,6 +407,25 @@ async function writeFileEntries(fileId: string, entries: Entry[]): Promise<void>
   ];
 }
 
+export function parseEntriesFromSourceFile(
+  fileId: string,
+  fileName: string,
+  text: string,
+): Entry[] {
+  return parseSourceText(fileId, fileName, text).entries;
+}
+
+export async function writeEntriesForFile(
+  fileId: string,
+  entries: Entry[],
+): Promise<void> {
+  await writeFileEntries(fileId, entries);
+}
+
+export function clearCachedEntriesForFile(fileId: string): void {
+  cachedEntries = cachedEntries.filter((entry) => entry.file_id !== fileId);
+}
+
 async function listEntryChunkFiles(
   root: ProjectDirectoryHandle,
   fileId: string,
@@ -449,11 +468,11 @@ export async function createEntriesFromSourceFile(
   fileName: string,
   text: string,
 ): Promise<Entry[]> {
-  const result = parseSourceText(fileId, fileName, text);
+  const entries = parseEntriesFromSourceFile(fileId, fileName, text);
 
-  await writeFileEntries(fileId, result.entries);
+  await writeFileEntries(fileId, entries);
 
-  return result.entries;
+  return entries;
 }
 
 export async function updateEntriesFromSourceFile(

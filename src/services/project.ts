@@ -13,9 +13,11 @@ import {
   validateRolePermissionChange,
 } from "./permissions";
 import {
-  createEntriesFromSourceFile,
+  clearCachedEntriesForFile,
   importEntryTranslations,
+  parseEntriesFromSourceFile,
   updateEntriesFromSourceFile,
+  writeEntriesForFile,
 } from "./entries";
 import { createProjectRootFromPackage } from "./projectPackage";
 import {
@@ -396,32 +398,76 @@ export async function addSourceFileToProject(
   assertSupportedImportFile(file.name);
 
   const sourceText = await file.text();
-  const nextConfig = await createProjectFile(root, config, {
-    name: file.name,
-    sourceText,
-    type: getFileType(file.name),
-    folder,
-  });
-  const addedFile = nextConfig.files.find(
-    (projectFile) =>
-      !config.files.some((existingFile) => existingFile.id === projectFile.id),
-  );
-
-  if (!addedFile) {
-    throw new Error("源文件记录创建失败。");
-  }
-
-  const entries = await createEntriesFromSourceFile(
+  const name = normalizeProjectFileName(file.name);
+  const now = nowIso();
+  const addedFile: ProjectFile = {
+    id: uniqueFileId(config, name),
+    name,
+    source_path: `source/${name}`,
+    entries_path: "",
+    type: getFileType(name),
+    folder: folder?.trim() || undefined,
+    hidden: false,
+    locked: false,
+    updated_at: now,
+  };
+  addedFile.entries_path = `entries/${addedFile.id}`;
+  const entries = parseEntriesFromSourceFile(
     addedFile.id,
     file.name,
     sourceText,
   );
+  const nextConfig: ProjectConfig = {
+    ...config,
+    files: [...config.files, addedFile],
+  };
+
+  try {
+    await ensureDirectory(root, "source");
+    await writeTextFile(root, addedFile.source_path, sourceText);
+    await writeEntriesForFile(addedFile.id, entries);
+    await saveProject(root, nextConfig);
+  } catch (error) {
+    const residualPaths = await cleanupFailedSourceImport(root, addedFile);
+    clearCachedEntriesForFile(addedFile.id);
+    const reason = error instanceof Error ? error.message : "未知错误。";
+    const residualMessage =
+      residualPaths.length > 0
+        ? ` 已保留残留路径：${residualPaths.join("、")}。`
+        : "";
+
+    throw new Error(
+      `添加源文件失败，project.json 未更新。原因：${reason}${residualMessage}`,
+    );
+  }
 
   return {
     config: nextConfig,
     file: addedFile,
     entryCount: entries.length,
   };
+}
+
+async function cleanupFailedSourceImport(
+  root: ProjectDirectoryHandle,
+  file: ProjectFile,
+): Promise<string[]> {
+  const residualPaths: string[] = [];
+
+  for (const target of [
+    { path: file.entries_path, recursive: true },
+    { path: file.source_path, recursive: false },
+  ]) {
+    try {
+      if (await fileExists(root, target.path)) {
+        await deleteEntry(root, target.path, { recursive: target.recursive });
+      }
+    } catch {
+      residualPaths.push(target.path);
+    }
+  }
+
+  return residualPaths;
 }
 
 export async function updateSourceFileInProject(
@@ -537,15 +583,21 @@ export async function deleteProjectFile(
     files: config.files.filter((item) => item.id !== fileId),
   };
 
+  try {
+    if (await fileExists(root, file.entries_path)) {
+      await deleteEntry(root, file.entries_path, { recursive: true });
+    }
+
+    if (await fileExists(root, file.source_path)) {
+      await deleteEntry(root, file.source_path);
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "未知错误。";
+
+    throw new Error(`删除文件失败，project.json 未更新。原因：${reason}`);
+  }
+
   await saveProject(root, nextConfig);
-
-  if (await fileExists(root, file.entries_path)) {
-    await deleteEntry(root, file.entries_path, { recursive: true });
-  }
-
-  if (await fileExists(root, file.source_path)) {
-    await deleteEntry(root, file.source_path);
-  }
 
   return nextConfig;
 }

@@ -21,6 +21,7 @@ export interface PackedProjectInfo {
 }
 
 const PACKED_PROJECT_DIRECTORIES = [
+  "source",
   "entries",
   "terms",
   "tasks",

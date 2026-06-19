@@ -460,9 +460,17 @@ async function handleDelete(fileId: string) {
     return;
   }
 
-  setProject(await deleteProjectFile(props.projectRoot, currentProject.value, fileId));
-  noticeMessage.value = "文件已删除。";
-  await loadFileSummaries();
+  errorMessage.value = "";
+  noticeMessage.value = "";
+
+  try {
+    setProject(await deleteProjectFile(props.projectRoot, currentProject.value, fileId));
+    noticeMessage.value = "文件已删除。";
+    await loadFileSummaries();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "删除文件失败。请稍后再试。";
+  }
 }
 
 function handleHistory() {

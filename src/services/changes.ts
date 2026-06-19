@@ -167,6 +167,7 @@ export interface ApplyChangePackageOptions {
 }
 
 const CHANGE_PACKAGE_APP_VERSION = "0.2.0";
+const SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION = 1;
 const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_entries: 0,
   changed_comments: 0,
@@ -911,6 +912,186 @@ async function loadCurrentEntries(path: string): Promise<Entry[]> {
   return normalizeEntries(await readJsonl<Entry>(getProjectRoot(), path));
 }
 
+function getSupportedManifestSchemaVersion(
+  manifest: ChangePackageManifest,
+): number {
+  const version = Number(manifest.schema_version ?? 1);
+
+  return Number.isInteger(version) ? version : 0;
+}
+
+function assertChangePackageManifestForImport(
+  changePackage: ReadChangePackage,
+): void {
+  const manifest = changePackage.manifest;
+
+  if (!manifest || typeof manifest !== "object") {
+    throw new Error("修改包缺少 manifest，无法导入。");
+  }
+
+  if (!manifest.project_id) {
+    throw new Error("修改包 manifest 缺少 project_id，无法导入。");
+  }
+
+  if (!manifest.user_id) {
+    throw new Error("修改包 manifest 缺少 user_id，无法导入。");
+  }
+
+  const schemaVersion = getSupportedManifestSchemaVersion(manifest);
+
+  if (
+    schemaVersion < 1 ||
+    schemaVersion > SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `修改包 schema_version ${manifest.schema_version} 暂不支持，无法导入。`,
+    );
+  }
+}
+
+function assertPackagePath(
+  path: string,
+  prefix: string,
+  label: string,
+  extension?: string,
+): void {
+  if (!path.startsWith(prefix) || path.endsWith("/")) {
+    throw new Error(`${label}目标路径不正确：${path}`);
+  }
+
+  if (extension && !path.endsWith(extension)) {
+    throw new Error(`${label}目标路径格式不正确：${path}`);
+  }
+}
+
+async function assertJsonlTargetReadable<T>(
+  root: ProjectDirectoryHandle,
+  path: string,
+  label: string,
+  options: { mustExist?: boolean } = {},
+): Promise<void> {
+  try {
+    const exists = await fileExists(root, path);
+
+    if (!exists) {
+      if (options.mustExist) {
+        throw new Error("目标文件不存在。");
+      }
+
+      await fileExists(root, getDirectoryPath(path));
+      return;
+    }
+
+    await readJsonl<T>(root, path);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "无法读取。";
+
+    throw new Error(`${label}目标路径不可访问：${path}。${reason}`);
+  }
+}
+
+async function assertTextTargetReadable(
+  root: ProjectDirectoryHandle,
+  path: string,
+  label: string,
+): Promise<void> {
+  try {
+    const exists = await fileExists(root, path);
+
+    if (exists) {
+      await readTextFile(root, path);
+    } else {
+      await fileExists(root, getDirectoryPath(path));
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "无法读取。";
+
+    throw new Error(`${label}目标路径不可访问：${path}。${reason}`);
+  }
+}
+
+async function precheckChangePackageImport(
+  changePackage: ReadChangePackage,
+  validation: ChangePackageValidation,
+  conflicts: ChangeConflict[],
+): Promise<void> {
+  assertChangePackageManifestForImport(changePackage);
+
+  if (validation.projectMatch !== "matched") {
+    throw new Error("修改包不属于当前项目，无法导入。");
+  }
+
+  if (
+    changePackage.manifest.content_hash &&
+    !validation.calculatedContentHash
+  ) {
+    throw new Error("修改包内容校验尚未完成，无法导入。");
+  }
+
+  if (changePackage.signature && !validation.signatureStatus) {
+    throw new Error("修改包签名状态尚未计算，无法导入。");
+  }
+
+  if (!Array.isArray(conflicts)) {
+    throw new Error("修改包冲突列表尚未生成，无法导入。");
+  }
+
+  const root = getProjectRoot();
+
+  for (const path of Object.keys(changePackage.entries)) {
+    assertPackagePath(path, "entries/", "词条", ".jsonl");
+    await assertJsonlTargetReadable<Entry>(root, path, "词条", {
+      mustExist: true,
+    });
+  }
+
+  for (const path of Object.keys(changePackage.comments)) {
+    assertPackagePath(path, "comments/", "评论", ".jsonl");
+    await assertJsonlTargetReadable<Comment>(root, path, "评论");
+  }
+
+  for (const path of Object.keys(changePackage.terms)) {
+    assertPackagePath(path, "terms/", "术语", ".jsonl");
+    await assertJsonlTargetReadable<Term>(root, path, "术语");
+  }
+
+  for (const path of Object.keys(changePackage.tasks)) {
+    assertPackagePath(path, "tasks/", "任务", ".jsonl");
+    await assertJsonlTargetReadable<Task>(root, path, "任务");
+  }
+
+  for (const path of Object.keys(changePackage.contexts)) {
+    assertPackagePath(path, "contexts/", "上下文");
+    await assertTextTargetReadable(root, path, "上下文");
+  }
+
+  for (const path of Object.keys(changePackage.projectFiles)) {
+    if (path !== "project/project.json") {
+      throw new Error(`项目设置目标路径不正确：${path}`);
+    }
+
+    JSON.parse(changePackage.projectFiles[path]);
+    await assertTextTargetReadable(root, "project.json", "项目设置");
+  }
+
+  for (const path of Object.keys(changePackage.memberFiles)) {
+    if (path !== "members/members.json") {
+      throw new Error(`成员目标路径不正确：${path}`);
+    }
+
+    JSON.parse(changePackage.memberFiles[path]);
+    await assertTextTargetReadable(root, "members.json", "成员");
+  }
+
+  if (changePackage.events.length > 0) {
+    await assertJsonlTargetReadable<ProjectEvent>(
+      root,
+      "logs/events.jsonl",
+      "日志",
+    );
+  }
+}
+
 function mergeRowsById<T extends { id: string }>(
   existingRows: T[],
   packageRows: T[],
@@ -1169,6 +1350,8 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
 export async function validateChangePackage(
   changePackage: ReadChangePackage,
 ): Promise<ChangePackageValidation> {
+  assertChangePackageManifestForImport(changePackage);
+
   const root = getProjectRoot();
   const project = await readJson<ProjectConfig>(root, "project.json");
   const members = await loadProjectMembers(root);
@@ -1332,6 +1515,7 @@ export async function applyChangePackage(
   options: ApplyChangePackageOptions = {},
 ): Promise<ApplyChangePackageResult> {
   const validation = await validateChangePackage(changePackage);
+  assertChangePackageManifestForImport(changePackage);
 
   if (validation.projectMatch !== "matched") {
     throw new Error("修改包不属于当前项目，无法导入。");
@@ -1371,6 +1555,9 @@ export async function applyChangePackage(
 
   const root = getProjectRoot();
   const conflicts = await detectConflicts(changePackage);
+
+  await precheckChangePackageImport(changePackage, validation, conflicts);
+
   const unresolvedConflicts = conflicts.filter(
     (conflict) => !findResolution(resolutions, conflict.entryId),
   );
