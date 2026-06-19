@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
+import ImportFormatHelp from "./ImportFormatHelp.vue";
 
 const props = defineProps<{
   open: boolean;
@@ -39,6 +40,29 @@ key_apple,apple,苹果,"A common, round fruit produced by the tree Malus domesti
 key_pear,pear,梨
 key_peach,peach,桃子`;
 
+const importNotes = [
+  ".txt / .ks：按行生成词条。",
+  ".json / .jsonl / .csv：读取 key、source/original、target/translation、context 字段。",
+];
+
+const importSamples = [
+  {
+    title: "JSON 示例",
+    description: "数组格式，适合结构化词条。",
+    fileName: "textile-import-sample.json",
+    mimeType: "application/json;charset=utf-8",
+    sampleText: jsonSample,
+    previewable: true,
+  },
+  {
+    title: "CSV 示例",
+    description: "逗号分隔，支持注释说明行。",
+    fileName: "textile-import-sample.csv",
+    mimeType: "text/csv;charset=utf-8",
+    sampleText: csvSample,
+  },
+];
+
 watch(
   () => props.open,
   () => {
@@ -57,16 +81,6 @@ function handleSubmit() {
   }
 }
 
-function downloadSample(fileName: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = fileName;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 </script>
 
 <template>
@@ -87,69 +101,7 @@ function downloadSample(fileName: string, content: string, type: string) {
         />
       </label>
 
-      <section class="support-note" aria-label="导入格式说明">
-        <p>当前支持导入：</p>
-        <ul>
-          <li>.txt / .ks：按行生成词条。</li>
-          <li>
-            .json / .jsonl / .csv：读取 key、source/original、target/translation、context 字段。
-          </li>
-        </ul>
-
-        <div class="sample-grid">
-          <article class="sample-card">
-            <div>
-              <strong>JSON 示例</strong>
-              <span>数组格式，适合结构化词条。</span>
-            </div>
-            <div class="sample-card-actions">
-              <details>
-                <summary>查看示例</summary>
-                <pre><code>{{ jsonSample }}</code></pre>
-              </details>
-              <button
-                class="sample-button"
-                type="button"
-                @click="
-                  downloadSample(
-                    'textile-import-sample.json',
-                    jsonSample,
-                    'application/json;charset=utf-8',
-                  )
-                "
-              >
-                下载示例
-              </button>
-            </div>
-          </article>
-
-          <article class="sample-card">
-            <div>
-              <strong>CSV 示例</strong>
-              <span>逗号分隔，支持注释说明行。</span>
-            </div>
-            <div class="sample-card-actions">
-              <details>
-                <summary>查看示例</summary>
-                <pre><code>{{ csvSample }}</code></pre>
-              </details>
-              <button
-                class="sample-button"
-                type="button"
-                @click="
-                  downloadSample(
-                    'textile-import-sample.csv',
-                    csvSample,
-                    'text/csv;charset=utf-8',
-                  )
-                "
-              >
-                下载示例
-              </button>
-            </div>
-          </article>
-        </div>
-      </section>
+      <ImportFormatHelp :notes="importNotes" :samples="importSamples" />
 
       <ul v-if="selectedFiles.length" class="selected-list">
         <li v-for="file in selectedFiles" :key="file.name">
@@ -228,98 +180,6 @@ input[type="file"] {
   border-radius: 6px;
 }
 
-.support-note {
-  display: grid;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid #d7dde5;
-  border-radius: 6px;
-  background: #f8fafb;
-  font-size: 13px;
-}
-
-.support-note ul {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding-left: 20px;
-  line-height: 1.6;
-}
-
-.sample-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.sample-card {
-  display: grid;
-  align-content: start;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.sample-card strong,
-.sample-card span {
-  display: block;
-}
-
-.sample-card strong {
-  color: #111827;
-  font-size: 14px;
-}
-
-.sample-card span {
-  margin-top: 3px;
-  color: #5b6472;
-  line-height: 1.5;
-}
-
-.sample-card-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  align-items: start;
-}
-
-.sample-card-actions details {
-  min-width: 0;
-}
-
-.sample-card-actions summary,
-.sample-button {
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  width: 100%;
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-pre {
-  overflow: auto;
-  max-height: 180px;
-  margin: 8px 0 0;
-  padding: 10px;
-  border-radius: 6px;
-  background: #eef2f7;
-  color: #111827;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 .selected-list {
   display: grid;
   gap: 4px;
@@ -361,10 +221,4 @@ button:disabled {
   opacity: 0.62;
 }
 
-@media (max-width: 640px) {
-  .sample-grid,
-  .sample-card-actions {
-    grid-template-columns: 1fr;
-  }
-}
 </style>

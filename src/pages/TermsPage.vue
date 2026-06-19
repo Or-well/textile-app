@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import TermEditDialog from "../components/TermEditDialog.vue";
+import TermImportDialog from "../components/TermImportDialog.vue";
 import type { Term } from "../model/types";
 import {
   canCreateTerm,
@@ -48,11 +49,11 @@ const partOfSpeechFilter = ref("全部词性");
 const sortMode = ref<SortMode>("alphabetical");
 const editingTerm = ref<Term>();
 const isDialogOpen = ref(false);
+const isImportDialogOpen = ref(false);
 const isLoading = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
 const message = ref("");
-const fileInput = ref<HTMLInputElement | null>(null);
 const currentUser = ref(getCurrentUser());
 
 const canCreate = computed(() => canCreateTerm(currentUser.value));
@@ -237,18 +238,17 @@ function triggerImport() {
     return;
   }
 
-  fileInput.value?.click();
+  isImportDialogOpen.value = true;
 }
 
-async function handleImportTerms(event: Event) {
-  if (!canImport.value) {
-    return;
+function closeImportDialog() {
+  if (!isSaving.value) {
+    isImportDialogOpen.value = false;
   }
+}
 
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-
-  if (!file) {
+async function handleImportTerms(file: File) {
+  if (!canImport.value) {
     return;
   }
 
@@ -261,12 +261,12 @@ async function handleImportTerms(event: Event) {
 
     terms.value = await loadTerms();
     message.value = `已导入 ${result.total} 条术语，新增 ${result.added} 条，更新 ${result.updated} 条。`;
+    isImportDialogOpen.value = false;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "术语导入失败。";
   } finally {
     isSaving.value = false;
-    input.value = "";
   }
 }
 
@@ -324,7 +324,7 @@ onMounted(loadTermRows);
         placeholder="输入术语或翻译进行搜索"
       />
 
-      <div v-if="hasManagementActions" class="toolbar-actions">
+      <div v-if="canImport || canExport || canCreate" class="toolbar-actions">
         <button
           v-if="canImport"
           class="secondary-button"
@@ -334,14 +334,6 @@ onMounted(loadTermRows);
         >
           导入术语
         </button>
-        <input
-          v-if="canImport"
-          ref="fileInput"
-          class="hidden-file-input"
-          type="file"
-          accept=".jsonl,.json,application/json"
-          @change="handleImportTerms"
-        />
         <button
           v-if="canExport"
           class="secondary-button"
@@ -454,6 +446,13 @@ onMounted(loadTermRows);
       @cancel="closeDialog"
       @save="handleSaveTerm"
     />
+
+    <TermImportDialog
+      :open="isImportDialogOpen"
+      :is-submitting="isSaving"
+      @cancel="closeImportDialog"
+      @submit="handleImportTerms"
+    />
   </section>
 </template>
 
@@ -560,10 +559,6 @@ input:focus {
   outline: none;
   border-color: #2f6f73;
   box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.14);
-}
-
-.hidden-file-input {
-  display: none;
 }
 
 .primary-button,
