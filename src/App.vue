@@ -25,8 +25,9 @@ import { loginMember } from "./services/auth";
 import { getCurrentUser, setCurrentUser } from "./services/permissions";
 import {
   checkForUpdates,
+  disposeAppUpdate,
   reevaluatePendingAppUpdate,
-  setupPwaUpdateListener,
+  setupAppUpdate,
 } from "./services/appUpdate";
 import {
   openProject,
@@ -696,7 +697,7 @@ onMounted(() => {
   window.addEventListener("popstate", handlePopState);
   window.addEventListener("hproj-project-dirty", handlePackedProjectDirty);
   window.addEventListener("hproj-project-exported", handlePackedProjectExported);
-  setupPwaUpdateListener();
+  setupAppUpdate();
   void checkForUpdates();
 
   if (window.location.pathname === "/") {
@@ -707,6 +708,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposeAppUpdate();
   window.removeEventListener("popstate", handlePopState);
   window.removeEventListener("hproj-project-dirty", handlePackedProjectDirty);
   window.removeEventListener("hproj-project-exported", handlePackedProjectExported);

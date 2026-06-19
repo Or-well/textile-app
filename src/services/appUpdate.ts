@@ -1,50 +1,43 @@
 import packageInfo from "../../package.json";
-import { registerSW } from "virtual:pwa-register";
+import { subscribeAppOperations } from "./appOperation";
+import type {
+  AppPlatform,
+  AppUpdateState,
+  UpdateChannel,
+  UpdateCheckResult,
+  UpdateStatus,
+  VersionManifest,
+} from "./appUpdateTypes";
+import {
+  applyPwaUpdate,
+  canApplyPwaUpdate,
+  isPwaRuntime,
+  setupPwaUpdateAdapter,
+} from "./pwaUpdateAdapter";
+import {
+  checkTauriUpdate,
+  downloadTauriUpdate,
+  hasPendingTauriUpdate,
+  installAndRelaunchTauriUpdate,
+  isTauriRuntime,
+  isTauriUpdateDownloaded,
+} from "./tauriUpdateAdapter";
 import { getAppUpdateSafety } from "./updateSafety";
+import {
+  checkWebUpdate,
+  hasConfiguredWebDownloadUrl,
+  openWebDownloadPage,
+  WEB_VERSION_MANIFEST_URL,
+} from "./webUpdateAdapter";
 
-export type UpdateChannel = "stable" | "beta";
-export type AppPlatform = "web" | "pwa" | "desktop";
-export type UpdateStatus =
-  | "idle"
-  | "checking"
-  | "up-to-date"
-  | "update-available"
-  | "ready-to-refresh"
-  | "refreshing"
-  | "failed";
-
-export interface VersionManifest {
-  version: string;
-  latest_version: string;
-  build_id: string;
-  assets_hash: string;
-  schema_version: number;
-  release_date: string;
-  channel: UpdateChannel;
-  critical: boolean;
-  download_url: string;
-  notes: string[];
-}
-
-export interface UpdateCheckResult {
-  status: UpdateStatus;
-  currentVersion: string;
-  channel: UpdateChannel;
-  platform: AppPlatform;
-  sourceUrl: string;
-  latest?: VersionManifest;
-  checkedAt: string;
-  message: string;
-}
-
-export interface AppUpdateState extends UpdateCheckResult {
-  pwaRefreshReady: boolean;
-  canAutoRefresh: boolean;
-  refreshBlockedReason: string;
-  latestDownloadedAt: string;
-  dismissedVersion: string;
-  errorMessage: string;
-}
+export type {
+  AppPlatform,
+  AppUpdateState,
+  UpdateChannel,
+  UpdateCheckResult,
+  UpdateStatus,
+  VersionManifest,
+} from "./appUpdateTypes";
 
 type BroadcastMessage =
   | {
@@ -59,29 +52,32 @@ type BroadcastMessage =
 
 const UPDATE_CHANNEL_STORAGE_KEY = "textile.update.channel";
 const DISMISSED_VERSION_STORAGE_KEY = "textile.update.dismissed_version";
-const VERSION_MANIFEST_URL = "/version.json";
-const UNCONFIGURED_DOWNLOAD_URL = "";
-const UPDATE_BROADCAST_CHANNEL = "textile.update.broadcast.v1";
-const SERVICE_WORKER_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const UPDATE_BROADCAST_CHANNEL = "textile.update.broadcast.v2";
+const DESKTOP_UPDATE_SOURCE = "Tauri Updater";
 
 const listeners = new Set<(state: AppUpdateState) => void>();
 const sourceId = createSourceId();
-let pwaSetupDone = false;
+
+let setupDone = false;
 let isApplyingUpdate = false;
-let reloadPwa: ((reloadPage?: boolean) => Promise<void>) | null = null;
 let updateBroadcast: BroadcastChannel | null = null;
+let unsubscribeOperations: (() => void) | null = null;
 
 let state: AppUpdateState = {
   status: "idle",
   currentVersion: normalizeVersion(packageInfo.version),
   channel: readUpdateChannel(),
   platform: detectPlatform(),
-  sourceUrl: VERSION_MANIFEST_URL,
+  sourceUrl: getSourceUrl(detectPlatform()),
   checkedAt: "",
   message: "尚未检查更新。",
   pwaRefreshReady: false,
+  desktopUpdateDownloaded: false,
   canAutoRefresh: true,
   refreshBlockedReason: "",
+  downloadProgress: 0,
+  downloadedBytes: 0,
+  totalBytes: 0,
   latestDownloadedAt: "",
   dismissedVersion: readDismissedVersion(),
   errorMessage: "",
@@ -100,6 +96,11 @@ export function setUpdateChannel(channel: UpdateChannel): void {
     ...state,
     channel,
     status: "idle",
+    latest: undefined,
+    desktopUpdateDownloaded: false,
+    downloadProgress: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
     message: "更新通道已切换，请重新检查更新。",
     errorMessage: "",
   };
@@ -112,7 +113,7 @@ export function getAppUpdateState(): AppUpdateState {
 }
 
 export function subscribeAppUpdate(
-  listener: (state: AppUpdateState) => void,
+  listener: (nextState: AppUpdateState) => void,
 ): () => void {
   listeners.add(listener);
   listener(cloneState(state));
@@ -122,10 +123,61 @@ export function subscribeAppUpdate(
   };
 }
 
+export function setupAppUpdate(): void {
+  if (setupDone || typeof window === "undefined") {
+    return;
+  }
+
+  setupDone = true;
+  state = {
+    ...state,
+    platform: detectPlatform(),
+    sourceUrl: getSourceUrl(detectPlatform()),
+  };
+  unsubscribeOperations = subscribeAppOperations(() => {
+    reevaluatePendingAppUpdate();
+  });
+
+  if (state.platform === "desktop") {
+    notifyListeners();
+    return;
+  }
+
+  setupBroadcastChannel();
+  setupPwaUpdateAdapter({
+    onRefreshReady() {
+      markPwaRefreshReady();
+    },
+    onOfflineReady() {
+      if (state.status === "idle") {
+        state = {
+          ...state,
+          message: "Textile 已可离线使用。",
+        };
+        notifyListeners();
+      }
+    },
+  });
+}
+
+export function disposeAppUpdate(): void {
+  unsubscribeOperations?.();
+  unsubscribeOperations = null;
+  updateBroadcast?.close();
+  updateBroadcast = null;
+  setupDone = false;
+}
+
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
   state = {
     ...state,
     status: "checking",
+    platform: detectPlatform(),
+    sourceUrl: getSourceUrl(detectPlatform()),
+    desktopUpdateDownloaded: false,
+    downloadProgress: 0,
+    downloadedBytes: 0,
+    totalBytes: 0,
     message: "正在检查更新...",
     errorMessage: "",
   };
@@ -134,51 +186,46 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
   const checkedAt = new Date().toISOString();
 
   try {
-    const manifest = await fetchVersionManifest();
-    const channelMatches = isManifestForChannel(manifest, state.channel);
-
-    if (!channelMatches) {
-      const result = buildResult({
-        status: "up-to-date",
-        latest: manifest,
+    if (state.platform === "desktop") {
+      const result = await checkTauriUpdate(state.channel);
+      return commitCheckResult(
+        result.available ? "update-available" : "up-to-date",
+        result.manifest,
         checkedAt,
-        message: `当前 ${getChannelLabel(state.channel)} 通道没有可用更新。`,
-      });
-
-      state = { ...state, ...result, errorMessage: "" };
-      notifyListeners();
-      return result;
+        result.available
+          ? `发现桌面新版本 v${result.manifest?.latest_version ?? ""}。`
+          : "当前已经是最新桌面版本。",
+      );
     }
 
-    const hasNewVersion =
-      compareVersions(manifest.latest_version, state.currentVersion) > 0 ||
-      isDifferentBuild(manifest, state.latest);
-    const result = buildResult({
-      status: hasNewVersion ? "update-available" : "up-to-date",
-      latest: manifest,
-      checkedAt,
-      message: hasNewVersion
-        ? `发现新版本 v${normalizeVersion(manifest.latest_version)}。`
-        : "当前已经是最新版本。",
-    });
+    const result = await checkWebUpdate(
+      state.currentVersion,
+      state.channel,
+      state.latest,
+    );
+    const channelMatches =
+      state.channel === "beta"
+        ? result.manifest.channel === "beta" ||
+          result.manifest.channel === "stable"
+        : result.manifest.channel === "stable";
 
-    state = { ...state, ...result, errorMessage: "" };
-    notifyListeners();
-    return result;
+    return commitCheckResult(
+      result.available ? "update-available" : "up-to-date",
+      result.manifest,
+      checkedAt,
+      !channelMatches
+        ? `当前 ${getChannelLabel(state.channel)} 通道没有可用更新。`
+        : result.available
+          ? `发现新版本 v${result.manifest.latest_version}。`
+          : "当前已经是最新版本。",
+    );
   } catch (error) {
-    const errorMessage =
+    return commitFailure(
       error instanceof Error
         ? error.message
-        : "检查更新失败。请稍后重试，或联系负责人确认发布地址。";
-    const result = buildResult({
-      status: "failed",
+        : "检查更新失败。请稍后重试，或联系负责人确认发布配置。",
       checkedAt,
-      message: errorMessage,
-    });
-
-    state = { ...state, ...result, errorMessage };
-    notifyListeners();
-    return result;
+    );
   }
 }
 
@@ -191,130 +238,236 @@ export function dismissUpdate(): void {
     ...state,
     dismissedVersion,
   };
-
   writeStorage(DISMISSED_VERSION_STORAGE_KEY, dismissedVersion);
   notifyListeners();
 }
 
 export function hasConfiguredDownloadUrl(downloadUrl?: string): boolean {
-  return Boolean(getSafeDownloadUrl(downloadUrl));
+  return hasConfiguredWebDownloadUrl(downloadUrl);
 }
 
 export function openDownloadPage(downloadUrl?: string): boolean {
-  if (typeof window === "undefined") {
+  if (state.platform === "desktop") {
     return false;
   }
 
-  const safeUrl = getSafeDownloadUrl(downloadUrl);
-  if (!safeUrl) {
-    return false;
-  }
-
-  window.open(safeUrl, "_blank", "noopener,noreferrer");
-  return true;
+  return openWebDownloadPage(downloadUrl);
 }
 
 export async function installUpdate(): Promise<UpdateCheckResult> {
-  if (state.pwaRefreshReady && reloadPwa) {
-    await applyReadyUpdate();
-    return buildResult({
-      status: "refreshing",
-      latest: state.latest,
-      checkedAt: new Date().toISOString(),
-      message: "正在刷新到新版 Textile...",
-    });
+  if (state.platform === "desktop") {
+    return handleDesktopUpdateAction();
   }
 
-  const openedDownloadPage = openDownloadPage(state.latest?.download_url);
-
-  return buildResult({
-    status: state.status,
-    latest: state.latest,
-    checkedAt: state.checkedAt || new Date().toISOString(),
-    message: openedDownloadPage
-      ? state.status === "update-available"
-        ? "已打开下载页。Web / PWA 版本也会在后台准备可刷新更新。"
-        : "已打开下载页。当前还没有可直接刷新的新版。"
-      : "未配置发布地址。请联系负责人配置发布地址。",
-  });
-}
-
-export function setupPwaUpdateListener(): void {
-  if (pwaSetupDone || typeof window === "undefined") {
-    return;
+  if (state.pwaRefreshReady && canApplyPwaUpdate()) {
+    await applyReadyPwaUpdate();
+    return buildResult(
+      "refreshing",
+      state.latest,
+      new Date().toISOString(),
+      "正在刷新到新版 Textile...",
+    );
   }
 
-  pwaSetupDone = true;
-  setupBroadcastChannel();
-  reloadPwa = registerSW({
-    immediate: true,
-    onNeedRefresh() {
-      markPwaRefreshReady("Textile 新版本已准备好，刷新后即可使用。");
-    },
-    onOfflineReady() {
-      if (state.status === "idle") {
-        state = {
-          ...state,
-          message: "Textile 已可离线使用。",
-        };
-        notifyListeners();
-      }
-    },
-    onRegistered(registration: ServiceWorkerRegistration | undefined) {
-      if (!registration) {
-        return;
-      }
+  const openedDownloadPage = openWebDownloadPage(state.latest?.download_url);
 
-      window.setInterval(() => {
-        if (navigator.onLine) {
-          void registration.update();
-        }
-      }, SERVICE_WORKER_CHECK_INTERVAL_MS);
-    },
-  });
+  return buildResult(
+    state.status,
+    state.latest,
+    state.checkedAt || new Date().toISOString(),
+    openedDownloadPage
+      ? "已打开正式下载页。"
+      : "当前 Web 版本不支持自动安装，且未配置正式下载地址。",
+  );
 }
 
 export function reevaluatePendingAppUpdate(): void {
-  if (!state.pwaRefreshReady) {
-    return;
+  syncSafetyState();
+
+  if (
+    state.platform === "desktop" &&
+    state.desktopUpdateDownloaded &&
+    state.status === "waiting-for-safe-state" &&
+    state.canAutoRefresh
+  ) {
+    state = {
+      ...state,
+      status: "downloaded",
+      message: "桌面更新已下载，可以安装并重启。",
+    };
+  }
+
+  notifyListeners();
+
+  if (state.pwaRefreshReady) {
+    void applyReadyPwaUpdateWhenSafe();
+  }
+}
+
+function commitCheckResult(
+  status: UpdateStatus,
+  latest: VersionManifest | undefined,
+  checkedAt: string,
+  message: string,
+): UpdateCheckResult {
+  const result = buildResult(status, latest, checkedAt, message);
+
+  state = {
+    ...state,
+    ...result,
+    dismissedVersion:
+      latest?.latest_version === state.dismissedVersion
+        ? state.dismissedVersion
+        : "",
+    errorMessage: "",
+  };
+  notifyListeners();
+  return result;
+}
+
+function commitFailure(message: string, checkedAt = new Date().toISOString()): UpdateCheckResult {
+  const result = buildResult("failed", state.latest, checkedAt, message);
+
+  state = {
+    ...state,
+    ...result,
+    errorMessage: message,
+  };
+  notifyListeners();
+  return result;
+}
+
+async function handleDesktopUpdateAction(): Promise<UpdateCheckResult> {
+  if (!hasPendingTauriUpdate()) {
+    return commitFailure("没有待处理的桌面更新，请先检查更新。");
+  }
+
+  if (!isTauriUpdateDownloaded()) {
+    state = {
+      ...state,
+      status: "downloading",
+      downloadProgress: 0,
+      downloadedBytes: 0,
+      totalBytes: 0,
+      message: "正在下载桌面更新...",
+      errorMessage: "",
+    };
+    notifyListeners();
+
+    try {
+      await downloadTauriUpdate((progress) => {
+        state = {
+          ...state,
+          downloadProgress: progress.progress,
+          downloadedBytes: progress.downloadedBytes,
+          totalBytes: progress.totalBytes,
+        };
+        notifyListeners();
+      });
+    } catch (error) {
+      return commitFailure(
+        error instanceof Error ? error.message : "桌面更新下载失败。",
+      );
+    }
+
+    syncSafetyState();
+    state = {
+      ...state,
+      status: state.canAutoRefresh ? "downloaded" : "waiting-for-safe-state",
+      desktopUpdateDownloaded: true,
+      downloadProgress: 100,
+      latestDownloadedAt: new Date().toISOString(),
+      message: state.canAutoRefresh
+        ? "桌面更新已下载，可以安装并重启。"
+        : state.refreshBlockedReason,
+    };
+    notifyListeners();
+    return buildResult(
+      state.status,
+      state.latest,
+      state.checkedAt,
+      state.message,
+    );
   }
 
   syncSafetyState();
+
+  if (!state.canAutoRefresh) {
+    state = {
+      ...state,
+      status: "waiting-for-safe-state",
+      message: state.refreshBlockedReason,
+    };
+    notifyListeners();
+    return buildResult(
+      state.status,
+      state.latest,
+      state.checkedAt,
+      state.message,
+    );
+  }
+
+  state = {
+    ...state,
+    status: "installing",
+    message: "正在安装桌面更新，请勿关闭 Textile...",
+    errorMessage: "",
+  };
   notifyListeners();
-  void applyReadyUpdateWhenSafe();
+
+  try {
+    await installAndRelaunchTauriUpdate();
+    state = {
+      ...state,
+      status: "restarting",
+      message: "更新安装完成，正在重新启动 Textile...",
+    };
+    notifyListeners();
+    return buildResult(
+      "restarting",
+      state.latest,
+      state.checkedAt,
+      state.message,
+    );
+  } catch (error) {
+    return commitFailure(
+      error instanceof Error ? error.message : "桌面更新安装失败。",
+    );
+  }
 }
 
-function markPwaRefreshReady(message: string): void {
+function markPwaRefreshReady(): void {
   syncSafetyState();
   state = {
     ...state,
     status: "ready-to-refresh",
-    platform: detectPlatform(),
     pwaRefreshReady: true,
     latestDownloadedAt: new Date().toISOString(),
     dismissedVersion: "",
-    message,
+    message: state.canAutoRefresh
+      ? "Textile 新版本已准备好，刷新后即可使用。"
+      : state.refreshBlockedReason,
     errorMessage: "",
   };
   writeStorage(DISMISSED_VERSION_STORAGE_KEY, "");
   notifyListeners();
-  void applyReadyUpdateWhenSafe();
+  void applyReadyPwaUpdateWhenSafe();
 }
 
-async function applyReadyUpdateWhenSafe(): Promise<void> {
-  if (!state.pwaRefreshReady || !state.canAutoRefresh || !reloadPwa) {
+async function applyReadyPwaUpdateWhenSafe(): Promise<void> {
+  if (
+    !state.pwaRefreshReady ||
+    !state.canAutoRefresh ||
+    state.dismissedVersion === "pwa-refresh"
+  ) {
     return;
   }
 
-  if (state.dismissedVersion === "pwa-refresh") {
-    return;
-  }
-
-  await applyReadyUpdate();
+  await applyReadyPwaUpdate();
 }
 
-async function applyReadyUpdate(): Promise<void> {
-  if (isApplyingUpdate || !reloadPwa) {
+async function applyReadyPwaUpdate(): Promise<void> {
+  if (isApplyingUpdate || !canApplyPwaUpdate()) {
     return;
   }
 
@@ -327,17 +480,27 @@ async function applyReadyUpdate(): Promise<void> {
   };
   notifyListeners();
   broadcastMessage({ type: "refreshing", sourceId });
-  await reloadPwa(true);
+
+  try {
+    await applyPwaUpdate();
+  } finally {
+    isApplyingUpdate = false;
+  }
 }
 
 function syncSafetyState(): void {
   const safety = getAppUpdateSafety();
+  const updateWaiting =
+    state.pwaRefreshReady ||
+    state.desktopUpdateDownloaded ||
+    state.status === "waiting-for-safe-state";
+
   state = {
     ...state,
     canAutoRefresh: safety.canAutoRefresh,
     refreshBlockedReason: safety.canAutoRefresh ? "" : safety.reason,
     message:
-      state.pwaRefreshReady && !safety.canAutoRefresh
+      updateWaiting && !safety.canAutoRefresh
         ? safety.reason
         : state.message,
   };
@@ -356,8 +519,8 @@ function setupBroadcastChannel(): void {
       return;
     }
 
-    if (message.type === "refreshing" && state.pwaRefreshReady && reloadPwa) {
-      void applyReadyUpdate();
+    if (message.type === "refreshing" && state.pwaRefreshReady) {
+      void applyReadyPwaUpdate();
       return;
     }
 
@@ -371,7 +534,7 @@ function mergeBroadcastState(nextState: AppUpdateState): void {
   const shouldAdoptRefreshReady =
     nextState.pwaRefreshReady && !state.pwaRefreshReady;
   const shouldAdoptNewerCheck =
-    nextState.checkedAt && nextState.checkedAt > state.checkedAt;
+    Boolean(nextState.checkedAt) && nextState.checkedAt > state.checkedAt;
 
   if (!shouldAdoptRefreshReady && !shouldAdoptNewerCheck) {
     return;
@@ -389,178 +552,54 @@ function mergeBroadcastState(nextState: AppUpdateState): void {
   };
   syncSafetyState();
   notifyListeners({ broadcast: false });
-  void applyReadyUpdateWhenSafe();
+  void applyReadyPwaUpdateWhenSafe();
 }
 
-function buildResult(input: {
-  status: UpdateStatus;
-  latest?: VersionManifest;
-  checkedAt: string;
-  message: string;
-}): UpdateCheckResult {
+function buildResult(
+  status: UpdateStatus,
+  latest: VersionManifest | undefined,
+  checkedAt: string,
+  message: string,
+): UpdateCheckResult {
   return {
-    status: input.status,
+    status,
     currentVersion: state.currentVersion,
     channel: state.channel,
     platform: state.platform,
-    sourceUrl: VERSION_MANIFEST_URL,
-    latest: input.latest,
-    checkedAt: input.checkedAt,
-    message: input.message,
+    sourceUrl: state.sourceUrl,
+    latest,
+    checkedAt,
+    message,
   };
 }
 
-async function fetchVersionManifest(): Promise<VersionManifest> {
-  const response = await fetch(`${VERSION_MANIFEST_URL}?t=${Date.now()}`, {
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error("无法读取版本信息。请稍后重试，或联系负责人确认发布地址。");
+function detectPlatform(): AppPlatform {
+  if (isTauriRuntime()) {
+    return "desktop";
   }
 
-  const data = (await response.json()) as Partial<VersionManifest>;
-  return validateVersionManifest(data);
+  return isPwaRuntime() ? "pwa" : "web";
 }
 
-function validateVersionManifest(data: Partial<VersionManifest>): VersionManifest {
-  const manifestVersion = data.latest_version ?? data.version;
-
-  if (
-    !manifestVersion ||
-    !data.release_date ||
-    !isUpdateChannel(data.channel) ||
-    !Array.isArray(data.notes)
-  ) {
-    throw new Error("版本信息格式有问题，无法判断是否需要更新。");
-  }
-
-  const normalizedVersion = normalizeVersion(manifestVersion);
-
-  return {
-    version: normalizeVersion(data.version ?? normalizedVersion),
-    latest_version: normalizedVersion,
-    build_id: typeof data.build_id === "string" ? data.build_id : normalizedVersion,
-    assets_hash:
-      typeof data.assets_hash === "string" ? data.assets_hash : normalizedVersion,
-    schema_version:
-      typeof data.schema_version === "number" && Number.isFinite(data.schema_version)
-        ? data.schema_version
-        : 1,
-    release_date: data.release_date,
-    channel: data.channel,
-    critical: data.critical === true,
-    download_url: getSafeDownloadUrl(data.download_url),
-    notes: data.notes.filter((note): note is string => typeof note === "string"),
-  };
+function getSourceUrl(platform: AppPlatform): string {
+  return platform === "desktop" ? DESKTOP_UPDATE_SOURCE : WEB_VERSION_MANIFEST_URL;
 }
 
-function isManifestForChannel(
-  manifest: VersionManifest,
-  channel: UpdateChannel,
-): boolean {
-  if (channel === "beta") {
-    return manifest.channel === "beta" || manifest.channel === "stable";
-  }
-
-  return manifest.channel === "stable";
-}
-
-function isDifferentBuild(
-  nextManifest: VersionManifest,
-  previousManifest?: VersionManifest,
-): boolean {
-  if (!previousManifest) {
-    return false;
-  }
-
-  return (
-    nextManifest.latest_version === state.currentVersion &&
-    previousManifest.build_id !== nextManifest.build_id
-  );
-}
-
-function compareVersions(left: string, right: string): number {
-  const leftParts = toVersionParts(left);
-  const rightParts = toVersionParts(right);
-  const maxLength = Math.max(leftParts.length, rightParts.length);
-
-  for (let index = 0; index < maxLength; index += 1) {
-    const leftValue = leftParts[index] ?? 0;
-    const rightValue = rightParts[index] ?? 0;
-
-    if (leftValue > rightValue) {
-      return 1;
-    }
-
-    if (leftValue < rightValue) {
-      return -1;
-    }
-  }
-
-  return 0;
-}
-
-function toVersionParts(version: string): number[] {
-  return normalizeVersion(version)
-    .split(/[.-]/)
-    .map((part) => Number.parseInt(part, 10))
-    .map((part) => (Number.isFinite(part) ? part : 0));
+function getChannelLabel(channel: UpdateChannel): string {
+  return channel === "beta" ? "beta" : "stable";
 }
 
 function normalizeVersion(version: string): string {
   return version.trim().replace(/^v/i, "");
 }
 
-function detectPlatform(): AppPlatform {
-  if (typeof window === "undefined") {
-    return "web";
-  }
-
-  if ("__TEXTILE_DESKTOP_UPDATER__" in window) {
-    return "desktop";
-  }
-
-  const isStandalone =
-    window.matchMedia("(display-mode: standalone)").matches ||
-    Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
-
-  return isStandalone ? "pwa" : "web";
-}
-
 function readUpdateChannel(): UpdateChannel {
   const storedValue = readStorage(UPDATE_CHANNEL_STORAGE_KEY);
-  return isUpdateChannel(storedValue) ? storedValue : "stable";
+  return storedValue === "beta" ? "beta" : "stable";
 }
 
 function readDismissedVersion(): string {
   return readStorage(DISMISSED_VERSION_STORAGE_KEY) ?? "";
-}
-
-function isUpdateChannel(value: unknown): value is UpdateChannel {
-  return value === "stable" || value === "beta";
-}
-
-function getSafeDownloadUrl(url?: string): string {
-  if (!url) {
-    return UNCONFIGURED_DOWNLOAD_URL;
-  }
-
-  try {
-    const parsedUrl = new URL(url);
-    const isExampleUrl = parsedUrl.hostname === "github.com" &&
-      parsedUrl.pathname.startsWith("/example/");
-
-    return parsedUrl.protocol === "https:" && !isExampleUrl
-      ? parsedUrl.toString()
-      : UNCONFIGURED_DOWNLOAD_URL;
-  } catch {
-    return UNCONFIGURED_DOWNLOAD_URL;
-  }
-}
-
-function getChannelLabel(channel: UpdateChannel): string {
-  return channel === "beta" ? "beta" : "stable";
 }
 
 function readStorage(key: string): string | null {
@@ -587,7 +626,7 @@ function writeStorage(key: string, value: string): void {
       window.localStorage.removeItem(key);
     }
   } catch {
-    // localStorage may be unavailable in private windows. Update checks still work.
+    // Update checks continue to work when localStorage is unavailable.
   }
 }
 
@@ -607,11 +646,9 @@ function notifyListeners(options: { broadcast?: boolean } = {}): void {
   syncSafetyState();
   const snapshot = cloneState(state);
 
-  listeners.forEach((listener) => {
-    listener(snapshot);
-  });
+  listeners.forEach((listener) => listener(snapshot));
 
-  if (options.broadcast !== false) {
+  if (options.broadcast !== false && state.platform !== "desktop") {
     broadcastMessage({ type: "state", sourceId, state: snapshot });
   }
 }
@@ -620,10 +657,11 @@ function broadcastMessage(message: BroadcastMessage): void {
   try {
     updateBroadcast?.postMessage(message);
   } catch {
-    // BroadcastChannel is best-effort. A single tab can still update safely.
+    // Cross-tab synchronization is best-effort.
   }
 }
 
 function createSourceId(): string {
   return `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
+

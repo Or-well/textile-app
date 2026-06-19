@@ -31,7 +31,6 @@ export interface UpdateSafetyState {
 
 const SAFE_PROJECT_SECTIONS = new Set<UpdateSafetySection>([
   "overview",
-  "comments",
   "stats",
 ]);
 
@@ -50,6 +49,19 @@ export function getAppUpdateSafety(): UpdateSafetyState {
 }
 
 function evaluateUpdateSafety(input: UpdateSafetyInput): UpdateSafetyState {
+  const activeOperations = getActiveAppOperations();
+
+  if (activeOperations.length > 0) {
+    const operationLabels = Array.from(
+      new Set(activeOperations.map((operation) => operation.label)),
+    ).join("、");
+
+    return {
+      canAutoRefresh: false,
+      reason: `Textile 正在执行${operationLabels}，完成后才能安装更新。`,
+    };
+  }
+
   if (input.isBusy) {
     return {
       canAutoRefresh: false,
@@ -83,3 +95,4 @@ function evaluateUpdateSafety(input: UpdateSafetyInput): UpdateSafetyState {
     reason: "Textile 新版本已准备好。完成当前编辑或导入导出后，刷新即可使用新版。",
   };
 }
+import { getActiveAppOperations } from "./appOperation";

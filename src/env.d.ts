@@ -13,7 +13,3 @@ declare module "virtual:pwa-register" {
     options?: RegisterSWOptions,
   ): (reloadPage?: boolean) => Promise<void>;
 }
-
-interface Window {
-  __TEXTILE_DESKTOP_UPDATER__?: unknown;
-}

@@ -192,7 +192,7 @@ const updatePlatformText = computed(() => {
   const labels = {
     web: "Web",
     pwa: "PWA",
-    desktop: "桌面版占位",
+    desktop: "Tauri 桌面版",
   } satisfies Record<AppUpdateState["platform"], string>;
 
   return labels[updateState.value.platform];
@@ -217,13 +217,46 @@ const latestBuildText = computed(() =>
   updateState.value.latest?.build_id ? updateState.value.latest.build_id : "尚未获取",
 );
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
+const isDesktopUpdate = computed(() => updateState.value.platform === "desktop");
 const downloadUrlConfigured = computed(() =>
   hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
 );
 const downloadUrlText = computed(() =>
-  downloadUrlConfigured.value
+  isDesktopUpdate.value
+    ? "由 Tauri Updater 配置"
+    : downloadUrlConfigured.value
     ? updateState.value.latest?.download_url
     : "未配置发布地址",
+);
+const desktopUpdateActionLabel = computed(() => {
+  if (updateState.value.status === "downloading") {
+    return `下载中 ${updateState.value.downloadProgress}%`;
+  }
+
+  if (updateState.value.status === "installing") {
+    return "正在安装...";
+  }
+
+  if (updateState.value.status === "restarting") {
+    return "正在重启...";
+  }
+
+  if (updateState.value.desktopUpdateDownloaded) {
+    return updateState.value.canAutoRefresh
+      ? "安装并重启"
+      : "等待当前操作完成";
+  }
+
+  return "下载更新";
+});
+const desktopUpdateActionDisabled = computed(
+  () =>
+    !updateState.value.latest ||
+    ["downloading", "installing", "restarting"].includes(
+      updateState.value.status,
+    ) ||
+    (updateState.value.desktopUpdateDownloaded &&
+      !updateState.value.canAutoRefresh),
 );
 
 function applyProject(project: ProjectConfig): void {
@@ -558,8 +591,14 @@ function handleOpenDownloadPage() {
 
 async function handleInstallProgramUpdate() {
   const result = await installUpdate();
-  message.value = result.message;
-  errorMessage.value = "";
+
+  if (result.status === "failed") {
+    errorMessage.value = result.message;
+    message.value = "";
+  } else {
+    message.value = result.message;
+    errorMessage.value = "";
+  }
 }
 
 function handleDangerAction(actionName: string) {
@@ -1290,7 +1329,9 @@ onBeforeUnmount(() => {
             <div class="form-row">
               <div class="row-label">
                 <span>手动检查</span>
-                <p>读取 Textile 版本清单；PWA 新版下载完成后可直接刷新使用。</p>
+                <p>
+                  桌面版通过 Tauri 验签更新；PWA 新版下载完成后可直接刷新使用。
+                </p>
               </div>
               <div class="row-control button-control">
                 <button
@@ -1302,6 +1343,16 @@ onBeforeUnmount(() => {
                   {{ isCheckingUpdate ? "正在检查..." : "检查更新" }}
                 </button>
                 <button
+                  v-if="isDesktopUpdate"
+                  class="primary-button"
+                  type="button"
+                  :disabled="desktopUpdateActionDisabled"
+                  @click="handleInstallProgramUpdate"
+                >
+                  {{ desktopUpdateActionLabel }}
+                </button>
+                <button
+                  v-else
                   class="primary-button"
                   type="button"
                   :disabled="!downloadUrlConfigured"
@@ -1331,6 +1382,12 @@ onBeforeUnmount(() => {
                 <span>最新版本：{{ latestProgramVersion }}</span>
                 <span>构建编号：{{ latestBuildText }}</span>
                 <span>发布地址：{{ downloadUrlText }}</span>
+                <span v-if="isDesktopUpdate && updateState.status === 'downloading'">
+                  下载进度：{{ updateState.downloadProgress }}%
+                </span>
+                <span v-if="isDesktopUpdate && updateState.desktopUpdateDownloaded">
+                  桌面更新已下载，等待安全时机安装。
+                </span>
                 <span v-if="updateState.latest">
                   发布日期：{{ updateState.latest.release_date }} ·
                   通道：{{ updateState.latest.channel }}
@@ -1354,7 +1411,7 @@ onBeforeUnmount(() => {
           </div>
 
           <p class="notice-text">
-            Web / PWA 版本会在后台准备新版资源；若当前正在编辑、导入导出或调整设置，Textile 会先提示，等你确认后再刷新。
+            桌面版更新由 Tauri 验签后安装；Web / PWA 继续使用版本清单和后台资源刷新。正在编辑或写入项目时不会安装或重启。
           </p>
         </section>
 

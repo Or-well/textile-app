@@ -31,10 +31,19 @@ const shouldShow = computed(() => {
 
   return (
     updateState.value.pwaRefreshReady ||
-    updateState.value.status === "update-available"
+    updateState.value.status === "update-available" ||
+    (updateState.value.platform === "desktop" &&
+      [
+        "downloading",
+        "downloaded",
+        "waiting-for-safe-state",
+        "installing",
+        "restarting",
+      ].includes(updateState.value.status))
   );
 });
 
+const isDesktop = computed(() => updateState.value.platform === "desktop");
 const releaseNotes = computed(() => updateState.value.latest?.notes ?? []);
 const latestVersionText = computed(() =>
   updateState.value.latest ? `v${updateState.value.latest.latest_version}` : "",
@@ -47,6 +56,35 @@ const refreshMessage = computed(
   () =>
     updateState.value.refreshBlockedReason ||
     "刷新后即可使用新版 Textile。",
+);
+const desktopActionLabel = computed(() => {
+  if (updateState.value.status === "downloading") {
+    return `下载中 ${updateState.value.downloadProgress}%`;
+  }
+
+  if (updateState.value.status === "installing") {
+    return "正在安装...";
+  }
+
+  if (updateState.value.status === "restarting") {
+    return "正在重启...";
+  }
+
+  if (updateState.value.desktopUpdateDownloaded) {
+    return updateState.value.canAutoRefresh
+      ? "安装并重启"
+      : "等待当前操作完成";
+  }
+
+  return "下载更新";
+});
+const desktopActionDisabled = computed(
+  () =>
+    ["downloading", "installing", "restarting"].includes(
+      updateState.value.status,
+    ) ||
+    (updateState.value.desktopUpdateDownloaded &&
+      !updateState.value.canAutoRefresh),
 );
 
 function handleOpenDownloadPage(): void {
@@ -95,7 +133,24 @@ onBeforeUnmount(() => {
         <p class="notice-title">发现 Textile 新版本 {{ latestVersionText }}</p>
         <p class="notice-text">当前版本：{{ currentVersionText }}</p>
         <p class="notice-source">更新来源：{{ updateState.sourceUrl }}</p>
-        <p v-if="!downloadUrlConfigured" class="notice-source">未配置发布地址</p>
+        <p v-if="!isDesktop && !downloadUrlConfigured" class="notice-source">
+          未配置发布地址
+        </p>
+        <p
+          v-if="isDesktop && updateState.desktopUpdateDownloaded"
+          class="notice-source"
+        >
+          更新已下载，安装前会检查项目写入状态。
+        </p>
+        <div
+          v-if="isDesktop && updateState.status === 'downloading'"
+          class="download-progress"
+        >
+          <div
+            class="download-progress__fill"
+            :style="{ width: `${updateState.downloadProgress}%` }"
+          />
+        </div>
 
         <div v-if="releaseNotes.length" class="release-notes">
           <p>更新内容：</p>
@@ -107,6 +162,16 @@ onBeforeUnmount(() => {
 
       <div class="notice-actions">
         <button
+          v-if="isDesktop"
+          class="primary-button"
+          type="button"
+          :disabled="desktopActionDisabled"
+          @click="handleInstallUpdate"
+        >
+          {{ desktopActionLabel }}
+        </button>
+        <button
+          v-else
           class="primary-button"
           type="button"
           :disabled="!downloadUrlConfigured"
@@ -114,7 +179,12 @@ onBeforeUnmount(() => {
         >
           {{ downloadUrlConfigured ? "查看下载页" : "未配置发布地址" }}
         </button>
-        <button class="secondary-button" type="button" @click="handleDismiss">
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="updateState.status === 'installing' || updateState.status === 'restarting'"
+          @click="handleDismiss"
+        >
           稍后
         </button>
       </div>
@@ -180,6 +250,20 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.download-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5e7eb;
+}
+
+.download-progress__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: #2f6f73;
+  transition: width 160ms ease;
 }
 
 .primary-button,

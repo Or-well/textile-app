@@ -8,13 +8,21 @@
     "version:manifest": "node scripts/generate-version-manifest.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build --configLoader runner",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:release:check": "node scripts/check-tauri-release.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "jszip": "^3.10.1",
     "vue": "^3.5.34"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.3",
     "@types/node": "^24.12.3",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/tsconfig": "^0.9.1",

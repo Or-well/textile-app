@@ -1,4 +1,5 @@
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
+import { withAppOperation } from "./appOperation";
 
 export type ProjectStorageKind = "folder" | "packed";
 
@@ -439,11 +440,13 @@ export async function writeTextFile(
   path: string,
   content: string,
 ): Promise<void> {
-  const fileHandle = await getFileByPath(root, path, true);
-  const writable = await fileHandle.createWritable();
+  await withAppOperation("项目写入", async () => {
+    const fileHandle = await getFileByPath(root, path, true);
+    const writable = await fileHandle.createWritable();
 
-  await writable.write(content);
-  await writable.close();
+    await writable.write(content);
+    await writable.close();
+  });
 }
 
 export async function readJson<T>(
@@ -540,18 +543,20 @@ export async function deleteEntry(
   path: string,
   options: { recursive?: boolean } = {},
 ): Promise<void> {
-  const parts = assertSafePath(path);
-  const name = parts.pop();
+  await withAppOperation("项目删除", async () => {
+    const parts = assertSafePath(path);
+    const name = parts.pop();
 
-  if (!name) {
-    throw new Error("文件路径不正确，无法删除项目文件。");
-  }
+    if (!name) {
+      throw new Error("文件路径不正确，无法删除项目文件。");
+    }
 
-  const directory = await getDirectoryByPath(root, parts.join("/"));
+    const directory = await getDirectoryByPath(root, parts.join("/"));
 
-  if (!directory.removeEntry) {
-    throw new Error("当前浏览器不支持删除项目文件。");
-  }
+    if (!directory.removeEntry) {
+      throw new Error("当前浏览器不支持删除项目文件。");
+    }
 
-  await directory.removeEntry(name, options);
+    await directory.removeEntry(name, options);
+  });
 }
