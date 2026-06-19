@@ -23,7 +23,9 @@ const emit = defineEmits<{
       </div>
     </dl>
 
-    <p class="collaboration-note">成员导出修改包后交给负责人合并。</p>
+    <p class="collaboration-note">
+      成员导出普通修改包，负责人合并后发布签名项目更新包。
+    </p>
 
     <div class="collaboration-actions">
       <button
@@ -32,7 +34,7 @@ const emit = defineEmits<{
         :disabled="isBusy || !canExportChangePackage"
         @click="emit('exportChangePackage')"
       >
-        导出修改包
+        导出普通修改包
       </button>
       <button
         class="secondary-button"
@@ -40,7 +42,7 @@ const emit = defineEmits<{
         :disabled="isBusy || !canImportChangePackage"
         @click="emit('importChangePackage')"
       >
-        导入修改包
+        导入协作包
       </button>
       <button
         class="secondary-button"

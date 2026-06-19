@@ -772,6 +772,7 @@ export async function createProjectInDirectory(
   }
 
   const now = nowIso();
+  const revision = createId("rev");
   const owner: Member = {
     id: createId("user"),
     name: input.ownerName,
@@ -786,11 +787,14 @@ export async function createProjectInDirectory(
   const config: ProjectConfig = {
     schema_version: 1,
     project_id: createId("project"),
+    revision,
+    revision_hash: revision,
     name: input.name,
     description: input.description,
     source_language: input.sourceLanguage,
     target_language: input.targetLanguage,
     files: [],
+    updated_at: now,
     settings: {
       chunk_size: 500,
       auto_save: true,

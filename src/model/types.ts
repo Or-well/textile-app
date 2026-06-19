@@ -63,11 +63,14 @@ export type RolePermissions = Partial<Record<Role, string[]>>;
 export interface ProjectConfig {
   schema_version: number;
   project_id: string;
+  revision?: string;
+  revision_hash?: string;
   name: string;
   description?: string;
   source_language: string;
   target_language: string;
   files: ProjectFile[];
+  updated_at?: string;
   settings: {
     chunk_size: number;
     auto_save: boolean;
@@ -204,9 +207,11 @@ export interface ProjectEvent {
 }
 
 export type ChangePackageType =
+  | "member_changes"
   | "user_changes"
   | "task_changes"
   | "maintenance_changes"
+  | "project_update"
   | "legacy";
 
 export interface ChangePackageSummary {
@@ -215,6 +220,7 @@ export interface ChangePackageSummary {
   changed_terms: number;
   changed_contexts: number;
   changed_tasks: number;
+  changed_source_files?: number;
   changed_members: number;
   changed_project_settings: number;
   changed_credentials: number;
@@ -235,6 +241,11 @@ export interface ChangePackageManifest {
   content_hash?: string;
   app_version?: string;
   source_project_version?: string;
+  base_revision?: string;
+  target_revision?: string;
+  exported_by?: string;
+  exported_at?: string;
+  scopes?: string[];
   summary?: ChangePackageSummary;
 }
 

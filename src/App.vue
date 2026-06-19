@@ -817,6 +817,8 @@ onBeforeUnmount(() => {
         :members="currentProject.members"
         :project-root="currentProject.root"
         :current-user="currentUser"
+        @project-updated="handleProjectUpdated"
+        @members-updated="handleMembersUpdated"
       />
 
       <SettingsPage

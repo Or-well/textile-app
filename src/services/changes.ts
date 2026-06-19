@@ -24,6 +24,7 @@ import {
   readJson,
   readJsonl,
   readTextFile,
+  writeJson,
   writeTextFile,
   writeJsonl,
   type ProjectDirectoryHandle,
@@ -43,18 +44,25 @@ import {
 import {
   assertCan,
   canDangerousImportChangePackage,
+  canExportMemberChangePackage,
+  canExportProjectUpdatePackage,
+  canImportMemberChangePackage,
   canImportMaintenanceChangePackage,
+  canImportProjectUpdatePackage,
+  setPermissionProject,
 } from "./permissions";
 
 export type ExportChangePackageMode =
-  | "user_changes"
+  | "member_changes"
   | "task_changes"
-  | "maintenance_changes";
+  | "maintenance_changes"
+  | "project_update";
 
 export interface ExportChangePackageOptions {
   mode: ExportChangePackageMode;
   taskId?: string;
   sign?: boolean;
+  actor?: Member | null;
 }
 
 export interface ExportedChangePackage {
@@ -72,6 +80,7 @@ export interface ReadChangePackage {
   comments: Record<string, Comment[]>;
   terms: Record<string, Term[]>;
   contexts: Record<string, string>;
+  sourceFiles: Record<string, string>;
   tasks: Record<string, Task[]>;
   projectFiles: Record<string, string>;
   memberFiles: Record<string, string>;
@@ -85,6 +94,7 @@ export interface ChangePackagePreview {
   commentCount: number;
   termCount: number;
   contextCount: number;
+  sourceFileCount: number;
   taskCount: number;
   memberChangeCount: number;
   credentialChangeCount: number;
@@ -156,6 +166,7 @@ export interface ApplyChangePackageResult {
   importedComments: number;
   importedTerms: number;
   importedContexts: number;
+  importedSourceFiles: number;
   importedTasks: number;
   importedMembers: number;
   importedProjectSettings: number;
@@ -177,6 +188,7 @@ const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_terms: 0,
   changed_contexts: 0,
   changed_tasks: 0,
+  changed_source_files: 0,
   changed_members: 0,
   changed_project_settings: 0,
   changed_credentials: 0,
@@ -188,6 +200,7 @@ interface ChangePackagePayload {
   comments: Record<string, Comment[]>;
   terms: Record<string, Term[]>;
   contexts: Record<string, string>;
+  sourceFiles: Record<string, string>;
   tasks: Record<string, Task[]>;
   projectFiles: Record<string, string>;
   memberFiles: Record<string, string>;
@@ -195,6 +208,7 @@ interface ChangePackagePayload {
 }
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
+const MEMBER_CHANGE_MARKER_PREFIX = "textile.memberChangeExport";
 
 export function setChangesProjectRoot(root: ProjectDirectoryHandle): void {
   currentProjectRoot = root;
@@ -220,6 +234,67 @@ function getPackageType(manifest: ChangePackageManifest): ChangePackageType {
   return manifest.package_type ?? "legacy";
 }
 
+function getExportMarkerKey(projectId: string, userId: string, revision: string): string {
+  return `${MEMBER_CHANGE_MARKER_PREFIX}.${projectId}.${userId}.${revision}`;
+}
+
+function readExportedMemberChangeHash(
+  projectId: string,
+  userId: string,
+  revision: string,
+): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    return window.localStorage.getItem(getExportMarkerKey(projectId, userId, revision));
+  } catch {
+    return null;
+  }
+}
+
+function storeExportedMemberChangeHash(
+  projectId: string,
+  userId: string,
+  revision: string,
+  contentHash: string,
+): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      getExportMarkerKey(projectId, userId, revision),
+      contentHash,
+    );
+  } catch {
+    // Missing marker is fail-safe: the next project update requires a fresh export.
+  }
+}
+
+function isMemberChangePackage(packageType: ChangePackageType): boolean {
+  return (
+    packageType === "member_changes" ||
+    packageType === "user_changes" ||
+    packageType === "task_changes" ||
+    packageType === "legacy"
+  );
+}
+
+function isProjectUpdatePackage(packageType: ChangePackageType): boolean {
+  return packageType === "project_update";
+}
+
+function getProjectRevision(project: ProjectConfig): string {
+  return project.revision || project.revision_hash || `schema-${project.schema_version}`;
+}
+
+function createNextProjectRevision(projectId: string, createdAt = nowIso()): string {
+  return createId(`rev_${projectId}_${createdAt.slice(0, 10).replace(/-/g, "")}`);
+}
+
 function countRecordRows<T>(rowsByPath: Record<string, T[]>): number {
   return Object.values(rowsByPath).reduce((total, rows) => total + rows.length, 0);
 }
@@ -235,6 +310,7 @@ function getPackageSummary(payload: ChangePackagePayload): ChangePackageSummary 
     changed_terms: countRecordRows(payload.terms),
     changed_contexts: countRecordFiles(payload.contexts),
     changed_tasks: countRecordRows(payload.tasks),
+    changed_source_files: countRecordFiles(payload.sourceFiles),
     changed_members: countRecordFiles(payload.memberFiles),
     changed_project_settings: countRecordFiles(payload.projectFiles),
     changed_credentials: countPackageCredentials(payload.memberFiles),
@@ -294,6 +370,7 @@ function buildContentHashPayload(payload: ChangePackagePayload) {
     comments: normalizeRecordRows(payload.comments),
     terms: normalizeRecordRows(payload.terms),
     contexts: normalizeTextRecord(payload.contexts),
+    source: normalizeTextRecord(payload.sourceFiles),
     tasks: normalizeRecordRows(payload.tasks),
     project: normalizeTextRecord(payload.projectFiles),
     members: normalizeTextRecord(payload.memberFiles),
@@ -319,7 +396,7 @@ function buildPackageId(
   taskId?: string,
 ): string {
   const date = createdAt.slice(0, 10).replace(/-/g, "");
-  const scope = packageType === "task_changes" && taskId ? taskId : packageType;
+  const scope = taskId ? taskId : packageType;
 
   return createId(`change_${date}_${userId}_${scope}`);
 }
@@ -370,6 +447,36 @@ function parseProjectFromPackage(projectFiles: Record<string, string>): ProjectC
   }
 }
 
+function sanitizeMemberForProjectUpdate(member: Member): Member {
+  const publicMember = { ...member };
+
+  delete publicMember.password_hash;
+  delete publicMember.password_salt;
+  delete publicMember.password_updated_at;
+
+  return publicMember;
+}
+
+function mergePublicMembersWithLocalCredentials(
+  currentMembers: Member[],
+  packageMembers: Member[],
+): Member[] {
+  return packageMembers.map((packageMember) => {
+    const currentMember = currentMembers.find((member) => member.id === packageMember.id);
+
+    if (!currentMember) {
+      return sanitizeMemberForProjectUpdate(packageMember);
+    }
+
+    return {
+      ...sanitizeMemberForProjectUpdate(packageMember),
+      password_hash: currentMember.password_hash,
+      password_salt: currentMember.password_salt,
+      password_updated_at: currentMember.password_updated_at,
+    };
+  });
+}
+
 function hasCredentialFields(member: Member): boolean {
   return Boolean(
     member.password_hash || member.password_salt || member.password_updated_at,
@@ -380,6 +487,10 @@ function memberCredentialsChanged(
   currentMember: Member | undefined,
   packageMember: Member,
 ): boolean {
+  if (!hasCredentialFields(packageMember)) {
+    return false;
+  }
+
   return (
     currentMember?.password_hash !== packageMember.password_hash ||
     currentMember?.password_salt !== packageMember.password_salt ||
@@ -475,11 +586,15 @@ function buildRiskMessages(
     messages.push("这是项目维护修改包，可能更新项目设置、成员、权限或密码凭据。");
   }
 
+  if (validation.packageType === "project_update") {
+    messages.push("这是负责人发布的项目更新包，会同步项目进度、成员公开信息和合并后的内容，不会覆盖本机密码或私钥。");
+  }
+
   if (validation.summary.changed_project_settings > 0) {
     messages.push("修改包包含项目设置变更，导入前请确认来源可靠。");
   }
 
-  if (validation.summary.changed_members > 0) {
+  if (validation.summary.changed_members > 0 && validation.packageType !== "project_update") {
     messages.push("修改包包含成员或权限变更，不会静默导入。");
   }
 
@@ -669,6 +784,20 @@ async function collectUserChangedEntries(
   return changedEntries;
 }
 
+async function collectAllEntries(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+): Promise<Record<string, Entry[]>> {
+  const entries: Record<string, Entry[]> = {};
+  const groups = await collectProjectEntryGroups(root, project);
+
+  for (const group of groups) {
+    entries[group.path] = group.entries;
+  }
+
+  return entries;
+}
+
 async function collectTaskChangedEntries(
   root: ProjectDirectoryHandle,
   task: Task,
@@ -757,6 +886,28 @@ async function collectUserComments(
   return comments;
 }
 
+async function collectAllComments(root: ProjectDirectoryHandle): Promise<Record<string, Comment[]>> {
+  const comments: Record<string, Comment[]> = {};
+
+  if (!(await fileExists(root, "comments"))) {
+    return comments;
+  }
+
+  const fileIds = await listFiles(root, "comments");
+
+  for (const fileId of fileIds) {
+    const directory = `comments/${fileId}`;
+    const fileNames = await listFiles(root, directory);
+
+    for (const fileName of fileNames.filter((name) => name.endsWith(".jsonl"))) {
+      const path = `${directory}/${fileName}`;
+      comments[path] = await readJsonl<Comment>(root, path);
+    }
+  }
+
+  return comments;
+}
+
 async function collectUserTerms(
   root: ProjectDirectoryHandle,
   userId: string,
@@ -790,6 +941,21 @@ async function collectUserTasks(
 
   const rows = (await readJsonl<Task>(root, "tasks/tasks.jsonl")).filter(
     (task) => task.created_by === userId || task.assignee === userId,
+  );
+
+  return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
+}
+
+async function collectUserCreatedTasks(
+  root: ProjectDirectoryHandle,
+  userId: string,
+): Promise<Record<string, Task[]>> {
+  if (!(await fileExists(root, "tasks/tasks.jsonl"))) {
+    return {};
+  }
+
+  const rows = (await readJsonl<Task>(root, "tasks/tasks.jsonl")).filter(
+    (task) => task.created_by === userId,
   );
 
   return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
@@ -878,9 +1044,46 @@ async function collectProjectFiles(root: ProjectDirectoryHandle): Promise<Record
   };
 }
 
+function collectProjectUpdateProjectFile(
+  project: ProjectConfig,
+  targetRevision: string,
+  updatedAt: string,
+): Record<string, string> {
+  return {
+    "project/project.json": `${JSON.stringify(
+      {
+        ...project,
+        revision: targetRevision,
+        revision_hash: targetRevision,
+        updated_at: updatedAt,
+      },
+      null,
+      2,
+    )}\n`,
+  };
+}
+
 async function collectMemberFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
   return {
     "members/members.json": await readTextFile(root, "members.json"),
+  };
+}
+
+async function collectPublicMemberFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
+  const membersFile = await readJson<{ schema_version?: number; members?: Member[] }>(
+    root,
+    "members.json",
+  );
+
+  return {
+    "members/members.json": `${JSON.stringify(
+      {
+        schema_version: membersFile.schema_version ?? 1,
+        members: (membersFile.members ?? []).map(sanitizeMemberForProjectUpdate),
+      },
+      null,
+      2,
+    )}\n`,
   };
 }
 
@@ -892,7 +1095,7 @@ function buildFileName(
 ): string {
   const date = createdAt.slice(0, 10).replace(/-/g, "");
 
-  const scope = packageType === "task_changes" && taskId ? taskId : packageType;
+  const scope = taskId ? taskId : packageType;
 
   return `changes-${userId}-${scope}-${date}.zip`;
 }
@@ -1071,11 +1274,12 @@ async function precheckChangePackageImport(
   }
 
   const root = getProjectRoot();
+  const isProjectUpdate = isProjectUpdatePackage(validation.packageType);
 
   for (const path of Object.keys(changePackage.entries)) {
     assertPackagePath(path, "entries/", "词条", ".jsonl");
     await assertJsonlTargetReadable<Entry>(root, path, "词条", {
-      mustExist: true,
+      mustExist: !isProjectUpdate,
     });
   }
 
@@ -1097,6 +1301,11 @@ async function precheckChangePackageImport(
   for (const path of Object.keys(changePackage.contexts)) {
     assertPackagePath(path, "contexts/", "上下文");
     await assertTextTargetReadable(root, path, "上下文");
+  }
+
+  for (const path of Object.keys(changePackage.sourceFiles)) {
+    assertPackagePath(path, "source/", "source");
+    await assertTextTargetReadable(root, path, "source");
   }
 
   for (const path of Object.keys(changePackage.projectFiles)) {
@@ -1173,6 +1382,7 @@ async function appendImportLog(
       imported_comments: result.importedComments,
       imported_terms: result.importedTerms,
       imported_contexts: result.importedContexts,
+      imported_source_files: result.importedSourceFiles,
       imported_tasks: result.importedTasks,
       imported_members: result.importedMembers,
       imported_project_settings: result.importedProjectSettings,
@@ -1197,18 +1407,36 @@ export async function exportChangePackage(
 ): Promise<ExportedChangePackage> {
   const root = getProjectRoot();
   const project = await readJson<ProjectConfig>(root, "project.json");
+  const actor = options.actor;
+  const createdAt = nowIso();
+  const baseRevision = getProjectRevision(project);
+  const targetRevision =
+    options.mode === "project_update"
+      ? createNextProjectRevision(project.project_id, createdAt)
+      : undefined;
+  const manifestPackageType: ChangePackageType =
+    options.mode === "task_changes" ? "member_changes" : options.mode;
   const payload: ChangePackagePayload = {
     entries: {},
     comments: {},
     terms: {},
     contexts: {},
+    sourceFiles: {},
     tasks: {},
     projectFiles: {},
     memberFiles: {},
     events: [],
   };
 
+  if (!actor?.id || actor.id !== userId) {
+    throw new Error("Login required.");
+  }
+
   if (options.mode === "task_changes") {
+    if (!canExportMemberChangePackage(actor)) {
+      throw new Error("当前成员没有导出普通修改包的权限。");
+    }
+
     if (!options.taskId) {
       throw new Error("请选择要导出的任务。");
     }
@@ -1221,7 +1449,11 @@ export async function exportChangePackage(
     payload.events = await collectEvents(root, getPackageEntries(payload.entries), userId);
   }
 
-  if (options.mode === "user_changes") {
+  if (options.mode === "member_changes") {
+    if (!canExportMemberChangePackage(actor)) {
+      throw new Error("当前成员没有导出普通修改包的权限。");
+    }
+
     payload.entries = await collectUserChangedEntries(root, project, userId);
     payload.comments = await collectUserComments(root, userId);
     payload.terms = await collectUserTerms(root, userId);
@@ -1230,11 +1462,42 @@ export async function exportChangePackage(
   }
 
   if (options.mode === "maintenance_changes") {
+    assertCan(
+      actor,
+      PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
+      project,
+      "当前成员没有导出维护修改包的权限。",
+    );
+
     payload.terms = await collectAllTerms(root);
     payload.contexts = await collectTextFiles(root, "contexts");
     payload.tasks = await collectAllTasks(root);
     payload.projectFiles = await collectProjectFiles(root);
     payload.memberFiles = await collectMemberFiles(root);
+    payload.events = await collectAllEvents(root);
+  }
+
+  if (options.mode === "project_update") {
+    if (!canExportProjectUpdatePackage(actor)) {
+      throw new Error("当前成员没有发布项目更新包的权限。");
+    }
+
+    if (!options.sign) {
+      throw new Error("项目更新包必须使用负责人签名后才能导出。");
+    }
+
+    payload.entries = await collectAllEntries(root, project);
+    payload.comments = await collectAllComments(root);
+    payload.terms = await collectAllTerms(root);
+    payload.contexts = await collectTextFiles(root, "contexts");
+    payload.sourceFiles = await collectTextFiles(root, "source");
+    payload.tasks = await collectAllTasks(root);
+    payload.projectFiles = collectProjectUpdateProjectFile(
+      project,
+      targetRevision ?? baseRevision,
+      createdAt,
+    );
+    payload.memberFiles = await collectPublicMemberFiles(root);
     payload.events = await collectAllEvents(root);
   }
 
@@ -1244,15 +1507,14 @@ export async function exportChangePackage(
     throw new Error("当前范围内没有可导出的修改。");
   }
 
-  const createdAt = nowIso();
   const contentHash = await calculateContentHash(payload);
   const manifest: ChangePackageManifest = {
     schema_version: 1,
     project_id: project.project_id,
-    package_id: buildPackageId(userId, options.mode, createdAt, options.taskId),
-    package_type: options.mode,
+    package_id: buildPackageId(userId, manifestPackageType, createdAt, options.taskId),
+    package_type: manifestPackageType,
     user_id: userId,
-    user_name: userId,
+    user_name: actor.name || userId,
     task_id: options.mode === "task_changes" ? options.taskId : undefined,
     created_at: createdAt,
     changed_entries: summary.changed_entries,
@@ -1260,17 +1522,31 @@ export async function exportChangePackage(
     content_hash: contentHash,
     app_version: CHANGE_PACKAGE_APP_VERSION,
     source_project_version: String(project.schema_version),
+    base_revision: baseRevision,
+    target_revision: targetRevision,
+    exported_by: actor.id,
+    exported_at: createdAt,
+    scopes:
+      options.mode === "task_changes" && options.taskId
+        ? [`task:${options.taskId}`]
+        : [options.mode],
     summary,
   };
   const members = options.sign ? await loadProjectMembers(root) : [];
   const signer = members.find((member) => member.id === userId);
   const signature = options.sign ? await createSignature(manifest, signer) : undefined;
+
+  if (options.mode === "project_update" && !signature) {
+    throw new Error("项目更新包签名失败。请先配置当前负责人的签名私钥。");
+  }
+
   const files: ZipContent = {
     "manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
     "entries/": null,
     "comments/": null,
     "terms/": null,
     "contexts/": null,
+    "source/": null,
     "tasks/": null,
     "project/": null,
     "members/": null,
@@ -1290,6 +1566,10 @@ export async function exportChangePackage(
   }
 
   for (const [path, content] of Object.entries(payload.contexts)) {
+    files[path] = content;
+  }
+
+  for (const [path, content] of Object.entries(payload.sourceFiles)) {
     files[path] = content;
   }
 
@@ -1313,9 +1593,29 @@ export async function exportChangePackage(
     files["signature.json"] = `${JSON.stringify(signature, null, 2)}\n`;
   }
 
+  const blob = await createZip(files);
+
+  if (options.mode === "member_changes") {
+    storeExportedMemberChangeHash(
+      project.project_id,
+      userId,
+      baseRevision,
+      contentHash,
+    );
+  }
+
+  if (options.mode === "project_update" && payload.projectFiles["project/project.json"]) {
+    const nextProject = JSON.parse(
+      payload.projectFiles["project/project.json"],
+    ) as ProjectConfig;
+
+    await writeTextFile(root, "project.json", payload.projectFiles["project/project.json"]);
+    setPermissionProject(nextProject);
+  }
+
   return {
-    fileName: buildFileName(userId, options.mode, createdAt, options.taskId),
-    blob: await createZip(files),
+    fileName: buildFileName(userId, manifestPackageType, createdAt, options.taskId),
+    blob,
     manifest,
     signature,
   };
@@ -1345,6 +1645,11 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
         ([path]) => path.startsWith("contexts/") && !path.endsWith("/"),
       ),
     );
+    const sourceFiles = Object.fromEntries(
+      Object.entries(files).filter(
+        ([path]) => path.startsWith("source/") && !path.endsWith("/"),
+      ),
+    );
     const projectFiles = Object.fromEntries(
       Object.entries(files).filter(
         ([path]) => path.startsWith("project/") && !path.endsWith("/"),
@@ -1367,6 +1672,7 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
       comments,
       terms,
       contexts,
+      sourceFiles,
       tasks,
       projectFiles,
       memberFiles,
@@ -1396,6 +1702,7 @@ export async function validateChangePackage(
     comments: changePackage.comments,
     terms: changePackage.terms,
     contexts: changePackage.contexts,
+    sourceFiles: changePackage.sourceFiles,
     tasks: changePackage.tasks,
     projectFiles: changePackage.projectFiles,
     memberFiles: changePackage.memberFiles,
@@ -1425,6 +1732,18 @@ export async function validateChangePackage(
   ).length;
   const hasOwnerCredentialChange = detectOwnerCredentialChange(members, packageMembers);
   const hasOwnerPromotion = detectOwnerRolePromotion(members, packageMembers);
+  const isProjectUpdate = isProjectUpdatePackage(packageType);
+  const projectUpdateSignerAllowed =
+    !isProjectUpdate ||
+    canExportProjectUpdatePackage(
+      members.find((member) => member.id === changePackage.manifest.user_id),
+    );
+  const signatureStatus: SignatureStatus =
+    isProjectUpdate &&
+    signatureResult.signatureStatus === "valid" &&
+    !projectUpdateSignerAllowed
+      ? "invalid"
+      : signatureResult.signatureStatus;
   const normalizedSummary: ChangePackageSummary = {
     ...summary,
     changed_members: Math.max(summary.changed_members, changedMemberRecords),
@@ -1435,12 +1754,13 @@ export async function validateChangePackage(
     changed_credentials: Math.max(summary.changed_credentials, credentialChanges),
   };
   const requiresMaintenanceConfirmation =
-    packageType === "maintenance_changes" ||
-    normalizedSummary.changed_members > 0 ||
-    normalizedSummary.changed_project_settings > 0 ||
-    normalizedSummary.changed_credentials > 0;
+    !isProjectUpdate &&
+    (packageType === "maintenance_changes" ||
+      normalizedSummary.changed_members > 0 ||
+      normalizedSummary.changed_project_settings > 0 ||
+      normalizedSummary.changed_credentials > 0);
   const requiresOwnerCredentialConfirmation =
-    hasOwnerCredentialChange || hasOwnerPromotion;
+    !isProjectUpdate && (hasOwnerCredentialChange || hasOwnerPromotion);
   const riskLevel: ChangePackageRiskLevel =
     contentIntegrity === "failed" || requiresOwnerCredentialConfirmation
       ? "danger"
@@ -1457,13 +1777,15 @@ export async function validateChangePackage(
     contentIntegrity,
     declaredContentHash: changePackage.manifest.content_hash,
     calculatedContentHash,
-    signatureStatus: signatureResult.signatureStatus,
+    signatureStatus,
     signerName: signatureResult.signerName,
     packageType,
     summary: normalizedSummary,
     riskLevel,
     canImportNormally:
-      packageProjectId === project.project_id && contentIntegrity !== "failed",
+      packageProjectId === project.project_id &&
+      contentIntegrity !== "failed" &&
+      (!isProjectUpdate || signatureStatus === "valid"),
     requiresDangerousImport:
       packageProjectId === project.project_id && contentIntegrity === "failed",
     requiresMaintenanceConfirmation,
@@ -1493,6 +1815,7 @@ export function previewChangePackage(
     ),
     termCount: countRecordRows(changePackage.terms),
     contextCount: countRecordFiles(changePackage.contexts),
+    sourceFileCount: countRecordFiles(changePackage.sourceFiles),
     taskCount: countRecordRows(changePackage.tasks),
     memberChangeCount: validation.summary.changed_members,
     credentialChangeCount: validation.summary.changed_credentials,
@@ -1514,6 +1837,10 @@ export function previewChangePackage(
 export async function detectConflicts(
   changePackage: ReadChangePackage,
 ): Promise<ChangeConflict[]> {
+  if (isProjectUpdatePackage(getPackageType(changePackage.manifest))) {
+    return [];
+  }
+
   const conflicts: ChangeConflict[] = [];
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
@@ -1543,6 +1870,238 @@ export async function detectConflicts(
   return conflicts;
 }
 
+async function buildMemberChangePayload(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+  userId: string,
+): Promise<ChangePackagePayload> {
+  return {
+    entries: await collectUserChangedEntries(root, project, userId),
+    comments: await collectUserComments(root, userId),
+    terms: await collectUserTerms(root, userId),
+    contexts: {},
+    sourceFiles: {},
+    tasks: await collectUserCreatedTasks(root, userId),
+    projectFiles: {},
+    memberFiles: {},
+    events: await collectUserEvents(root, userId),
+  };
+}
+
+async function assertNoUnexportedMemberChanges(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+  actor: Member | null | undefined,
+): Promise<void> {
+  if (!actor?.id) {
+    throw new Error("请先登录后再接收项目更新包。");
+  }
+
+  const revision = getProjectRevision(project);
+  const payload = await buildMemberChangePayload(root, project, actor.id);
+  const summary = getPackageSummary(payload);
+
+  if (!hasPackageContent(summary)) {
+    return;
+  }
+
+  const currentHash = await calculateContentHash(payload);
+  const exportedHash = readExportedMemberChangeHash(
+    project.project_id,
+    actor.id,
+    revision,
+  );
+
+  if (currentHash !== exportedHash) {
+    throw new Error("本地仍有未导出的个人修改。请先导出我的修改包，再接收项目更新包。");
+  }
+}
+
+function assertProjectUpdateCanApply(
+  changePackage: ReadChangePackage,
+  validation: ChangePackageValidation,
+  currentProject: ProjectConfig,
+  currentMembers: Member[],
+  actor: Member | null | undefined,
+): ProjectConfig {
+  if (!canImportProjectUpdatePackage(actor)) {
+    throw new Error("当前成员没有接收项目更新包的权限。");
+  }
+
+  if (validation.contentIntegrity !== "passed") {
+    throw new Error("项目更新包内容完整性未通过，不能导入。");
+  }
+
+  if (validation.signatureStatus !== "valid") {
+    throw new Error("项目更新包必须带有有效负责人签名。");
+  }
+
+  const signer = currentMembers.find(
+    (member) => member.id === changePackage.manifest.user_id,
+  );
+
+  if (!canExportProjectUpdatePackage(signer)) {
+    throw new Error("项目更新包签名人不是当前项目允许发布更新的成员。");
+  }
+
+  const currentRevision = getProjectRevision(currentProject);
+
+  if (!changePackage.manifest.base_revision) {
+    throw new Error("项目更新包缺少 base_revision，不能导入。");
+  }
+
+  if (changePackage.manifest.base_revision !== currentRevision) {
+    throw new Error(
+      `项目更新包基线不匹配。当前项目版本：${currentRevision}，更新包基线：${changePackage.manifest.base_revision}。`,
+    );
+  }
+
+  if (!changePackage.manifest.target_revision) {
+    throw new Error("项目更新包缺少 target_revision，不能导入。");
+  }
+
+  const nextProject = parseProjectFromPackage(changePackage.projectFiles);
+
+  if (!nextProject) {
+    throw new Error("项目更新包缺少 project.json，不能导入。");
+  }
+
+  if (
+    nextProject.project_id !== currentProject.project_id ||
+    nextProject.project_id !== changePackage.manifest.project_id
+  ) {
+    throw new Error("项目更新包中的 project.json 与当前项目不匹配，不能导入。");
+  }
+
+  if (getProjectRevision(nextProject) !== changePackage.manifest.target_revision) {
+    throw new Error("项目更新包目标版本与 project.json 不一致，不能导入。");
+  }
+
+  return nextProject;
+}
+
+async function applyProjectUpdatePackage(
+  changePackage: ReadChangePackage,
+  validation: ChangePackageValidation,
+  options: ApplyChangePackageOptions,
+): Promise<ApplyChangePackageResult> {
+  const root = getProjectRoot();
+  const currentProject = await readJson<ProjectConfig>(root, "project.json");
+  const currentMembers = await loadProjectMembers(root);
+  const nextProject = assertProjectUpdateCanApply(
+    changePackage,
+    validation,
+    currentProject,
+    currentMembers,
+    options.actor,
+  );
+
+  await assertNoUnexportedMemberChanges(root, currentProject, options.actor);
+  await precheckChangePackageImport(changePackage, validation, []);
+
+  let appliedEntries = 0;
+  let importedComments = 0;
+  let importedTerms = 0;
+  let importedContexts = 0;
+  let importedSourceFiles = 0;
+  let importedTasks = 0;
+  let importedMembers = 0;
+  let importedProjectSettings = 0;
+  let importedEvents = 0;
+
+  for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeJsonl(root, path, packageEntries.map(normalizeEntry));
+    appliedEntries += packageEntries.length;
+  }
+
+  for (const [path, packageComments] of Object.entries(changePackage.comments)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeJsonl(root, path, packageComments);
+    importedComments += packageComments.length;
+  }
+
+  for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeJsonl(root, path, packageTerms);
+    importedTerms += packageTerms.length;
+  }
+
+  for (const [path, content] of Object.entries(changePackage.contexts)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeTextFile(root, path, content);
+    importedContexts += 1;
+  }
+
+  for (const [path, content] of Object.entries(changePackage.sourceFiles)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeTextFile(root, path, content);
+    importedSourceFiles += 1;
+  }
+
+  for (const [path, packageTasks] of Object.entries(changePackage.tasks)) {
+    await ensureDirectory(root, getDirectoryPath(path));
+    await writeJsonl(root, path, packageTasks);
+    importedTasks += packageTasks.length;
+  }
+
+  importedProjectSettings = changePackage.projectFiles["project/project.json"] ? 1 : 0;
+
+  const packageMembers = parseMembersFromPackage(changePackage.memberFiles);
+
+  if (packageMembers.length > 0) {
+    await writeJson(root, "members.json", {
+      schema_version: 1,
+      members: mergePublicMembersWithLocalCredentials(currentMembers, packageMembers),
+    });
+    importedMembers = packageMembers.length;
+  }
+
+  if (changePackage.events.length > 0) {
+    await ensureDirectory(root, "logs");
+    await writeJsonl(root, "logs/events.jsonl", changePackage.events);
+    importedEvents = changePackage.events.length;
+  }
+
+  const result: ApplyChangePackageResult = {
+    appliedEntries,
+    importedComments,
+    importedTerms,
+    importedContexts,
+    importedSourceFiles,
+    importedTasks,
+    importedMembers,
+    importedProjectSettings,
+    importedEvents,
+  };
+
+  await appendImportLog(changePackage.manifest, result, validation, options);
+
+  await writeTextFile(
+    root,
+    "project.json",
+    changePackage.projectFiles["project/project.json"],
+  );
+  setPermissionProject(nextProject);
+
+  if (options.actor?.id) {
+    const postUpdatePayload = await buildMemberChangePayload(
+      root,
+      nextProject,
+      options.actor.id,
+    );
+
+    storeExportedMemberChangeHash(
+      nextProject.project_id,
+      options.actor.id,
+      getProjectRevision(nextProject),
+      await calculateContentHash(postUpdatePayload),
+    );
+  }
+
+  return result;
+}
+
 export async function applyChangePackage(
   changePackage: ReadChangePackage,
   resolutions: ConflictResolution[] = [],
@@ -1555,10 +2114,23 @@ export async function applyChangePackage(
     throw new Error("修改包不属于当前项目，无法导入。");
   }
 
-  try {
-    assertCan(options.actor, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT);
-  } catch {
-    throw new Error("当前成员没有导入修改包的权限。");
+  if (isProjectUpdatePackage(validation.packageType)) {
+    return applyProjectUpdatePackage(changePackage, validation, options);
+  }
+
+  if (!isMemberChangePackage(validation.packageType)) {
+    try {
+      assertCan(options.actor, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT);
+    } catch {
+      throw new Error("当前成员没有导入修改包的权限。");
+    }
+  }
+
+  if (
+    isMemberChangePackage(validation.packageType) &&
+    !canImportMemberChangePackage(options.actor)
+  ) {
+    throw new Error("当前成员没有导入普通修改包的权限。");
   }
 
   if (
@@ -1606,6 +2178,7 @@ export async function applyChangePackage(
   let importedComments = 0;
   let importedTerms = 0;
   let importedContexts = 0;
+  let importedSourceFiles = 0;
   let importedTasks = 0;
   let importedMembers = 0;
   let importedProjectSettings = 0;
@@ -1742,6 +2315,7 @@ export async function applyChangePackage(
     importedComments,
     importedTerms,
     importedContexts,
+    importedSourceFiles,
     importedTasks,
     importedMembers,
     importedProjectSettings,

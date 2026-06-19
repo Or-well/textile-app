@@ -49,8 +49,11 @@ function signatureStatusText(preview: ChangePackagePreview): string {
 }
 
 function packageTypeText(preview: ChangePackagePreview): string {
-  if (preview.packageType === "user_changes") {
-    return "我的全部修改";
+  if (
+    preview.packageType === "member_changes" ||
+    preview.packageType === "user_changes"
+  ) {
+    return "普通修改包";
   }
 
   if (preview.packageType === "task_changes") {
@@ -59,6 +62,10 @@ function packageTypeText(preview: ChangePackagePreview): string {
 
   if (preview.packageType === "maintenance_changes") {
     return "项目维护修改";
+  }
+
+  if (preview.packageType === "project_update") {
+    return "项目更新包";
   }
 
   return "旧格式修改包";
@@ -113,6 +120,10 @@ function riskLevelText(preview: ChangePackagePreview): string {
       <div>
         <dt>上下文变更</dt>
         <dd>{{ preview.contextCount }}</dd>
+      </div>
+      <div>
+        <dt>源文件</dt>
+        <dd>{{ preview.sourceFileCount }}</dd>
       </div>
       <div>
         <dt>任务变更</dt>

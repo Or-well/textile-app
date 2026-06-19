@@ -118,13 +118,40 @@ function getRolePermissionsSource(project?: ProjectConfig): RolePermissions | un
   return project?.settings.role_permissions ?? currentRolePermissions;
 }
 
+const CHANGE_PACKAGE_PROTOCOL_PERMISSIONS = [
+  PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES,
+  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MEMBER_CHANGES,
+  PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
+] as const;
+
 function getConfiguredRolePermissions(project?: ProjectConfig): RolePermissions {
   const configured = getRolePermissionsSource(project);
   const defaults = getDefaultRolePermissions();
   const rolePermissions: RolePermissions = {};
+  const hasProtocolPermissions = ROLE_ORDER.some((role) =>
+    configured?.[role]?.some((permission) =>
+      CHANGE_PACKAGE_PROTOCOL_PERMISSIONS.includes(
+        normalizeAction(permission) as (typeof CHANGE_PACKAGE_PROTOCOL_PERMISSIONS)[number],
+      ),
+    ),
+  );
 
   for (const role of ROLE_ORDER) {
-    rolePermissions[role] = uniquePermissions(configured?.[role] ?? defaults[role] ?? []);
+    const configuredPermissions = configured?.[role] ?? defaults[role] ?? [];
+    const compatibilityPermissions =
+      configured && !hasProtocolPermissions
+        ? (defaults[role] ?? []).filter((permission) =>
+            CHANGE_PACKAGE_PROTOCOL_PERMISSIONS.includes(
+              permission as (typeof CHANGE_PACKAGE_PROTOCOL_PERMISSIONS)[number],
+            ),
+          )
+        : [];
+
+    rolePermissions[role] = uniquePermissions([
+      ...configuredPermissions,
+      ...compatibilityPermissions,
+    ]);
   }
 
   for (const permission of OWNER_LOCKED_PERMISSIONS) {
@@ -508,6 +535,22 @@ export function canImportChangePackage(user: Member | null | undefined): boolean
 
 export function canExportChangePackage(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT);
+}
+
+export function canExportMemberChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES);
+}
+
+export function canImportMemberChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MEMBER_CHANGES);
+}
+
+export function canExportProjectUpdatePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE);
+}
+
+export function canImportProjectUpdatePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE);
 }
 
 export function canReviewChangePackage(user: Member | null | undefined): boolean {

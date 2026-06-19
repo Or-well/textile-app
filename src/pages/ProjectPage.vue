@@ -4,8 +4,10 @@ import ProgressBar from "../components/ProgressBar.vue";
 import SyncStatusPanel from "../components/SyncStatusPanel.vue";
 import type { ProjectConfig } from "../model/types";
 import {
-  canExportChangePackage,
-  canImportChangePackage,
+  canExportMemberChangePackage,
+  canExportProjectUpdatePackage,
+  canImportMemberChangePackage,
+  canImportProjectUpdatePackage,
   getCurrentUser,
 } from "../services/permissions";
 import type { BasicProjectStats } from "../services/stats";
@@ -21,8 +23,16 @@ const emit = defineEmits<{
   openImportExport: [];
 }>();
 
-const canExportPackage = computed(() => canExportChangePackage(getCurrentUser()));
-const canImportPackage = computed(() => canImportChangePackage(getCurrentUser()));
+const canExportPackage = computed(
+  () =>
+    canExportMemberChangePackage(getCurrentUser()) ||
+    canExportProjectUpdatePackage(getCurrentUser()),
+);
+const canImportPackage = computed(
+  () =>
+    canImportMemberChangePackage(getCurrentUser()) ||
+    canImportProjectUpdatePackage(getCurrentUser()),
+);
 </script>
 
 <template>
@@ -41,11 +51,29 @@ const canImportPackage = computed(() => canImportChangePackage(getCurrentUser())
     <div class="overview-grid">
       <section class="overview-panel progress-panel">
         <h2>项目进度</h2>
-        <ProgressBar
-          v-if="stats"
-          :percent="stats.progressPercent"
-          label="总体完成"
-        />
+        <div v-if="stats" class="progress-grid">
+          <ProgressBar
+            :percent="stats.progressPercent"
+            label="综合进度"
+            tone="primary"
+          />
+          <ProgressBar
+            :percent="stats.translationProgress"
+            label="翻译进度"
+            tone="translation"
+          />
+          <ProgressBar
+            :percent="stats.proofreadProgress"
+            label="校对进度"
+            tone="proofread"
+          />
+          <ProgressBar
+            :percent="stats.reviewRequired ? stats.reviewProgress : 0"
+            label="审核进度"
+            :value-text="stats.reviewRequired ? undefined : '未启用审核'"
+            tone="review"
+          />
+        </div>
         <p v-else class="muted-text">正在准备项目统计。</p>
       </section>
 
@@ -179,6 +207,16 @@ h2 {
   background: #ffffff;
 }
 
+.progress-panel {
+  align-content: start;
+}
+
+.progress-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 22px;
+}
+
 .stats-panel {
   grid-column: 1 / -1;
 }
@@ -222,6 +260,10 @@ dd {
   }
 
   .overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .progress-grid {
     grid-template-columns: 1fr;
   }
 }
