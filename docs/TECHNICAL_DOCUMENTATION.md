@@ -1752,6 +1752,107 @@ failed
 - pubkey 为空。
 - endpoints 为空。
 
+### Tauri 桌面发布流程
+
+桌面发布分为三类产物：
+
+- 程序源码：放在 GitHub 仓库中，供维护者协作和审查。
+- 安装包和更新包：放在 GitHub Releases 或等价的 HTTPS 文件服务中，供用户下载。
+- 项目数据：本地项目文件夹、`.hproj`、修改包和项目更新包，独立于程序发布，不应打进安装包。
+
+Tauri Updater 只负责更新 Textile 程序本身，不负责更新某个翻译项目。项目数据仍走 Textile 内部的 `.hproj`、普通修改包和签名项目更新包流程。
+
+首次配置：
+
+1. 生成 updater 签名密钥：
+
+```powershell
+npm.cmd run tauri signer generate -- -w "$env:USERPROFILE\.tauri\textile.key"
+```
+
+2. 将生成出来的公钥写入 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
+3. 将更新清单地址写入 `plugins.updater.endpoints`，例如：
+
+```json
+[
+  "https://github.com/<owner>/<repo>/releases/latest/download/latest.json"
+]
+```
+
+4. 私钥文件只保存在发布机或 CI 密钥库，不能提交到 GitHub，不能放进项目文件夹、`.hproj`、修改包或应用存储。
+
+第一个公开版本必须已经配置好 `pubkey` 和 `endpoints`。如果先发布一个未配置 updater 的安装包，已安装用户无法依靠自动更新补上 updater 配置。
+
+每次发布：
+
+1. 同步版本号：
+   - `package.json`
+   - `src-tauri/tauri.conf.json`
+   - `src-tauri/Cargo.toml`
+2. 提交代码并推送到 GitHub。
+3. 设置签名私钥环境变量：
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY="$env:USERPROFILE\.tauri\textile.key"
+```
+
+如果私钥设置了密码，还要设置：
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<password>"
+```
+
+4. 运行发布检查：
+
+```powershell
+npm.cmd run tauri:release:check
+```
+
+5. 构建安装包和更新产物：
+
+```powershell
+npm.cmd run tauri:build
+```
+
+Windows 产物通常在：
+
+```text
+src-tauri/target/release/bundle/nsis/
+src-tauri/target/release/bundle/msi/
+```
+
+普通用户优先下载 NSIS `.exe` 安装包。自动更新还需要对应的 `.sig` 文件内容。
+
+GitHub Release 应上传：
+
+- 安装包，例如 `Textile_0.1.1_x64-setup.exe`。
+- 对应 `.sig` 文件，方便人工核对和留档。
+- Tauri updater 使用的 `latest.json`。
+
+`latest.json` 使用 Tauri Updater 格式，不是 Web/PWA 的 `public/version.json`。最小示例：
+
+```json
+{
+  "version": "0.1.1",
+  "notes": "修复导入项目文件预览显示。",
+  "pub_date": "2026-06-20T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "<粘贴 .sig 文件里的完整内容>",
+      "url": "https://github.com/<owner>/<repo>/releases/download/v0.1.1/Textile_0.1.1_x64-setup.exe"
+    }
+  }
+}
+```
+
+注意事项：
+
+- `signature` 是 `.sig` 文件的文本内容，不是 `.sig` 文件路径。
+- `url` 必须是用户机器可以直接下载到安装包的 HTTPS 地址。
+- 每个新版本必须用同一把 updater 私钥签名，否则旧版本无法验证更新。
+- GitHub Release 若使用私有仓库，普通用户可能无法下载更新文件；公开分发时应确保 release 资源公开可访问。
+- `public/version.json` 只服务 Web/PWA 更新检查；桌面自动更新只看 Tauri endpoint 返回的 `latest.json`。
+
 ### 更新安全
 
 `appOperation.ts` 跟踪写操作。
