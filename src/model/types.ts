@@ -59,6 +59,8 @@ export interface ReleaseExportSettings {
   include_manifest?: boolean;
 }
 
+export type RolePermissions = Partial<Record<Role, string[]>>;
+
 export interface ProjectConfig {
   schema_version: number;
   project_id: string;
@@ -81,6 +83,7 @@ export interface ProjectConfig {
       reviewWeight?: number;
     };
     export?: ReleaseExportSettings;
+    role_permissions?: RolePermissions;
   };
 }
 

@@ -1,7 +1,17 @@
 import type { Member, ProjectConfig, ProjectFile, ProofreadRequired } from "../model/types";
+import type { RolePermissions } from "../model/types";
+import { PERMISSION_ACTIONS } from "../model/permissions";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { createPasswordFields } from "./auth";
+import { appendEventToRoot } from "./history";
+import {
+  can,
+  canManageMemberPermissionOverrides,
+  getDefaultRolePermissions,
+  setPermissionProject,
+  validateRolePermissionChange,
+} from "./permissions";
 import {
   createEntriesFromSourceFile,
   importEntryTranslations,
@@ -186,6 +196,7 @@ export async function saveProject(
   config: ProjectConfig,
 ): Promise<void> {
   await writeJson(root, "project.json", config);
+  setPermissionProject(config);
 }
 
 export async function loadMembers(
@@ -204,6 +215,140 @@ export async function saveMembers(
     schema_version: 1,
     members,
   });
+}
+
+function diffPermissions(
+  before: readonly string[] = [],
+  after: readonly string[] = [],
+): { added: string[]; removed: string[] } {
+  const beforeSet = new Set(before);
+  const afterSet = new Set(after);
+
+  return {
+    added: after.filter((permission) => !beforeSet.has(permission)),
+    removed: before.filter((permission) => !afterSet.has(permission)),
+  };
+}
+
+export async function saveRolePermissions(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+  members: Member[],
+  actor: Member,
+  nextRolePermissions: RolePermissions,
+  options: { resetToDefault?: boolean } = {},
+): Promise<ProjectConfig> {
+  if (!can(actor, PERMISSION_ACTIONS.ROLE_MANAGE, project)) {
+    throw new Error("当前成员没有管理角色权限的权限。");
+  }
+
+  validateRolePermissionChange(project, nextRolePermissions, members);
+
+  const previousRolePermissions =
+    project.settings.role_permissions ?? getDefaultRolePermissions();
+  const nextProject: ProjectConfig = {
+    ...project,
+    settings: {
+      ...project.settings,
+      role_permissions: nextRolePermissions,
+    },
+  };
+  const nextActor = members.find((member) => member.id === actor.id) ?? actor;
+
+  if (
+    !can(nextActor, PERMISSION_ACTIONS.PROJECT_MANAGE, nextProject) ||
+    !can(nextActor, PERMISSION_ACTIONS.MEMBER_MANAGE, nextProject) ||
+    !can(nextActor, PERMISSION_ACTIONS.ROLE_MANAGE, nextProject)
+  ) {
+    throw new Error("不能保存会让当前成员失去项目、成员或权限管理能力的配置。");
+  }
+
+  const changedRoles = Object.entries(nextRolePermissions).map(
+    ([role, permissions]) => ({
+      role,
+      ...diffPermissions(previousRolePermissions[role as keyof RolePermissions], permissions),
+    }),
+  );
+
+  await saveProject(root, nextProject);
+  await appendEventToRoot(root, {
+    type: options.resetToDefault
+      ? "role_permissions.reset"
+      : "role_permissions.updated",
+    user_id: actor.id,
+    detail: {
+      reset_to_default: Boolean(options.resetToDefault),
+      changed_roles: changedRoles,
+    },
+  });
+
+  return nextProject;
+}
+
+export async function saveMemberPermissionOverrides(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+  members: Member[],
+  actor: Member,
+  targetId: string,
+  allowPermissions: string[],
+  denyPermissions: string[],
+): Promise<Member[]> {
+  const target = members.find((member) => member.id === targetId);
+
+  if (!target) {
+    throw new Error("没有找到要修改权限的成员。");
+  }
+
+  if (!canManageMemberPermissionOverrides(actor, target, project)) {
+    throw new Error("当前成员不能修改这个成员的个人权限。");
+  }
+
+  const nextMembers = members.map((member) =>
+    member.id === targetId
+      ? {
+          ...member,
+          allow_permissions: allowPermissions,
+          deny_permissions: denyPermissions,
+          updated_at: nowIso(),
+        }
+      : member,
+  );
+  const activeManagers = nextMembers.filter(
+    (member) =>
+      member.active &&
+      can(member, PERMISSION_ACTIONS.PROJECT_MANAGE, project) &&
+      can(member, PERMISSION_ACTIONS.MEMBER_MANAGE, project) &&
+      can(member, PERMISSION_ACTIONS.ROLE_MANAGE, project),
+  );
+
+  if (activeManagers.length === 0) {
+    throw new Error("至少需要保留一名可用成员拥有项目、成员和权限管理能力。");
+  }
+
+  const nextActor = nextMembers.find((member) => member.id === actor.id) ?? actor;
+
+  if (
+    !can(nextActor, PERMISSION_ACTIONS.PROJECT_MANAGE, project) ||
+    !can(nextActor, PERMISSION_ACTIONS.MEMBER_MANAGE, project) ||
+    !can(nextActor, PERMISSION_ACTIONS.ROLE_MANAGE, project)
+  ) {
+    throw new Error("不能保存会让当前成员失去项目、成员或权限管理能力的配置。");
+  }
+
+  await saveMembers(root, nextMembers);
+  await appendEventToRoot(root, {
+    type: "member.permission_overrides.updated",
+    user_id: actor.id,
+    detail: {
+      member_id: targetId,
+      allow: diffPermissions(target.allow_permissions, allowPermissions),
+      deny: diffPermissions(target.deny_permissions, denyPermissions),
+      personal_permissions: true,
+    },
+  });
+
+  return nextMembers;
 }
 
 export function getProjectFiles(config: ProjectConfig): ProjectFile[] {
@@ -516,6 +661,8 @@ export async function openProjectRoot(
     loadMembers(root),
   ]);
 
+  setPermissionProject(config);
+
   return { root, config, members, storageKind: root.storageKind ?? "folder" };
 }
 
@@ -571,6 +718,7 @@ export async function createProjectInDirectory(
         proofread: input.progressWeights.proofread,
         review: input.progressWeights.review,
       },
+      role_permissions: getDefaultRolePermissions(),
     },
   };
   const members = [owner];
@@ -600,6 +748,8 @@ export async function openProjectFile(file: File): Promise<OpenedProject> {
   const members = (await fileExists(root, "members.json"))
     ? await loadMembers(root)
     : [];
+
+  setPermissionProject(config);
 
   return {
     root,

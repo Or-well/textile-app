@@ -1,18 +1,16 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
+import MemberPermissionOverrides from "../components/settings/MemberPermissionOverrides.vue";
 import MemberManagementPanel from "../components/settings/MemberManagementPanel.vue";
-import {
-  PERMISSION_ACTIONS,
-  ROLE_DEFAULT_PERMISSIONS,
-} from "../model/permissions";
+import RolePermissionEditor from "../components/settings/RolePermissionEditor.vue";
+import { PERMISSION_ACTIONS } from "../model/permissions";
 import type {
   Member,
   ProjectConfig,
   ProjectWorkflowSettings,
   ProofreadRequired,
   ReleaseExportFormat,
-  Role,
 } from "../model/types";
 import { normalizeWorkflowSettings } from "../model/status";
 import {
@@ -82,41 +80,6 @@ const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "danger", label: "危险操作" },
 ];
 
-const roleOrder: Role[] = [
-  "owner",
-  "admin",
-  "translator",
-  "proofreader",
-  "reviewer",
-  "publisher",
-  "term_manager",
-  "readonly",
-];
-
-const roleLabels: Record<Role, string> = {
-  owner: "项目负责人",
-  admin: "管理员",
-  tech_lead: "技术负责人",
-  translator: "翻译",
-  proofreader: "校对",
-  reviewer: "审核",
-  publisher: "发布负责人",
-  term_manager: "术语负责人",
-  readonly: "只读成员",
-};
-
-const roleDescriptions: Record<Role, string> = {
-  owner: "维护项目、成员、任务、导入修改和危险操作。",
-  admin: "协助管理项目设置、任务和导入流程。",
-  tech_lead: "维护格式、导出器和底层协作问题。",
-  translator: "翻译词条、评论并导出自己的修改。",
-  proofreader: "校对译文、退回问题词条并标记争议。",
-  reviewer: "审核词条、解决争议并提交最终判断。",
-  publisher: "导出成品和发布报告。",
-  term_manager: "维护术语表、导入导出术语。",
-  readonly: "只查看项目内容，不修改数据。",
-};
-
 const activeSection = ref<SettingsSection>("project");
 const localProject = ref<EditableProjectConfig | null>(null);
 const localMembers = ref<Member[]>([]);
@@ -171,7 +134,7 @@ const currentRoleText = computed(() =>
   currentUser.value?.roles.length ? currentUser.value.roles.join(" / ") : "未登录",
 );
 const canManageProject = computed(() =>
-  can(currentUser.value, PERMISSION_ACTIONS.PROJECT_MANAGE),
+  can(currentUser.value, PERMISSION_ACTIONS.PROJECT_MANAGE, localProject.value ?? undefined),
 );
 const canEditProgressWeights = computed(() =>
   canConfigureStats(currentUser.value),
@@ -190,14 +153,6 @@ const weightsAreValid = computed(
       weightDraft.value.review,
     ].every((value) => Number.isFinite(Number(value)) && Number(value) >= 0) &&
     weightTotal.value === 100,
-);
-const roleRows = computed(() =>
-  roleOrder.map((role) => ({
-    role,
-    label: roleLabels[role],
-    description: roleDescriptions[role],
-    permissions: ROLE_DEFAULT_PERMISSIONS[role] ?? [],
-  })),
 );
 const currentProgramVersion = computed(() => `v${getCurrentVersion()}`);
 const latestProgramVersion = computed(() =>
@@ -591,6 +546,11 @@ function handleMembersUpdated(members: Member[]): void {
   emit("membersUpdated", members);
 }
 
+function handleProjectUpdatedFromChild(project: ProjectConfig): void {
+  applyProject(project);
+  emit("projectUpdated", project);
+}
+
 watch(
   () => [props.project, props.members, props.projectRoot] as const,
   ([project, members, root]) => {
@@ -776,27 +736,34 @@ onBeforeUnmount(() => {
         <section v-else-if="activeSection === 'roles'" class="settings-card">
           <header class="card-header">
             <h2>角色与权限</h2>
-            <p>当前角色：{{ currentRoleText }}。权限编辑暂不可编辑。</p>
+            <p>当前角色：{{ currentRoleText }}。配置固定角色权限和成员个人权限微调。</p>
           </header>
 
           <p class="notice-text">
-            owner / admin 等基础规则是项目流程约束。权限是本地软权限，用于减少误操作，不作为安全边界。
+            owner 关键权限会锁定；deny 权限优先级高于角色权限和额外允许权限。
           </p>
 
-          <div class="role-list">
-            <article v-for="row in roleRows" :key="row.role" class="role-card">
-              <div>
-                <h3>{{ row.label }}</h3>
-                <p>{{ row.role }} · {{ row.description }}</p>
-              </div>
-              <div class="permission-chips">
-                <code v-for="permission in row.permissions" :key="permission">
-                  {{ permission }}
-                </code>
-              </div>
-              <span class="readonly-badge">暂不可编辑</span>
-            </article>
-          </div>
+          <RolePermissionEditor
+            :project="localProject"
+            :members="localMembers"
+            :current-user="currentUser"
+            :project-root="props.projectRoot ?? localRoot ?? undefined"
+            @project-updated="handleProjectUpdatedFromChild"
+          />
+
+          <section class="settings-subsection">
+            <header class="subsection-header">
+              <h3>成员个人权限微调</h3>
+              <p>用于给单个成员额外允许或禁止某些权限。</p>
+            </header>
+            <MemberPermissionOverrides
+              :project="localProject"
+              :members="localMembers"
+              :current-user="currentUser"
+              :project-root="props.projectRoot ?? localRoot ?? undefined"
+              @members-updated="handleMembersUpdated"
+            />
+          </section>
         </section>
 
         <section v-else-if="activeSection === 'workflow'" class="settings-card">
@@ -1486,6 +1453,23 @@ h3 {
   gap: 5px;
   padding-bottom: 14px;
   border-bottom: 1px solid #eef1f5;
+}
+
+.settings-subsection {
+  display: grid;
+  gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid #eef1f5;
+}
+
+.subsection-header {
+  display: grid;
+  gap: 5px;
+}
+
+.subsection-header p {
+  color: #5b6472;
+  line-height: 1.6;
 }
 
 .form-stack {

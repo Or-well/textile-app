@@ -1,5 +1,8 @@
 import {
+  ALL_PERMISSION_ACTIONS,
+  OWNER_LOCKED_PERMISSIONS,
   PERMISSION_ACTIONS,
+  ROLE_ORDER,
   ROLE_DEFAULT_PERMISSIONS,
   type PermissionAction,
 } from "../model/permissions";
@@ -9,11 +12,20 @@ import {
   normalizeProofreadUsers,
   normalizeWorkflowSettings,
 } from "../model/status";
-import type { Comment, Entry, Member, ProjectWorkflowSettings, Role } from "../model/types";
+import type {
+  Comment,
+  Entry,
+  Member,
+  ProjectConfig,
+  ProjectWorkflowSettings,
+  Role,
+  RolePermissions,
+} from "../model/types";
 
 const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 
 let currentUser: Member | null = readStoredUser();
+let currentRolePermissions: RolePermissions | undefined;
 
 function toSessionMember(user: Member): Member {
   const sessionMember = { ...user };
@@ -86,6 +98,140 @@ function getPermissionAliases(actionName: string): string[] {
   return [];
 }
 
+function uniquePermissions(permissions: readonly string[]): string[] {
+  return Array.from(
+    new Set(
+      permissions
+        .map((permission) => normalizeAction(permission))
+        .filter((permission) => ALL_PERMISSION_ACTIONS.includes(permission as PermissionAction)),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+}
+
+function cloneRolePermissions(source: Record<Role, readonly string[]>): RolePermissions {
+  return Object.fromEntries(
+    ROLE_ORDER.map((role) => [role, uniquePermissions(source[role] ?? [])]),
+  ) as RolePermissions;
+}
+
+function getRolePermissionsSource(project?: ProjectConfig): RolePermissions | undefined {
+  return project?.settings.role_permissions ?? currentRolePermissions;
+}
+
+function getConfiguredRolePermissions(project?: ProjectConfig): RolePermissions {
+  const configured = getRolePermissionsSource(project);
+  const defaults = getDefaultRolePermissions();
+  const rolePermissions: RolePermissions = {};
+
+  for (const role of ROLE_ORDER) {
+    rolePermissions[role] = uniquePermissions(configured?.[role] ?? defaults[role] ?? []);
+  }
+
+  for (const permission of OWNER_LOCKED_PERMISSIONS) {
+    if (!rolePermissions.owner?.includes(permission)) {
+      rolePermissions.owner = [...(rolePermissions.owner ?? []), permission];
+    }
+  }
+
+  return rolePermissions;
+}
+
+function applySystemSafetyPermissions(
+  user: Member,
+  permissions: Set<string>,
+): Set<string> {
+  const nextPermissions = new Set(permissions);
+
+  if (hasRole(user, "owner")) {
+    for (const permission of OWNER_LOCKED_PERMISSIONS) {
+      nextPermissions.add(permission);
+    }
+  }
+
+  return nextPermissions;
+}
+
+export function setPermissionProject(project: ProjectConfig | null | undefined): void {
+  currentRolePermissions = project?.settings.role_permissions;
+}
+
+export function getDefaultRolePermissions(): RolePermissions {
+  return cloneRolePermissions(ROLE_DEFAULT_PERMISSIONS);
+}
+
+export function resetRolePermissionsToDefault(): RolePermissions {
+  return getDefaultRolePermissions();
+}
+
+export function getRolePermissions(project?: ProjectConfig): RolePermissions {
+  return getConfiguredRolePermissions(project);
+}
+
+export function getEffectivePermissions(
+  member: Member | null | undefined,
+  project?: ProjectConfig,
+): string[] {
+  if (!member?.active) {
+    return [];
+  }
+
+  const rolePermissions = getConfiguredRolePermissions(project);
+  const permissions = new Set<string>();
+
+  for (const role of member.roles) {
+    for (const permission of rolePermissions[role] ?? []) {
+      permissions.add(normalizeAction(permission));
+    }
+  }
+
+  for (const permission of member.allow_permissions ?? []) {
+    permissions.add(normalizeAction(permission));
+  }
+
+  for (const permission of member.deny_permissions ?? []) {
+    permissions.delete(normalizeAction(permission));
+  }
+
+  return Array.from(applySystemSafetyPermissions(member, permissions)).sort((left, right) =>
+    left.localeCompare(right),
+  );
+}
+
+export function validateRolePermissionChange(
+  project: ProjectConfig,
+  nextRolePermissions: RolePermissions,
+  members: Member[] = [],
+): void {
+  for (const permission of OWNER_LOCKED_PERMISSIONS) {
+    if (!nextRolePermissions.owner?.includes(permission)) {
+      throw new Error("项目负责人关键权限不能取消。");
+    }
+  }
+
+  if (members.length === 0) {
+    return;
+  }
+
+  const simulatedProject: ProjectConfig = {
+    ...project,
+    settings: {
+      ...project.settings,
+      role_permissions: nextRolePermissions,
+    },
+  };
+  const hasManager = members.some(
+    (member) =>
+      member.active &&
+      can(member, PERMISSION_ACTIONS.PROJECT_MANAGE, simulatedProject) &&
+      can(member, PERMISSION_ACTIONS.MEMBER_MANAGE, simulatedProject) &&
+      can(member, PERMISSION_ACTIONS.ROLE_MANAGE, simulatedProject),
+  );
+
+  if (!hasManager) {
+    throw new Error("至少需要保留一名可用成员拥有项目、成员和权限管理能力。");
+  }
+}
+
 export function getCurrentUser(): Member | null {
   currentUser = currentUser ?? readStoredUser();
 
@@ -104,35 +250,14 @@ export function hasRole(user: Member | null | undefined, role: Role): boolean {
 export function can(
   user: Member | null | undefined,
   action: PermissionAction | string,
+  project?: ProjectConfig,
 ): boolean {
   if (!user?.active) {
     return false;
   }
 
   const actionName = normalizeAction(action);
-
-  if (
-    actionName === PERMISSION_ACTIONS.RELEASE_EXPORT &&
-    (hasRole(user, "owner") || hasRole(user, "admin") || hasRole(user, "publisher"))
-  ) {
-    return true;
-  }
-
-  const permissions = new Set<string>();
-
-  for (const role of user.roles) {
-    for (const permission of ROLE_DEFAULT_PERMISSIONS[role] ?? []) {
-      permissions.add(permission);
-    }
-  }
-
-  for (const permission of user.allow_permissions ?? []) {
-    permissions.add(permission);
-  }
-
-  for (const permission of user.deny_permissions ?? []) {
-    permissions.delete(permission);
-  }
+  const permissions = new Set(getEffectivePermissions(user, project));
 
   return (
     permissions.has(actionName) ||
@@ -401,12 +526,7 @@ export function canImportMaintenanceChangePackage(
 }
 
 export function canExportRelease(user: Member | null | undefined): boolean {
-  return (
-    can(user, PERMISSION_ACTIONS.RELEASE_EXPORT) ||
-    hasRole(user, "owner") ||
-    hasRole(user, "admin") ||
-    hasRole(user, "publisher")
-  );
+  return can(user, PERMISSION_ACTIONS.RELEASE_EXPORT);
 }
 
 export function canProjectBackup(user: Member | null | undefined): boolean {
@@ -439,6 +559,33 @@ export function canRevokeKey(user: Member | null | undefined): boolean {
 
 export function canConfigureStats(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.PROJECT_MANAGE);
+}
+
+export function canManageRolePermissions(
+  user: Member | null | undefined,
+  project?: ProjectConfig,
+): boolean {
+  return can(user, PERMISSION_ACTIONS.ROLE_MANAGE, project);
+}
+
+export function canManageMemberPermissionOverrides(
+  actor: Member | null | undefined,
+  target: Member | null | undefined,
+  project?: ProjectConfig,
+): boolean {
+  if (!actor?.active || !target) {
+    return false;
+  }
+
+  if (!can(actor, PERMISSION_ACTIONS.MEMBER_MANAGE, project)) {
+    return false;
+  }
+
+  if (hasRole(actor, "owner")) {
+    return true;
+  }
+
+  return !hasRole(target, "owner");
 }
 
 export function canViewFile(user: Member | null | undefined): boolean {
