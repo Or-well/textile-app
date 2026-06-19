@@ -12,7 +12,7 @@ import {
   transferOwner,
   updateMemberRoles,
 } from "../../services/auth";
-import { can, hasRole } from "../../services/permissions";
+import { can, isOwnerMember } from "../../services/permissions";
 import type { ProjectDirectoryHandle } from "../../services/projectFs";
 
 const props = defineProps<{
@@ -64,11 +64,11 @@ const activeMembers = computed(() => props.members.filter((member) => member.act
 const canManageAnyMember = computed(
   () =>
     Boolean(props.currentUser?.active) &&
-    (hasRole(props.currentUser, "owner") || hasRole(props.currentUser, "admin")) &&
+    can(props.currentUser, PERMISSION_ACTIONS.MEMBER_MANAGE) &&
     can(props.currentUser, PERMISSION_ACTIONS.PROJECT_MANAGE),
 );
 const ownerTransferTargets = computed(() =>
-  activeMembers.value.filter((member) => !member.roles.includes("owner")),
+  activeMembers.value.filter((member) => !isOwnerMember(member)),
 );
 
 function getRoot(): ProjectDirectoryHandle {
@@ -95,7 +95,7 @@ function isCurrentOwner(member: Member): boolean {
   return Boolean(
     props.currentUser?.id === member.id &&
       props.currentUser.active &&
-      member.roles.includes("owner"),
+      isOwnerMember(member),
   );
 }
 
@@ -104,7 +104,7 @@ function canEditMemberRoles(member: Member): boolean {
 }
 
 function canResetPassword(member: Member): boolean {
-  return !member.roles.includes("owner") && canManageMember(props.currentUser, member);
+  return !isOwnerMember(member) && canManageMember(props.currentUser, member);
 }
 
 function syncDrafts(): void {
@@ -310,7 +310,7 @@ watch(
               <p>{{ roleText(member) }}</p>
             </div>
             <div class="member-badges">
-              <span v-if="member.roles.includes('owner')" class="status-badge owner-badge">
+              <span v-if="isOwnerMember(member)" class="status-badge owner-badge">
                 项目负责人
               </span>
               <span class="status-badge">
@@ -319,7 +319,7 @@ watch(
             </div>
           </div>
 
-          <p v-if="member.roles.includes('owner')" class="owner-note">
+          <p v-if="isOwnerMember(member)" class="owner-note">
             负责人身份只能通过“转让负责人”变更；这里可修改其他用户组。
           </p>
 
@@ -373,7 +373,7 @@ watch(
                 isWorking ||
                 !member.active ||
                 !canManageMember(props.currentUser, member) ||
-                member.roles.includes('owner')
+                isOwnerMember(member)
               "
               @click="handleDisableMember(member)"
             >

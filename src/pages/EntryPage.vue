@@ -6,6 +6,7 @@ import EntrySideList from "../components/EntrySideList.vue";
 import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
 import { getEntryById, loadEntries, saveEntry } from "../services/entries";
+import { getCurrentUser } from "../services/permissions";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
 type AssistTab = "terms" | "comments" | "context" | "history";
@@ -76,6 +77,14 @@ const canGoPrevious = computed(() => selectedIndex.value > 0);
 const canGoNext = computed(
   () => selectedIndex.value >= 0 && selectedIndex.value < filteredEntries.value.length - 1,
 );
+const currentUser = computed(() => getCurrentUser());
+
+function getSaveEntryOptions() {
+  return {
+    actor: currentUser.value,
+    workflow: props.project.settings.workflow,
+  };
+}
 
 function getRequestedEntry(loadedEntries: Entry[]): Entry | undefined {
   if (props.targetEntryId) {
@@ -148,7 +157,7 @@ async function handleSaveEntry(entry: Entry) {
   savedMessage.value = "";
 
   try {
-    const savedEntry = await saveEntry(entry);
+    const savedEntry = await saveEntry(entry, getSaveEntryOptions());
 
     replaceEntry(savedEntry);
     savedMessage.value = "已保存译文。";
@@ -168,7 +177,7 @@ async function handleWorkflowStatus(entry: Entry) {
   savedMessage.value = "";
 
   try {
-    const savedEntry = await saveEntry(entry);
+    const savedEntry = await saveEntry(entry, getSaveEntryOptions());
 
     replaceEntry(savedEntry);
     savedMessage.value = "词条状态已更新。";
@@ -224,7 +233,7 @@ async function handleSaveAndNext(entry: Entry) {
   savedMessage.value = "";
 
   try {
-    const savedEntry = await saveEntry(entry);
+    const savedEntry = await saveEntry(entry, getSaveEntryOptions());
     const nextEntry = filteredEntries.value[selectedIndex.value + 1];
 
     replaceEntry(savedEntry);

@@ -38,8 +38,11 @@ import {
   verifyTextSignature,
 } from "./crypto";
 import {
+  PERMISSION_ACTIONS,
+} from "../model/permissions";
+import {
+  assertCan,
   canDangerousImportChangePackage,
-  canImportChangePackage,
   canImportMaintenanceChangePackage,
 } from "./permissions";
 
@@ -723,6 +726,37 @@ async function collectComments(
   return comments;
 }
 
+async function collectUserComments(
+  root: ProjectDirectoryHandle,
+  userId: string,
+): Promise<Record<string, Comment[]>> {
+  const comments: Record<string, Comment[]> = {};
+
+  if (!(await fileExists(root, "comments"))) {
+    return comments;
+  }
+
+  const fileIds = await listFiles(root, "comments");
+
+  for (const fileId of fileIds) {
+    const directory = `comments/${fileId}`;
+    const fileNames = await listFiles(root, directory);
+
+    for (const fileName of fileNames.filter((name) => name.endsWith(".jsonl"))) {
+      const path = `${directory}/${fileName}`;
+      const rows = (await readJsonl<Comment>(root, path)).filter(
+        (comment) => comment.user_id === userId,
+      );
+
+      if (rows.length > 0) {
+        comments[path] = rows;
+      }
+    }
+  }
+
+  return comments;
+}
+
 async function collectUserTerms(
   root: ProjectDirectoryHandle,
   userId: string,
@@ -1189,7 +1223,7 @@ export async function exportChangePackage(
 
   if (options.mode === "user_changes") {
     payload.entries = await collectUserChangedEntries(root, project, userId);
-    payload.comments = await collectComments(root, getPackageEntries(payload.entries), userId);
+    payload.comments = await collectUserComments(root, userId);
     payload.terms = await collectUserTerms(root, userId);
     payload.tasks = await collectUserTasks(root, userId);
     payload.events = await collectUserEvents(root, userId);
@@ -1521,7 +1555,9 @@ export async function applyChangePackage(
     throw new Error("修改包不属于当前项目，无法导入。");
   }
 
-  if (!canImportChangePackage(options.actor)) {
+  try {
+    assertCan(options.actor, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT);
+  } catch {
     throw new Error("当前成员没有导入修改包的权限。");
   }
 

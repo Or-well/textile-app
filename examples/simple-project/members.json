@@ -47,10 +47,10 @@
       "password_salt": "dGV4dGlsZS1zYWx0LWxlYWRlcg==",
       "password_updated_at": "2026-06-19T00:00:00.000Z",
       "created_at": "2026-06-19T00:00:00.000Z",
-      "updated_at": "2026-06-19T12:09:30.614Z",
-      "public_key": "{\"crv\":\"P-256\",\"ext\":true,\"key_ops\":[\"verify\"],\"kty\":\"EC\",\"x\":\"ecqZIlJdvGJr7d-NP9zE0aKl75fhEg91qG--fa0Em1g\",\"y\":\"bxfVNRJny62-2ZUJvoXlFmrqR-WwIgQAuTnxYC80vHI\"}",
-      "key_id": "key_a80447cfaa3d18af",
-      "key_created_at": "2026-06-19T12:09:30.614Z",
+      "updated_at": "2026-06-19T14:10:47.737Z",
+      "public_key": "{\"crv\":\"P-256\",\"ext\":true,\"key_ops\":[\"verify\"],\"kty\":\"EC\",\"x\":\"F6OAAfs-L-jdQkNWCN7XjHxttba4Rs7cVE5HXXduoiQ\",\"y\":\"Yb4JOisCZpLyKsUSKn8y6Q83SMbwCkAC9-8QIcuueZA\"}",
+      "key_id": "key_4600e04e1098ec68",
+      "key_created_at": "2026-06-19T14:10:47.737Z",
       "key_revoked_at": ""
     }
   ]

@@ -12,6 +12,19 @@ import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { calculateEntryProgress, type ProgressWeights } from "./stats";
 import {
+  canAssignTask,
+  canClaimTask,
+  canCompleteTask,
+  canCreateTask,
+  canDeleteTask,
+  canManageTask,
+  canReclaimTask,
+  canReopenTask,
+  canSubmitTask,
+  canUpdateTask,
+  getCurrentUser,
+} from "./permissions";
+import {
   ensureDirectory,
   listFiles,
   readJson,
@@ -98,6 +111,22 @@ function getProjectRoot(): ProjectDirectoryHandle {
   }
 
   return currentProjectRoot;
+}
+
+function getTaskActor(): NonNullable<ReturnType<typeof getCurrentUser>> {
+  const user = getCurrentUser();
+
+  if (!user?.id) {
+    throw new Error("Login required.");
+  }
+
+  return user;
+}
+
+function assertTaskWritePermission(canWrite: boolean): void {
+  if (!canWrite) {
+    throw new Error("Permission denied.");
+  }
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
@@ -379,12 +408,16 @@ async function updateTaskById(
 }
 
 export async function createTask(draft: TaskDraft, userId: string): Promise<Task> {
+  const actor = getTaskActor();
+
+  assertTaskWritePermission(canCreateTask(actor));
+
   const now = nowIso();
   const task = normalizeTask({
     ...draft,
     id: createId("task"),
     status: draft.status ?? (draft.assignee ? "assigned" : "unassigned"),
-    created_by: userId,
+    created_by: actor.id || userId,
     created_at: now,
     updated_at: now,
   });
@@ -399,10 +432,14 @@ export async function updateTask(
   taskId: string,
   patch: TaskPatch,
 ): Promise<Task> {
+  assertTaskWritePermission(canUpdateTask(getTaskActor()));
+
   return updateTaskById(taskId, (task) => mergeTaskPatch(task, patch));
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
+  assertTaskWritePermission(canDeleteTask(getTaskActor()));
+
   const tasks = await loadTasks();
   const nextTasks = tasks.filter((task) => task.id !== taskId);
 
@@ -417,6 +454,8 @@ export async function assignTask(
   taskId: string,
   assignee: string,
 ): Promise<Task> {
+  assertTaskWritePermission(canAssignTask(getTaskActor()));
+
   return updateTaskById(taskId, (task) =>
     mergeTaskPatch(task, {
       assignee,
@@ -426,23 +465,45 @@ export async function assignTask(
 }
 
 export async function claimTask(taskId: string, userId: string): Promise<Task> {
+  const actor = getTaskActor();
+
+  assertTaskWritePermission(canClaimTask(actor));
+
   return updateTaskById(taskId, (task) =>
-    mergeTaskPatch(task, {
-      assignee: userId,
-      status: "in_progress",
-    }),
+    {
+      if (task.assignee) {
+        throw new Error("Task already assigned.");
+      }
+
+      return mergeTaskPatch(task, {
+        assignee: actor.id || userId,
+        status: "in_progress",
+      });
+    },
   );
 }
 
 export async function submitTask(taskId: string): Promise<Task> {
+  const actor = getTaskActor();
+
+  assertTaskWritePermission(canSubmitTask(actor));
+
   return updateTaskById(taskId, (task) =>
-    mergeTaskPatch(task, {
-      status: "submitted",
-    }),
+    {
+      if (task.assignee !== actor.id && !canManageTask(actor)) {
+        throw new Error("Only assignee can submit this task.");
+      }
+
+      return mergeTaskPatch(task, {
+        status: "submitted",
+      });
+    },
   );
 }
 
 export async function completeTask(taskId: string): Promise<Task> {
+  assertTaskWritePermission(canCompleteTask(getTaskActor()));
+
   return updateTaskById(taskId, (task) =>
     mergeTaskPatch(task, {
       status: "completed",
@@ -451,6 +512,8 @@ export async function completeTask(taskId: string): Promise<Task> {
 }
 
 export async function reclaimTask(taskId: string): Promise<Task> {
+  assertTaskWritePermission(canReclaimTask(getTaskActor()));
+
   return updateTaskById(taskId, (task) =>
     mergeTaskPatch(task, {
       assignee: "",
@@ -460,6 +523,8 @@ export async function reclaimTask(taskId: string): Promise<Task> {
 }
 
 export async function reopenTask(taskId: string): Promise<Task> {
+  assertTaskWritePermission(canReopenTask(getTaskActor()));
+
   return updateTaskById(taskId, (task) =>
     mergeTaskPatch(task, {
       status: task.assignee ? "in_progress" : "unassigned",

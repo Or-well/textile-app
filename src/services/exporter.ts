@@ -298,8 +298,16 @@ export function generateTermCheckReport(entries: Entry[], terms: Term[]): string
   ].join("\n");
 }
 
-function buildSummary(entries: Entry[], exportEntries: Entry[]): ReleaseExportSummary {
-  const stats: BasicProjectStats = calculateEntryProgress(entries);
+function buildSummary(
+  project: ProjectConfig,
+  entries: Entry[],
+  exportEntries: Entry[],
+): ReleaseExportSummary {
+  const stats: BasicProjectStats = calculateEntryProgress(
+    entries,
+    project.settings.progress_weights,
+    project.settings.workflow,
+  );
 
   return {
     totalEntries: stats.totalEntries,
@@ -444,7 +452,7 @@ export async function getReleaseExportSummary(
     releaseOptions,
   );
 
-  return buildSummary(allEntries, exportEntries);
+  return buildSummary(config, allEntries, exportEntries);
 }
 
 export async function exportProject(
@@ -483,6 +491,6 @@ export async function exportProject(
     fileName: `release-${config.project_id}-${exportedAt.slice(0, 10)}.zip`,
     blob: await generateReleaseZip(data),
     manifest,
-    summary: buildSummary(allEntries, exportEntries),
+    summary: buildSummary(config, allEntries, exportEntries),
   };
 }

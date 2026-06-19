@@ -4,6 +4,13 @@ import { createId } from "../utils/id";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { nowIso } from "../utils/time";
 import {
+  canCreateTerm,
+  canDeleteTerm,
+  canImportTerm,
+  canUpdateTerm,
+  getCurrentUser,
+} from "./permissions";
+import {
   ensureDirectory,
   readJsonl,
   writeJsonl,
@@ -68,6 +75,22 @@ function getProjectRoot(): ProjectDirectoryHandle {
   }
 
   return currentProjectRoot;
+}
+
+function getWriteUserId(fallbackUserId = ""): string {
+  const user = getCurrentUser();
+
+  if (!user?.id) {
+    throw new Error("Login required.");
+  }
+
+  return user.id || fallbackUserId;
+}
+
+function assertTermWritePermission(canWrite: boolean): void {
+  if (!canWrite) {
+    throw new Error("Permission denied.");
+  }
 }
 
 function includesTermText(text: string, termText: string, caseSensitive?: boolean): boolean {
@@ -575,6 +598,10 @@ export async function saveTerms(terms: Term[]): Promise<Term[]> {
 }
 
 export async function addTerm(input: TermInput, userId: string): Promise<Term> {
+  const actorId = getWriteUserId(userId);
+
+  assertTermWritePermission(canCreateTerm(getCurrentUser()));
+
   const normalizedInput = normalizeTermInput(input);
 
   validateTermInput(normalizedInput);
@@ -583,7 +610,7 @@ export async function addTerm(input: TermInput, userId: string): Promise<Term> {
   const term: Term = {
     id: createId("term"),
     ...normalizedInput,
-    created_by: userId,
+    created_by: actorId,
     created_at: nowIso(),
     updated_at: nowIso(),
   };
@@ -597,6 +624,8 @@ export async function updateTerm(
   termId: string,
   input: TermInput,
 ): Promise<Term> {
+  assertTermWritePermission(canUpdateTerm(getCurrentUser()));
+
   const normalizedInput = normalizeTermInput(input);
 
   validateTermInput(normalizedInput);
@@ -622,6 +651,8 @@ export async function updateTerm(
 }
 
 export async function deleteTerm(termId: string): Promise<void> {
+  assertTermWritePermission(canDeleteTerm(getCurrentUser()));
+
   const terms = await loadTerms();
   const nextTerms = terms.filter((term) => term.id !== termId);
 
@@ -636,7 +667,11 @@ export async function importTermsFile(
   file: File,
   userId: string,
 ): Promise<ImportedTermsResult> {
-  const importedTerms = await parseImportedTerms(file, userId);
+  const actorId = getWriteUserId(userId);
+
+  assertTermWritePermission(canImportTerm(getCurrentUser()));
+
+  const importedTerms = await parseImportedTerms(file, actorId);
   const terms = await loadTerms();
   const nextTerms = [...terms];
   let added = 0;

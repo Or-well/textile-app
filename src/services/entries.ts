@@ -1,5 +1,11 @@
-import type { Entry } from "../model/types";
-import { normalizeEntries, normalizeEntry } from "../model/status";
+import { PERMISSION_ACTIONS } from "../model/permissions";
+import type { Entry, Member, ProjectWorkflowSettings } from "../model/types";
+import {
+  getEntryProofreadCount,
+  normalizeEntries,
+  normalizeEntry,
+  normalizeProofreadUsers,
+} from "../model/status";
 import { parseJsonl } from "../utils/jsonl";
 import { nowIso } from "../utils/time";
 import {
@@ -10,6 +16,15 @@ import {
   writeJsonl,
   type ProjectDirectoryHandle,
 } from "./projectFs";
+import {
+  assertCan,
+  canEditEntry,
+  canProofreadEntry,
+  canReviewEntry,
+  canRollbackEntry,
+  canTranslateEntry,
+  getCurrentUser,
+} from "./permissions";
 
 let currentProjectRoot: ProjectDirectoryHandle | null = null;
 let cachedEntries: Entry[] = [];
@@ -23,6 +38,11 @@ export interface SourceImportResult {
 export interface TranslationImportResult {
   matched: number;
   skipped: number;
+}
+
+export interface SaveEntryOptions {
+  actor?: Member | null;
+  workflow?: ProjectWorkflowSettings;
 }
 
 interface ImportEntryRow {
@@ -426,6 +446,124 @@ export function clearCachedEntriesForFile(fileId: string): void {
   cachedEntries = cachedEntries.filter((entry) => entry.file_id !== fileId);
 }
 
+function resolveActor(actor?: Member | null): Member {
+  const user = actor ?? getCurrentUser();
+
+  if (!user?.id) {
+    throw new Error("Login required.");
+  }
+
+  return user;
+}
+
+function assertCanWriteEntry(
+  actor: Member,
+  originalEntry: Entry,
+  nextEntry: Entry,
+  workflow?: ProjectWorkflowSettings,
+): void {
+  const originalProofreadCount = getEntryProofreadCount(originalEntry);
+  const nextProofreadCount = getEntryProofreadCount(nextEntry);
+  const targetChanged = nextEntry.target !== originalEntry.target;
+  const contextChanged = nextEntry.context !== originalEntry.context;
+  const isProofreadAction = nextProofreadCount > originalProofreadCount;
+  const isReviewAction =
+    nextEntry.status === "reviewed" &&
+    (originalEntry.status !== "reviewed" || nextEntry.reviewed_by !== originalEntry.reviewed_by);
+  const isRollbackAction =
+    (originalEntry.status === "reviewed" && nextEntry.status === "proofread") ||
+    (originalEntry.status === "proofread" && nextEntry.status === "translated");
+  const isTranslateAction =
+    targetChanged ||
+    (nextEntry.status === "translated" && originalEntry.status === "untranslated");
+
+  if (isRollbackAction) {
+    if (!canRollbackEntry(actor, originalEntry)) {
+      throw new Error("Permission denied.");
+    }
+    return;
+  }
+
+  if (isReviewAction) {
+    if (!canReviewEntry(actor, originalEntry, workflow)) {
+      throw new Error("Permission denied.");
+    }
+    return;
+  }
+
+  if (isProofreadAction) {
+    if (!canProofreadEntry(actor, originalEntry, workflow)) {
+      throw new Error("Permission denied.");
+    }
+    return;
+  }
+
+  if (isTranslateAction) {
+    if (!canTranslateEntry(actor, originalEntry) && !canEditEntry(actor, originalEntry)) {
+      throw new Error("Permission denied.");
+    }
+    return;
+  }
+
+  if (contextChanged) {
+    return;
+  }
+
+  if (!canEditEntry(actor, originalEntry)) {
+    throw new Error("Permission denied.");
+  }
+}
+
+function applyEntryAuditFields(
+  originalEntry: Entry,
+  entry: Entry,
+  actor: Member,
+): Entry {
+  const now = nowIso();
+  const target = entry.target;
+  const targetBecameFilled =
+    !originalEntry.target.trim() && target.trim().length > 0;
+  const statusBecameTranslated =
+    entry.status === "translated" && originalEntry.status === "untranslated";
+  const shouldMarkTranslated =
+    target.trim().length > 0 && originalEntry.status === "untranslated";
+  const originalProofreadCount = getEntryProofreadCount(originalEntry);
+  const nextProofreadCount = getEntryProofreadCount(entry);
+  const proofreadAction = nextProofreadCount > originalProofreadCount;
+  const reviewAction = entry.status === "reviewed";
+  const savedEntry: Entry = normalizeEntry({
+    ...originalEntry,
+    ...entry,
+    status: shouldMarkTranslated ? "translated" : entry.status,
+    updated_at: now,
+    updated_by: actor.id,
+  });
+
+  if (targetBecameFilled || statusBecameTranslated || shouldMarkTranslated) {
+    savedEntry.translated_by = actor.id;
+  }
+
+  if (proofreadAction) {
+    const proofreadBy = normalizeProofreadUsers(savedEntry.proofread_by);
+    const nextProofreadBy = proofreadBy.includes(actor.id)
+      ? proofreadBy
+      : [...proofreadBy, actor.id];
+
+    savedEntry.proofread_by = nextProofreadBy;
+    savedEntry.proofread_count = Math.max(
+      originalProofreadCount + 1,
+      nextProofreadCount,
+      nextProofreadBy.length,
+    );
+  }
+
+  if (reviewAction) {
+    savedEntry.reviewed_by = actor.id;
+  }
+
+  return savedEntry;
+}
+
 async function listEntryChunkFiles(
   root: ProjectDirectoryHandle,
   fileId: string,
@@ -500,6 +638,7 @@ export async function importEntryTranslations(
   fileId: string,
   fileName: string,
   text: string,
+  userId = "",
 ): Promise<TranslationImportResult> {
   const entries = await loadEntries(fileId);
   const rows = parseTranslationRows(text, fileName);
@@ -519,11 +658,18 @@ export async function importEntryTranslations(
       continue;
     }
 
+    const targetWasEmpty = !entry.target.trim();
+
     entry.target = row.target;
     entry.updated_at = now;
+    entry.updated_by = userId || entry.updated_by;
 
     if (row.target.trim() && entry.status === "untranslated") {
       entry.status = "translated";
+    }
+
+    if (row.target.trim() && (targetWasEmpty || entry.status === "translated") && userId) {
+      entry.translated_by = userId;
     }
 
     matched += 1;
@@ -591,11 +737,20 @@ export async function updateEntryContext(
     }
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
+    const actor = resolveActor(getCurrentUser()?.id === userId ? getCurrentUser() : undefined);
+    const action = nextContext
+      ? originalEntry.context?.trim()
+        ? PERMISSION_ACTIONS.CONTEXT_UPDATE
+        : PERMISSION_ACTIONS.CONTEXT_CREATE
+      : PERMISSION_ACTIONS.CONTEXT_DELETE;
+
+    assertCan(actor, action);
+
     const savedEntry: Entry = {
       ...originalEntry,
       context: nextContext,
       updated_at: nowIso(),
-      updated_by: userId || originalEntry.updated_by,
+      updated_by: actor.id,
     };
 
     entries[entryIndex] = savedEntry;
@@ -616,8 +771,12 @@ export async function updateEntryContext(
   throw new Error("没有找到要更新上下文的词条。请重新打开项目后再试。");
 }
 
-export async function saveEntry(entry: Entry): Promise<Entry> {
+export async function saveEntry(
+  entry: Entry,
+  options: SaveEntryOptions = {},
+): Promise<Entry> {
   const root = getProjectRoot();
+  const actor = resolveActor(options.actor);
   const fileId = getFileIdFromEntryId(entry.id);
   const entryDirectory = `entries/${fileId}`;
   const chunkFiles = await listEntryChunkFiles(root, fileId);
@@ -632,20 +791,11 @@ export async function saveEntry(entry: Entry): Promise<Entry> {
     }
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
-    const target = entry.target;
-    const shouldMarkTranslated =
-      target.trim().length > 0 && originalEntry.status === "untranslated";
-    const savedEntry: Entry = {
-      ...originalEntry,
-      ...entry,
-      status: shouldMarkTranslated ? "translated" : entry.status,
-      updated_at: nowIso(),
-      updated_by: entry.updated_by || originalEntry.assignee || originalEntry.updated_by,
-    };
+    const mergedEntry = normalizeEntry({ ...originalEntry, ...entry });
 
-    if (shouldMarkTranslated && !savedEntry.translated_by) {
-      savedEntry.translated_by = savedEntry.updated_by;
-    }
+    assertCanWriteEntry(actor, originalEntry, mergedEntry, options.workflow);
+
+    const savedEntry = applyEntryAuditFields(originalEntry, mergedEntry, actor);
 
     entries[entryIndex] = savedEntry;
 

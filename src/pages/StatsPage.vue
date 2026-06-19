@@ -95,7 +95,15 @@ watch(
       <section class="progress-panel progress-grid">
         <ProgressBar :percent="stats.translationProgress" label="翻译进度" />
         <ProgressBar :percent="stats.proofreadProgress" label="校对进度" />
-        <ProgressBar :percent="stats.reviewProgress" label="审核进度" />
+        <ProgressBar
+          v-if="stats.reviewRequired"
+          :percent="stats.reviewProgress"
+          label="审核进度"
+        />
+        <div v-else class="disabled-progress">
+          <span>审核进度</span>
+          <strong>未启用审核</strong>
+        </div>
       </section>
 
       <section class="stats-grid">
@@ -218,6 +226,27 @@ h2 {
 
 .progress-grid {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.disabled-progress {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  min-height: 74px;
+  padding: 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.disabled-progress span {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.disabled-progress strong {
+  color: #374151;
+  font-size: 16px;
 }
 
 .weight-note {

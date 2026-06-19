@@ -300,6 +300,7 @@ async function handleAddSources(files: File[]) {
         nextConfig,
         file,
         pendingFolder.value,
+        props.currentUser,
       );
       nextConfig = result.config;
       batchSuccessCount.value += 1;
@@ -325,6 +326,7 @@ async function handleUpdateSource(file?: File) {
     currentProject.value,
     activeFileId.value,
     file,
+    props.currentUser,
   );
 
   setProject(result.config);
@@ -341,6 +343,7 @@ async function handleImportTranslation(file?: File) {
     currentProject.value,
     activeFileId.value,
     file,
+    props.currentUser,
   );
 
   setProject(result.config);
@@ -369,6 +372,7 @@ async function handleBatchImportTranslations(files: File[]) {
         nextConfig,
         projectFile.id,
         file,
+        props.currentUser,
       );
       nextConfig = result.config;
       batchSuccessCount.value += 1;
@@ -395,7 +399,7 @@ async function handleRename(fileId: string) {
   setProject(
     await updateProjectFile(props.projectRoot, currentProject.value, fileId, {
       name: nextName,
-    }),
+    }, props.currentUser),
   );
   noticeMessage.value = "文件已重命名。";
   await loadFileSummaries();
@@ -423,7 +427,7 @@ async function handleToggleHidden(fileId: string) {
   setProject(
     await updateProjectFile(props.projectRoot, currentProject.value, fileId, {
       hidden: !file.hidden,
-    }),
+    }, props.currentUser),
   );
   noticeMessage.value = file.hidden ? "文件已取消隐藏。" : "文件已隐藏。";
   await loadFileSummaries();
@@ -439,7 +443,7 @@ async function handleToggleLocked(fileId: string) {
   setProject(
     await updateProjectFile(props.projectRoot, currentProject.value, fileId, {
       locked: !file.locked,
-    }),
+    }, props.currentUser),
   );
   noticeMessage.value = file.locked ? "文件已解锁。" : "文件已锁定。";
   await loadFileSummaries();
@@ -464,7 +468,7 @@ async function handleDelete(fileId: string) {
   noticeMessage.value = "";
 
   try {
-    setProject(await deleteProjectFile(props.projectRoot, currentProject.value, fileId));
+    setProject(await deleteProjectFile(props.projectRoot, currentProject.value, fileId, props.currentUser));
     noticeMessage.value = "文件已删除。";
     await loadFileSummaries();
   } catch (error) {

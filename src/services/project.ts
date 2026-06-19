@@ -1,14 +1,16 @@
 import type { Member, ProjectConfig, ProjectFile, ProofreadRequired } from "../model/types";
 import type { RolePermissions } from "../model/types";
-import { PERMISSION_ACTIONS } from "../model/permissions";
+import { PERMISSION_ACTIONS, type PermissionAction } from "../model/permissions";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { createPasswordFields } from "./auth";
 import { appendEventToRoot } from "./history";
 import {
+  assertCan,
   can,
   canManageMemberPermissionOverrides,
   getDefaultRolePermissions,
+  getCurrentUser,
   setPermissionProject,
   validateRolePermissionChange,
 } from "./permissions";
@@ -185,6 +187,16 @@ function assertSupportedImportFile(name: string): void {
   if (!["txt", "ks", "jsonl", "json", "csv"].includes(type)) {
     throw new Error("当前仅支持导入 .txt、.ks、.jsonl、.json、.csv 文本文件。");
   }
+}
+
+function resolveProjectActor(actor?: Member | null): Member {
+  const user = actor ?? getCurrentUser();
+
+  if (!user?.id) {
+    throw new Error("Login required.");
+  }
+
+  return user;
 }
 
 export async function loadProject(
@@ -394,7 +406,9 @@ export async function addSourceFileToProject(
   config: ProjectConfig,
   file: File,
   folder?: string,
+  actor?: Member | null,
 ): Promise<ProjectFileImportResult> {
+  assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_CREATE, config);
   assertSupportedImportFile(file.name);
 
   const sourceText = await file.text();
@@ -475,7 +489,9 @@ export async function updateSourceFileInProject(
   config: ProjectConfig,
   fileId: string,
   sourceFile: File,
+  actor?: Member | null,
 ): Promise<ProjectFileUpdateResult> {
+  assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_UPDATE, config);
   assertSupportedImportFile(sourceFile.name);
 
   const projectFile = config.files.find((file) => file.id === fileId);
@@ -496,7 +512,7 @@ export async function updateSourceFileInProject(
   return {
     config: await updateProjectFile(root, config, fileId, {
       updated_at: nowIso(),
-    }),
+    }, actor, PERMISSION_ACTIONS.FILE_UPDATE),
     entryCount: entries.length,
   };
 }
@@ -506,7 +522,15 @@ export async function importTranslationFileToProject(
   config: ProjectConfig,
   fileId: string,
   translationFile: File,
+  actor?: Member | null,
 ): Promise<ProjectFileTranslationImportResult> {
+  const writeActor = resolveProjectActor(actor);
+
+  assertCan(
+    writeActor,
+    PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION,
+    config,
+  );
   assertSupportedImportFile(translationFile.name);
 
   const projectFile = config.files.find((file) => file.id === fileId);
@@ -519,12 +543,13 @@ export async function importTranslationFileToProject(
     projectFile.id,
     translationFile.name,
     await translationFile.text(),
+    writeActor.id,
   );
 
   return {
     config: await updateProjectFile(root, config, fileId, {
       updated_at: nowIso(),
-    }),
+    }, actor, PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION),
     ...result,
   };
 }
@@ -534,7 +559,19 @@ export async function updateProjectFile(
   config: ProjectConfig,
   fileId: string,
   patch: UpdateProjectFilePatch,
+  actor?: Member | null,
+  requiredAction?: PermissionAction,
 ): Promise<ProjectConfig> {
+  const action = requiredAction ?? (patch.name
+    ? PERMISSION_ACTIONS.FILE_RENAME
+    : patch.locked !== undefined
+      ? PERMISSION_ACTIONS.FILE_LOCK
+      : patch.hidden !== undefined
+        ? PERMISSION_ACTIONS.FILE_HIDE
+        : PERMISSION_ACTIONS.FILE_UPDATE);
+
+  assertCan(resolveProjectActor(actor), action, config);
+
   let found = false;
   const nextConfig: ProjectConfig = {
     ...config,
@@ -571,7 +608,10 @@ export async function deleteProjectFile(
   root: ProjectDirectoryHandle,
   config: ProjectConfig,
   fileId: string,
+  actor?: Member | null,
 ): Promise<ProjectConfig> {
+  assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_DELETE, config);
+
   const file = config.files.find((item) => item.id === fileId);
 
   if (!file) {

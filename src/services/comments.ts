@@ -2,7 +2,16 @@ import type { Comment, Entry } from "../model/types";
 import { normalizeEntries, normalizeEntry } from "../model/status";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
-import { getCurrentUser } from "./permissions";
+import {
+  canCreateComment,
+  canDeleteComment,
+  canMarkDisputed,
+  canReopenComment,
+  canReplyComment,
+  canResolveComment,
+  canResolveDispute,
+  getCurrentUser,
+} from "./permissions";
 import {
   ensureDirectory,
   fileExists,
@@ -41,7 +50,19 @@ function getProjectRoot(): ProjectDirectoryHandle {
 }
 
 function getCurrentUserId(): string {
-  return getCurrentUser()?.id ?? "unknown_user";
+  const user = getCurrentUser();
+
+  if (!user?.id) {
+    throw new Error("Login required.");
+  }
+
+  return user.id;
+}
+
+function assertCommentWritePermission(canWrite: boolean): void {
+  if (!canWrite) {
+    throw new Error("Permission denied.");
+  }
 }
 
 function getEntryCommentPath(entry: Entry): string {
@@ -160,6 +181,11 @@ export async function addComment(
     throw new Error("评论内容不能为空。");
   }
 
+  const actor = getCurrentUser();
+  assertCommentWritePermission(
+    options.replyTo ? canReplyComment(actor) : canCreateComment(actor),
+  );
+
   const path = getEntryCommentPath(entry);
   const userId = getCurrentUserId();
   const comments = await loadComments(entry);
@@ -211,6 +237,10 @@ async function updateCommentStatus(
 ): Promise<Comment> {
   const root = getProjectRoot();
   const path = getEntryCommentPath(entry);
+  const actor = getCurrentUser();
+  assertCommentWritePermission(
+    status === "resolved" ? canResolveComment(actor) : canReopenComment(actor),
+  );
   const userId = getCurrentUserId();
   const comments = await loadComments(entry);
   const commentIndex = comments.findIndex((comment) => comment.id === commentId);
@@ -263,8 +293,11 @@ export async function deleteComment(
 ): Promise<void> {
   const root = getProjectRoot();
   const path = getEntryCommentPath(entry);
+  const actor = getCurrentUser();
   const userId = getCurrentUserId();
   const comments = await loadComments(entry);
+  const targetComment = comments.find((comment) => comment.id === commentId);
+  assertCommentWritePermission(canDeleteComment(actor, targetComment));
   const deleteIds = new Set([commentId]);
   let changed = true;
 
@@ -295,6 +328,9 @@ export async function markDisputed(
   entry: Entry,
   reason: string,
 ): Promise<Entry> {
+  const actor = getCurrentUser();
+  assertCommentWritePermission(canMarkDisputed(actor, entry));
+
   const userId = getCurrentUserId();
   const text = reason.trim();
   const updatedEntry = await updateEntry(
@@ -327,6 +363,9 @@ export async function resolveDispute(
   entry: Entry,
   resolution: string,
 ): Promise<Entry> {
+  const actor = getCurrentUser();
+  assertCommentWritePermission(canResolveDispute(actor, entry));
+
   const userId = getCurrentUserId();
   const text = resolution.trim();
   const updatedEntry = await updateEntry(

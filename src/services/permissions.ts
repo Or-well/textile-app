@@ -247,6 +247,10 @@ export function hasRole(user: Member | null | undefined, role: Role): boolean {
   return Boolean(user?.active && user.roles.includes(role));
 }
 
+export function isOwnerMember(user: Member | null | undefined): boolean {
+  return hasRole(user, "owner");
+}
+
 export function can(
   user: Member | null | undefined,
   action: PermissionAction | string,
@@ -263,6 +267,17 @@ export function can(
     permissions.has(actionName) ||
     getPermissionAliases(actionName).some((permission) => permissions.has(permission))
   );
+}
+
+export function assertCan(
+  user: Member | null | undefined,
+  action: PermissionAction | string,
+  project?: ProjectConfig,
+  message = "当前成员没有执行此操作的权限。",
+): asserts user is Member {
+  if (!can(user, action, project)) {
+    throw new Error(message);
+  }
 }
 
 export function canEditEntry(

@@ -1,7 +1,6 @@
 import type { Entry, ProjectConfig } from "../model/types";
 import {
   isEntryProofreadComplete,
-  isEntryReviewComplete,
   normalizeEntries,
   normalizeWorkflowSettings,
 } from "../model/status";
@@ -32,6 +31,11 @@ export interface BasicProjectStats {
 
 type ProgressWeightInput = ProjectConfig["settings"]["progress_weights"];
 type WorkflowInput = ProjectConfig["settings"]["workflow"];
+type NormalizableProgressWeights = ProgressWeights & {
+  translation?: number;
+  proofread?: number;
+  review?: number;
+};
 
 export const DEFAULT_PROGRESS_WEIGHTS: ProgressWeights = {
   translationWeight: 0.4,
@@ -45,30 +49,32 @@ function isValidWeight(value: number): boolean {
 
 export function normalizeProgressWeights(
   weights?: ProgressWeightInput,
+  workflow?: WorkflowInput,
 ): ProgressWeights {
-  if (!weights) {
-    return DEFAULT_PROGRESS_WEIGHTS;
-  }
+  const workflowSettings = normalizeWorkflowSettings(workflow);
+  const reviewEnabled = workflowSettings.review_required;
+  const source = (weights ?? DEFAULT_PROGRESS_WEIGHTS) as NormalizableProgressWeights;
 
   const translationWeight =
-    weights.translation ?? weights.translationWeight ?? DEFAULT_PROGRESS_WEIGHTS.translationWeight;
+    source.translation ?? source.translationWeight ?? DEFAULT_PROGRESS_WEIGHTS.translationWeight;
   const proofreadWeight =
-    weights.proofread ?? weights.proofreadWeight ?? DEFAULT_PROGRESS_WEIGHTS.proofreadWeight;
-  const reviewWeight =
-    weights.review ?? weights.reviewWeight ?? DEFAULT_PROGRESS_WEIGHTS.reviewWeight;
+    source.proofread ?? source.proofreadWeight ?? DEFAULT_PROGRESS_WEIGHTS.proofreadWeight;
+  const reviewWeight = reviewEnabled
+    ? source.review ?? source.reviewWeight ?? DEFAULT_PROGRESS_WEIGHTS.reviewWeight
+    : 0;
 
   if (
     !isValidWeight(translationWeight) ||
     !isValidWeight(proofreadWeight) ||
     !isValidWeight(reviewWeight)
   ) {
-    return DEFAULT_PROGRESS_WEIGHTS;
+    return normalizeProgressWeights(DEFAULT_PROGRESS_WEIGHTS, workflow);
   }
 
   const total = translationWeight + proofreadWeight + reviewWeight;
 
   if (total <= 0) {
-    return DEFAULT_PROGRESS_WEIGHTS;
+    return normalizeProgressWeights(DEFAULT_PROGRESS_WEIGHTS, workflow);
   }
 
   return {
@@ -92,17 +98,17 @@ export function calculateEntryProgress(
   workflow?: WorkflowInput,
 ): BasicProjectStats {
   const rows = normalizeEntries(entries);
-  const progressWeights = normalizeProgressWeights(weights);
   const workflowSettings = normalizeWorkflowSettings(workflow);
+  const progressWeights = normalizeProgressWeights(weights, workflowSettings);
   const totalEntries = rows.length;
   const untranslatedEntries = countByStatus(rows, "untranslated");
   const translatedEntries = countByStatus(rows, "translated");
   const proofreadEntries = rows.filter((entry) =>
     isEntryProofreadComplete(entry, workflowSettings),
   ).length;
-  const reviewedEntries = rows.filter((entry) =>
-    isEntryReviewComplete(entry, workflowSettings),
-  ).length;
+  const reviewedEntries = workflowSettings.review_required
+    ? countByStatus(rows, "reviewed")
+    : 0;
   const disputedEntries = rows.filter((entry) => entry.disputed === true).length;
   const translatedStageEntries =
     translatedEntries + countByStatus(rows, "proofread") + countByStatus(rows, "reviewed");
@@ -111,7 +117,10 @@ export function calculateEntryProgress(
     totalEntries === 0 ? 0 : translatedStageEntries / totalEntries;
   const proofreadRatio =
     totalEntries === 0 ? 0 : proofreadEntries / totalEntries;
-  const reviewRatio = totalEntries === 0 ? 0 : reviewedEntries / totalEntries;
+  const reviewRatio =
+    totalEntries === 0 || !workflowSettings.review_required
+      ? 0
+      : reviewedEntries / totalEntries;
   const overallRatio =
     translationRatio * progressWeights.translationWeight +
     proofreadRatio * progressWeights.proofreadWeight +
@@ -124,7 +133,7 @@ export function calculateEntryProgress(
     proofreadEntries,
     reviewedEntries,
     disputedEntries,
-    completedEntries: reviewedEntries,
+    completedEntries: workflowSettings.review_required ? reviewedEntries : proofreadEntries,
     translationProgress: toPercent(translationRatio),
     proofreadProgress: toPercent(proofreadRatio),
     reviewProgress: toPercent(reviewRatio),
