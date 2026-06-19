@@ -1,6 +1,8 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
+import ClearCacheDialog from "../components/settings/ClearCacheDialog.vue";
+import DeleteProjectDialog from "../components/settings/DeleteProjectDialog.vue";
 import MemberPermissionOverrides from "../components/settings/MemberPermissionOverrides.vue";
 import MemberManagementPanel from "../components/settings/MemberManagementPanel.vue";
 import RolePermissionEditor from "../components/settings/RolePermissionEditor.vue";
@@ -17,8 +19,20 @@ import {
   normalizeProjectExportSettings,
 } from "../services/exporter";
 import {
+  clearSelectedCache,
+  type CacheCleanupItemId,
+  type CacheCleanupResult,
+} from "../services/cacheMaintenance";
+import { appendEventToRoot } from "../services/history";
+import {
+  scanProjectDeletion,
+  type ProjectDeletionScan,
+} from "../services/projectDeletion";
+import {
   can,
+  canClearAppCache,
   canConfigureStats,
+  canDeleteProject,
   getCurrentUser,
 } from "../services/permissions";
 import { exportProjectPackage } from "../services/projectPackage";
@@ -65,6 +79,9 @@ const emit = defineEmits<{
   projectUpdated: [project: ProjectConfig];
   membersUpdated: [members: Member[]];
   openImportExport: [];
+  cacheStateChanged: [];
+  currentSessionCleared: [];
+  deleteProjectRequested: [];
 }>();
 
 const sectionItems: Array<{ key: SettingsSection; label: string }> = [
@@ -122,6 +139,12 @@ const isSavingWeights = ref(false);
 const isSavingExportSettings = ref(false);
 const isExportingProjectFile = ref(false);
 const isCheckingUpdate = ref(false);
+const isClearingCache = ref(false);
+const isScanningProjectDeletion = ref(false);
+const showClearCacheDialog = ref(false);
+const showDeleteProjectDialog = ref(false);
+const projectDeletionScan = ref<ProjectDeletionScan | null>(null);
+const projectDeletionError = ref("");
 const message = ref("");
 const errorMessage = ref("");
 let unsubscribeUpdate: (() => void) | null = null;
@@ -138,6 +161,12 @@ const canManageProject = computed(() =>
 );
 const canEditProgressWeights = computed(() =>
   canConfigureStats(currentUser.value),
+);
+const canClearCache = computed(() =>
+  canClearAppCache(currentUser.value, localProject.value ?? undefined),
+);
+const canRemoveProject = computed(() =>
+  canDeleteProject(currentUser.value, localProject.value ?? undefined),
 );
 const weightTotal = computed(
   () =>
@@ -513,13 +542,6 @@ async function handleInstallProgramUpdate() {
   errorMessage.value = "";
 }
 
-function confirmDangerAction(actionName: string): boolean {
-  return (
-    window.confirm(`确认要执行“${actionName}”吗？`) &&
-    window.confirm("再次确认：当前版本不会删除项目数据。继续执行？")
-  );
-}
-
 function handleDangerAction(actionName: string) {
   if (!canManageProject.value) {
     errorMessage.value = "当前用户没有执行危险操作的权限。";
@@ -529,16 +551,107 @@ function handleDangerAction(actionName: string) {
   message.value = "";
   errorMessage.value = "";
 
-  if (!confirmDangerAction(actionName)) {
-    return;
-  }
-
   if (actionName === "重建统计") {
     message.value = "统计数据按词条实时计算，已刷新当前项目摘要。";
     if (localProject.value) {
       emit("projectUpdated", localProject.value);
     }
   }
+}
+
+function cleanupResultText(result: CacheCleanupResult): string {
+  const cleanedLabels = result.cleaned.map((item) => item.label);
+  const missingLabels = result.missing.map((item) => item.label);
+  const parts = ["缓存已清理。项目数据未被删除。"];
+
+  if (cleanedLabels.length > 0) {
+    parts.push(`实际清理：${cleanedLabels.join("、")}。`);
+  }
+
+  if (missingLabels.length > 0) {
+    parts.push(`未发现缓存：${missingLabels.join("、")}。`);
+  }
+
+  return parts.join("");
+}
+
+async function handleClearCache(items: CacheCleanupItemId[]): Promise<void> {
+  if (!localProject.value || !currentUser.value) {
+    return;
+  }
+
+  if (!canClearCache.value) {
+    errorMessage.value = "当前用户没有清理缓存的权限。";
+    return;
+  }
+
+  isClearingCache.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const result = await clearSelectedCache(items, {
+      projectId: localProject.value.project_id,
+    });
+
+    await appendEventToRoot(getWritableRoot(), {
+      type: "app.cache_cleared",
+      user_id: currentUser.value.id,
+      detail: {
+        cleaned: result.cleaned,
+        missing: result.missing,
+      },
+    });
+
+    showClearCacheDialog.value = false;
+    message.value = cleanupResultText(result);
+
+    if (items.includes("recent_projects")) {
+      emit("cacheStateChanged");
+    }
+
+    if (items.includes("current_session")) {
+      emit("currentSessionCleared");
+    }
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "缓存清理失败。请稍后再试。";
+  } finally {
+    isClearingCache.value = false;
+  }
+}
+
+async function handleRequestDeleteProject(): Promise<void> {
+  if (!canRemoveProject.value) {
+    errorMessage.value = "当前用户没有删除项目的权限。";
+    return;
+  }
+
+  if (!localProject.value) {
+    return;
+  }
+
+  projectDeletionScan.value = null;
+  projectDeletionError.value = "";
+  showDeleteProjectDialog.value = true;
+  isScanningProjectDeletion.value = true;
+
+  try {
+    projectDeletionScan.value = await scanProjectDeletion(
+      getWritableRoot(),
+      localProject.value,
+    );
+  } catch (error) {
+    projectDeletionError.value =
+      error instanceof Error ? error.message : "项目目录检查失败，不能删除。";
+  } finally {
+    isScanningProjectDeletion.value = false;
+  }
+}
+
+function handleDeleteProjectConfirmed(): void {
+  showDeleteProjectDialog.value = false;
+  emit("deleteProjectRequested");
 }
 
 function handleMembersUpdated(members: Member[]): void {
@@ -1218,7 +1331,7 @@ onBeforeUnmount(() => {
         <section v-else class="settings-card danger-card">
           <header class="card-header">
             <h2>危险操作</h2>
-            <p>这些操作可能影响项目数据。已实现的操作需要二次确认。</p>
+            <p>这些操作会影响本机记录或当前项目来源，执行前需要明确确认。</p>
           </header>
 
           <div class="danger-list">
@@ -1237,29 +1350,56 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="danger-row disabled-row">
+            <div class="danger-row">
               <div>
                 <strong>清理缓存</strong>
-                <p>导出缓存清理尚未接入。当前版本不会删除任何文件。</p>
+                <p>清理程序运行产生的临时数据，不删除项目正文、成员信息或签名私钥。</p>
               </div>
-              <button class="secondary-button" type="button" disabled>
-                尚未实现
+              <button
+                class="secondary-button"
+                type="button"
+                :disabled="!canClearCache"
+                @click="showClearCacheDialog = true"
+              >
+                清理缓存
               </button>
             </div>
 
-            <div class="danger-row disabled-row">
+            <div class="danger-row">
               <div>
-                <strong>删除项目</strong>
-                <p>项目删除需要更完整的备份和确认流程，当前仅显示占位。</p>
+                <strong>彻底删除项目</strong>
+                <p>删除当前项目来源中的项目数据；如果浏览器没有源文件删除权限，会明确提示并禁止执行。</p>
               </div>
-              <button class="danger-button" type="button" disabled>
-                尚未实现
+              <button
+                class="danger-button"
+                type="button"
+                :disabled="!canRemoveProject"
+                @click="handleRequestDeleteProject"
+              >
+                彻底删除项目
               </button>
             </div>
           </div>
         </section>
       </section>
     </div>
+
+    <ClearCacheDialog
+      v-if="showClearCacheDialog"
+      :busy="isClearingCache"
+      @cancel="showClearCacheDialog = false"
+      @confirm="handleClearCache"
+    />
+
+    <DeleteProjectDialog
+      v-if="showDeleteProjectDialog && localProject"
+      :project-name="localProject.name"
+      :scan="projectDeletionScan"
+      :busy="isScanningProjectDeletion"
+      :error-message="projectDeletionError"
+      @cancel="showDeleteProjectDialog = false"
+      @confirm="handleDeleteProjectConfirmed"
+    />
   </section>
 </template>
 

@@ -1,10 +1,12 @@
 import type { Role } from "./types";
 
 export const PERMISSION_ACTIONS = {
+  APP_CACHE_CLEAR: "app.cache.clear",
   PROJECT_READ: "project.read",
   PROJECT_MANAGE: "project.manage",
   PROJECT_BACKUP: "project.backup",
   PROJECT_DELETE: "project.delete",
+  PROJECT_MAINTENANCE: "project.maintenance",
   MEMBER_VIEW: "member.view",
   MEMBER_MANAGE: "member.manage",
   MEMBER_RESET_PASSWORD: "member.reset_password",
@@ -129,10 +131,12 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
     id: "project",
     label: "项目",
     permissions: [
+      { action: PERMISSION_ACTIONS.APP_CACHE_CLEAR, label: "清理缓存" },
       { action: PERMISSION_ACTIONS.PROJECT_READ, label: "查看项目" },
       { action: PERMISSION_ACTIONS.PROJECT_MANAGE, label: "管理项目" },
       { action: PERMISSION_ACTIONS.PROJECT_BACKUP, label: "导出项目备份" },
       { action: PERMISSION_ACTIONS.PROJECT_DELETE, label: "删除项目" },
+      { action: PERMISSION_ACTIONS.PROJECT_MAINTENANCE, label: "项目维护" },
     ],
   },
   {
@@ -325,7 +329,9 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<Role, readonly PermissionAction[]>
   owner: [
     ...READ_ONLY_PERMISSIONS,
     ...OWNER_LOCKED_PERMISSIONS,
+    PERMISSION_ACTIONS.APP_CACHE_CLEAR,
     PERMISSION_ACTIONS.PROJECT_DELETE,
+    PERMISSION_ACTIONS.PROJECT_MAINTENANCE,
     PERMISSION_ACTIONS.MEMBER_RESET_PASSWORD,
     PERMISSION_ACTIONS.FILE_CREATE,
     PERMISSION_ACTIONS.FILE_UPDATE,
@@ -382,8 +388,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<Role, readonly PermissionAction[]>
   ],
   admin: [
     ...READ_ONLY_PERMISSIONS,
+    PERMISSION_ACTIONS.APP_CACHE_CLEAR,
     PERMISSION_ACTIONS.PROJECT_MANAGE,
     PERMISSION_ACTIONS.PROJECT_BACKUP,
+    PERMISSION_ACTIONS.PROJECT_MAINTENANCE,
     PERMISSION_ACTIONS.MEMBER_MANAGE,
     PERMISSION_ACTIONS.MEMBER_RESET_PASSWORD,
     PERMISSION_ACTIONS.ROLE_MANAGE,
@@ -438,8 +446,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<Role, readonly PermissionAction[]>
   ],
   tech_lead: [
     ...READ_ONLY_PERMISSIONS,
+    PERMISSION_ACTIONS.APP_CACHE_CLEAR,
     PERMISSION_ACTIONS.PROJECT_MANAGE,
     PERMISSION_ACTIONS.PROJECT_BACKUP,
+    PERMISSION_ACTIONS.PROJECT_MAINTENANCE,
     PERMISSION_ACTIONS.MEMBER_MANAGE,
     PERMISSION_ACTIONS.ROLE_MANAGE,
     PERMISSION_ACTIONS.FILE_CREATE,

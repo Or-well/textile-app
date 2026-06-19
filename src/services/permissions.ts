@@ -561,6 +561,20 @@ export function canConfigureStats(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.PROJECT_MANAGE);
 }
 
+export function canClearAppCache(
+  user: Member | null | undefined,
+  project?: ProjectConfig,
+): boolean {
+  return can(user, PERMISSION_ACTIONS.APP_CACHE_CLEAR, project);
+}
+
+export function canDeleteProject(
+  user: Member | null | undefined,
+  project?: ProjectConfig,
+): boolean {
+  return can(user, PERMISSION_ACTIONS.PROJECT_DELETE, project);
+}
+
 export function canManageRolePermissions(
   user: Member | null | undefined,
   project?: ProjectConfig,

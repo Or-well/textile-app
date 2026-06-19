@@ -30,6 +30,7 @@ import {
   openProjectRoot,
   type OpenedProject,
 } from "./services/project";
+import { deleteCurrentProjectSource } from "./services/projectDeletion";
 import {
   getRecentProjectHandle,
   hasRecentProjectAccess,
@@ -95,6 +96,7 @@ const isOpeningProjectFile = ref(false);
 const isLoggingIn = ref(false);
 const isRestoringProject = ref(false);
 const appErrorMessage = ref("");
+const appNoticeMessage = ref("");
 const loginErrorMessage = ref("");
 const packedProjectNotice = ref("");
 
@@ -166,6 +168,7 @@ function navigate(path: string) {
   window.history.pushState({}, "", path);
   routePath.value = path;
   appErrorMessage.value = "";
+  appNoticeMessage.value = "";
 }
 
 function replace(path: string) {
@@ -451,6 +454,20 @@ function handleLogout() {
   loginErrorMessage.value = "";
 }
 
+function handleCurrentSessionCleared() {
+  if (currentProject.value) {
+    clearProjectSession(currentProject.value.config.project_id);
+  }
+
+  setCurrentUser(null);
+  currentUser.value = null;
+  loginErrorMessage.value = "";
+}
+
+function handleCacheStateChanged() {
+  recentProjects.value = listRecentProjects();
+}
+
 function handleMembersUpdated(members: Member[]) {
   if (!currentProject.value) {
     return;
@@ -492,6 +509,40 @@ function handleProjectUpdated(config: ProjectConfig) {
     config,
   };
   void refreshProjectSummary();
+}
+
+async function handleDeleteProjectRequested() {
+  if (!currentProject.value) {
+    return;
+  }
+
+  const project = currentProject.value;
+
+  try {
+    const result = await deleteCurrentProjectSource(
+      project.root,
+      project.config,
+      currentUser.value,
+    );
+
+    recentProjects.value = await removeRecentProject(project.config.project_id);
+    clearProjectSession(project.config.project_id);
+    setCurrentUser(null);
+    currentUser.value = null;
+    currentProject.value = null;
+    currentStats.value = null;
+    taskCount.value = 0;
+    loginErrorMessage.value = "";
+    packedProjectNotice.value = "";
+    appErrorMessage.value = "";
+    appNoticeMessage.value = result.diskFilesDeleted
+      ? "项目内容已删除，项目已从最近项目中移除。项目根文件夹可能仍为空文件夹。"
+      : "项目删除未完全完成，已关闭当前项目并从最近项目中移除。请手动检查失败项。";
+    replace("/projects");
+  } catch (error) {
+    appErrorMessage.value =
+      error instanceof Error ? error.message : "删除项目失败。请稍后再试。";
+  }
 }
 
 function handleOpenFile(fileId: string) {
@@ -741,6 +792,9 @@ onBeforeUnmount(() => {
         @project-updated="handleProjectUpdated"
         @members-updated="handleMembersUpdated"
         @open-import-export="handleOpenProjectSection('import-export')"
+        @cache-state-changed="handleCacheStateChanged"
+        @current-session-cleared="handleCurrentSessionCleared"
+        @delete-project-requested="handleDeleteProjectRequested"
       />
 
       <section v-else class="placeholder-page">
@@ -771,6 +825,9 @@ onBeforeUnmount(() => {
   </main>
 
   <UpdateNotice />
+  <aside v-if="appNoticeMessage" class="app-notice">
+    {{ appNoticeMessage }}
+  </aside>
   <aside v-if="packedProjectNotice" class="packed-project-notice">
     {{ packedProjectNotice }}
   </aside>
@@ -781,6 +838,7 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.app-notice,
 .packed-project-notice {
   position: fixed;
   left: 18px;
@@ -797,5 +855,11 @@ onBeforeUnmount(() => {
   font-size: 14px;
   line-height: 1.6;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.16);
+}
+
+.app-notice {
+  border-color: #b7dfc2;
+  background: #f0fdf4;
+  color: #166534;
 }
 </style>

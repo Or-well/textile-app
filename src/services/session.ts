@@ -82,6 +82,10 @@ export function clearProjectSession(projectId: string): void {
   );
 }
 
+export function clearAllProjectSessions(): void {
+  writeSessions([]);
+}
+
 export function getProjectSession(projectId: string): ProjectSession | null {
   return (
     readSessions().find((session) => session.projectId === projectId) ?? null

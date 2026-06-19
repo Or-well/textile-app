@@ -141,6 +141,23 @@ async function deleteProjectHandle(projectId: string): Promise<void> {
   database.close();
 }
 
+async function clearProjectHandles(): Promise<void> {
+  const database = await openRecentProjectDatabase();
+
+  if (!database) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const transaction = database.transaction(PROJECT_HANDLES_STORE, "readwrite");
+
+    transaction.objectStore(PROJECT_HANDLES_STORE).clear();
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+  });
+  database.close();
+}
+
 export function listRecentProjects(): RecentProjectRecord[] {
   return readRecentProjects();
 }
@@ -185,6 +202,13 @@ export async function removeRecentProject(
   await deleteProjectHandle(projectId);
 
   return listRecentProjects();
+}
+
+export async function clearRecentProjects(): Promise<RecentProjectRecord[]> {
+  writeRecentProjects([]);
+  await clearProjectHandles();
+
+  return [];
 }
 
 export async function getRecentProjectHandle(
