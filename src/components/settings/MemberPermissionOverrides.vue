@@ -158,7 +158,7 @@ watch(
           <div>
             <h3>{{ selectedMember.name }}</h3>
             <p>
-              deny 权限优先级最高，会覆盖角色权限和额外允许权限。
+              禁止项优先：勾选禁止后，即使角色已允许，该成员也不能使用对应功能。
             </p>
           </div>
           <span class="permission-count">{{ effectivePermissions.length }} 项有效权限</span>
