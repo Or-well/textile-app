@@ -1,12 +1,16 @@
 {
-  "latest_version": "0.2.0",
-  "release_date": "2026-06-20",
+  "version": "0.1.0",
+  "latest_version": "0.1.0",
+  "build_id": "0.1.0-8993155818d7",
+  "assets_hash": "8993155818d74de0c37f6544e211696ed4b4f3b7ac71ccedf9612c9b6adaa73d",
+  "schema_version": 1,
+  "release_date": "2026-06-19",
   "channel": "stable",
   "critical": false,
-  "download_url": "https://github.com/example/patchwork/releases/latest",
+  "download_url": "https://github.com/example/textile/releases/latest",
   "notes": [
-    "修复综合进度统计",
-    "增加术语管理",
-    "优化编辑器布局"
+    "完善 Textile Web / PWA 自动更新流程。",
+    "新版资源可在后台准备，安全时机刷新生效。",
+    "优化关于 / 更新页面的状态说明。"
   ]
 }

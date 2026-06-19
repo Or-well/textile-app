@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import ProjectLayout from "./components/ProjectLayout.vue";
 import UpdateNotice from "./components/UpdateNotice.vue";
 import CommentsPage from "./pages/CommentsPage.vue";
@@ -23,7 +23,11 @@ import { setExporterProjectRoot } from "./services/exporter";
 import { setHistoryProjectRoot } from "./services/history";
 import { loginMember } from "./services/auth";
 import { getCurrentUser, setCurrentUser } from "./services/permissions";
-import { checkForUpdates, setupPwaUpdateListener } from "./services/appUpdate";
+import {
+  checkForUpdates,
+  reevaluatePendingAppUpdate,
+  setupPwaUpdateListener,
+} from "./services/appUpdate";
 import {
   openProject,
   openProjectFile,
@@ -48,6 +52,7 @@ import {
 import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectRoot } from "./services/tasks";
 import { setTermsProjectRoot } from "./services/terms";
+import { setAppUpdateSafety } from "./services/updateSafety";
 
 type ProjectSection =
   | "overview"
@@ -178,6 +183,25 @@ function replace(path: string) {
 
 function handlePopState() {
   routePath.value = `${window.location.pathname}${window.location.search}`;
+}
+
+function syncAppUpdateSafety() {
+  const currentRoute = route.value;
+  const section =
+    currentRoute.page === "project" ? currentRoute.section : undefined;
+
+  setAppUpdateSafety({
+    page: currentRoute.page,
+    section,
+    hasProject: Boolean(currentProject.value),
+    hasUser: Boolean(currentUser.value),
+    isBusy:
+      isOpeningProject.value ||
+      isOpeningProjectFile.value ||
+      isLoggingIn.value ||
+      isRestoringProject.value,
+  });
+  reevaluatePendingAppUpdate();
 }
 
 function updatePackedProjectNotice(project: OpenedProject | null) {
@@ -655,6 +679,20 @@ async function restoreProjectFromRoute() {
     isRestoringProject.value = false;
   }
 }
+
+watch(
+  [
+    route,
+    currentProject,
+    currentUser,
+    isOpeningProject,
+    isOpeningProjectFile,
+    isLoggingIn,
+    isRestoringProject,
+  ],
+  syncAppUpdateSafety,
+  { immediate: true },
+);
 
 onMounted(() => {
   window.addEventListener("popstate", handlePopState);

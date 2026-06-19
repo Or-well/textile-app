@@ -39,6 +39,11 @@ const latestVersionText = computed(() =>
   updateState.value.latest ? `v${updateState.value.latest.latest_version}` : "",
 );
 const currentVersionText = computed(() => `v${updateState.value.currentVersion}`);
+const refreshMessage = computed(
+  () =>
+    updateState.value.refreshBlockedReason ||
+    "刷新后即可使用新版 Textile。",
+);
 
 function handleOpenDownloadPage(): void {
   openDownloadPage(updateState.value.latest?.download_url);
@@ -67,8 +72,8 @@ onBeforeUnmount(() => {
   <aside v-if="shouldShow" class="update-notice" aria-live="polite">
     <template v-if="updateState.pwaRefreshReady">
       <div class="notice-content">
-        <p class="notice-title">新版本已准备好</p>
-        <p class="notice-text">刷新后即可使用新版程序</p>
+        <p class="notice-title">Textile 新版本已准备好</p>
+        <p class="notice-text">{{ refreshMessage }}</p>
       </div>
 
       <div class="notice-actions">
@@ -83,7 +88,7 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <div class="notice-content">
-        <p class="notice-title">发现新版本 {{ latestVersionText }}</p>
+        <p class="notice-title">发现 Textile 新版本 {{ latestVersionText }}</p>
         <p class="notice-text">当前版本：{{ currentVersionText }}</p>
         <p class="notice-source">更新来源：{{ updateState.sourceUrl }}</p>
 

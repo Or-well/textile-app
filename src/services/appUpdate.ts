@@ -1,5 +1,6 @@
 import packageInfo from "../../package.json";
 import { registerSW } from "virtual:pwa-register";
+import { getAppUpdateSafety } from "./updateSafety";
 
 export type UpdateChannel = "stable" | "beta";
 export type AppPlatform = "web" | "pwa" | "desktop";
@@ -8,10 +9,16 @@ export type UpdateStatus =
   | "checking"
   | "up-to-date"
   | "update-available"
+  | "ready-to-refresh"
+  | "refreshing"
   | "failed";
 
 export interface VersionManifest {
+  version: string;
   latest_version: string;
+  build_id: string;
+  assets_hash: string;
+  schema_version: number;
   release_date: string;
   channel: UpdateChannel;
   critical: boolean;
@@ -32,19 +39,38 @@ export interface UpdateCheckResult {
 
 export interface AppUpdateState extends UpdateCheckResult {
   pwaRefreshReady: boolean;
+  canAutoRefresh: boolean;
+  refreshBlockedReason: string;
+  latestDownloadedAt: string;
   dismissedVersion: string;
   errorMessage: string;
 }
+
+type BroadcastMessage =
+  | {
+      type: "state";
+      sourceId: string;
+      state: AppUpdateState;
+    }
+  | {
+      type: "refreshing";
+      sourceId: string;
+    };
 
 const UPDATE_CHANNEL_STORAGE_KEY = "textile.update.channel";
 const DISMISSED_VERSION_STORAGE_KEY = "textile.update.dismissed_version";
 const VERSION_MANIFEST_URL = "/version.json";
 const OFFICIAL_DOWNLOAD_URL =
-  "https://github.com/example/patchwork/releases/latest";
+  "https://github.com/example/textile/releases/latest";
+const UPDATE_BROADCAST_CHANNEL = "textile.update.broadcast.v1";
+const SERVICE_WORKER_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 const listeners = new Set<(state: AppUpdateState) => void>();
+const sourceId = createSourceId();
 let pwaSetupDone = false;
+let isApplyingUpdate = false;
 let reloadPwa: ((reloadPage?: boolean) => Promise<void>) | null = null;
+let updateBroadcast: BroadcastChannel | null = null;
 
 let state: AppUpdateState = {
   status: "idle",
@@ -55,6 +81,9 @@ let state: AppUpdateState = {
   checkedAt: "",
   message: "尚未检查更新。",
   pwaRefreshReady: false,
+  canAutoRefresh: true,
+  refreshBlockedReason: "",
+  latestDownloadedAt: "",
   dismissedVersion: readDismissedVersion(),
   errorMessage: "",
 };
@@ -123,14 +152,15 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     }
 
     const hasNewVersion =
-      compareVersions(manifest.latest_version, state.currentVersion) > 0;
+      compareVersions(manifest.latest_version, state.currentVersion) > 0 ||
+      isDifferentBuild(manifest, state.latest);
     const result = buildResult({
       status: hasNewVersion ? "update-available" : "up-to-date",
       latest: manifest,
       checkedAt,
       message: hasNewVersion
         ? `发现新版本 v${normalizeVersion(manifest.latest_version)}。`
-        : "当前已经是最新版。",
+        : "当前已经是最新版本。",
     });
 
     state = { ...state, ...result, errorMessage: "" };
@@ -160,7 +190,6 @@ export function dismissUpdate(): void {
 
   state = {
     ...state,
-    pwaRefreshReady: false,
     dismissedVersion,
   };
 
@@ -178,13 +207,13 @@ export function openDownloadPage(downloadUrl = OFFICIAL_DOWNLOAD_URL): void {
 }
 
 export async function installUpdate(): Promise<UpdateCheckResult> {
-  if (state.platform === "pwa" && state.pwaRefreshReady && reloadPwa) {
-    await reloadPwa(true);
+  if (state.pwaRefreshReady && reloadPwa) {
+    await applyReadyUpdate();
     return buildResult({
-      status: "up-to-date",
+      status: "refreshing",
       latest: state.latest,
       checkedAt: new Date().toISOString(),
-      message: "正在刷新到新版程序。",
+      message: "正在刷新到新版 Textile...",
     });
   }
 
@@ -195,9 +224,9 @@ export async function installUpdate(): Promise<UpdateCheckResult> {
     latest: state.latest,
     checkedAt: state.checkedAt || new Date().toISOString(),
     message:
-      state.platform === "desktop"
-        ? "桌面自动安装尚未接入。请从官方发布页下载安装包；后续接入时需要签名校验。"
-        : "已打开官方下载页，请手动下载新版程序。",
+      state.status === "update-available"
+        ? "已打开下载页。Web / PWA 版本也会在后台准备可刷新更新。"
+        : "已打开下载页。当前还没有可直接刷新的新版。",
   });
 }
 
@@ -207,20 +236,151 @@ export function setupPwaUpdateListener(): void {
   }
 
   pwaSetupDone = true;
+  setupBroadcastChannel();
   reloadPwa = registerSW({
     immediate: true,
     onNeedRefresh() {
-      state = {
-        ...state,
-        platform: "pwa",
-        pwaRefreshReady: true,
-        dismissedVersion: "",
-        message: "新版本已准备好，刷新后即可使用新版程序。",
-      };
-      writeStorage(DISMISSED_VERSION_STORAGE_KEY, "");
-      notifyListeners();
+      markPwaRefreshReady("Textile 新版本已准备好，刷新后即可使用。");
+    },
+    onOfflineReady() {
+      if (state.status === "idle") {
+        state = {
+          ...state,
+          message: "Textile 已可离线使用。",
+        };
+        notifyListeners();
+      }
+    },
+    onRegistered(registration: ServiceWorkerRegistration | undefined) {
+      if (!registration) {
+        return;
+      }
+
+      window.setInterval(() => {
+        if (navigator.onLine) {
+          void registration.update();
+        }
+      }, SERVICE_WORKER_CHECK_INTERVAL_MS);
     },
   });
+}
+
+export function reevaluatePendingAppUpdate(): void {
+  if (!state.pwaRefreshReady) {
+    return;
+  }
+
+  syncSafetyState();
+  notifyListeners();
+  void applyReadyUpdateWhenSafe();
+}
+
+function markPwaRefreshReady(message: string): void {
+  syncSafetyState();
+  state = {
+    ...state,
+    status: "ready-to-refresh",
+    platform: detectPlatform(),
+    pwaRefreshReady: true,
+    latestDownloadedAt: new Date().toISOString(),
+    dismissedVersion: "",
+    message,
+    errorMessage: "",
+  };
+  writeStorage(DISMISSED_VERSION_STORAGE_KEY, "");
+  notifyListeners();
+  void applyReadyUpdateWhenSafe();
+}
+
+async function applyReadyUpdateWhenSafe(): Promise<void> {
+  if (!state.pwaRefreshReady || !state.canAutoRefresh || !reloadPwa) {
+    return;
+  }
+
+  if (state.dismissedVersion === "pwa-refresh") {
+    return;
+  }
+
+  await applyReadyUpdate();
+}
+
+async function applyReadyUpdate(): Promise<void> {
+  if (isApplyingUpdate || !reloadPwa) {
+    return;
+  }
+
+  isApplyingUpdate = true;
+  state = {
+    ...state,
+    status: "refreshing",
+    message: "正在刷新到新版 Textile...",
+    errorMessage: "",
+  };
+  notifyListeners();
+  broadcastMessage({ type: "refreshing", sourceId });
+  await reloadPwa(true);
+}
+
+function syncSafetyState(): void {
+  const safety = getAppUpdateSafety();
+  state = {
+    ...state,
+    canAutoRefresh: safety.canAutoRefresh,
+    refreshBlockedReason: safety.canAutoRefresh ? "" : safety.reason,
+    message:
+      state.pwaRefreshReady && !safety.canAutoRefresh
+        ? safety.reason
+        : state.message,
+  };
+}
+
+function setupBroadcastChannel(): void {
+  if (!("BroadcastChannel" in window) || updateBroadcast) {
+    return;
+  }
+
+  updateBroadcast = new BroadcastChannel(UPDATE_BROADCAST_CHANNEL);
+  updateBroadcast.onmessage = (event: MessageEvent<BroadcastMessage>) => {
+    const message = event.data;
+
+    if (!message || message.sourceId === sourceId) {
+      return;
+    }
+
+    if (message.type === "refreshing" && state.pwaRefreshReady && reloadPwa) {
+      void applyReadyUpdate();
+      return;
+    }
+
+    if (message.type === "state") {
+      mergeBroadcastState(message.state);
+    }
+  };
+}
+
+function mergeBroadcastState(nextState: AppUpdateState): void {
+  const shouldAdoptRefreshReady =
+    nextState.pwaRefreshReady && !state.pwaRefreshReady;
+  const shouldAdoptNewerCheck =
+    nextState.checkedAt && nextState.checkedAt > state.checkedAt;
+
+  if (!shouldAdoptRefreshReady && !shouldAdoptNewerCheck) {
+    return;
+  }
+
+  state = {
+    ...state,
+    status: nextState.status,
+    latest: nextState.latest,
+    checkedAt: nextState.checkedAt,
+    message: nextState.message,
+    pwaRefreshReady: nextState.pwaRefreshReady,
+    latestDownloadedAt: nextState.latestDownloadedAt,
+    errorMessage: nextState.errorMessage,
+  };
+  syncSafetyState();
+  notifyListeners({ broadcast: false });
+  void applyReadyUpdateWhenSafe();
 }
 
 function buildResult(input: {
@@ -255,8 +415,10 @@ async function fetchVersionManifest(): Promise<VersionManifest> {
 }
 
 function validateVersionManifest(data: Partial<VersionManifest>): VersionManifest {
+  const manifestVersion = data.latest_version ?? data.version;
+
   if (
-    !data.latest_version ||
+    !manifestVersion ||
     !data.release_date ||
     !isUpdateChannel(data.channel) ||
     !Array.isArray(data.notes)
@@ -264,8 +426,18 @@ function validateVersionManifest(data: Partial<VersionManifest>): VersionManifes
     throw new Error("版本信息格式有问题，无法判断是否需要更新。");
   }
 
+  const normalizedVersion = normalizeVersion(manifestVersion);
+
   return {
-    latest_version: normalizeVersion(data.latest_version),
+    version: normalizeVersion(data.version ?? normalizedVersion),
+    latest_version: normalizedVersion,
+    build_id: typeof data.build_id === "string" ? data.build_id : normalizedVersion,
+    assets_hash:
+      typeof data.assets_hash === "string" ? data.assets_hash : normalizedVersion,
+    schema_version:
+      typeof data.schema_version === "number" && Number.isFinite(data.schema_version)
+        ? data.schema_version
+        : 1,
     release_date: data.release_date,
     channel: data.channel,
     critical: data.critical === true,
@@ -283,6 +455,20 @@ function isManifestForChannel(
   }
 
   return manifest.channel === "stable";
+}
+
+function isDifferentBuild(
+  nextManifest: VersionManifest,
+  previousManifest?: VersionManifest,
+): boolean {
+  if (!previousManifest) {
+    return false;
+  }
+
+  return (
+    nextManifest.latest_version === state.currentVersion &&
+    previousManifest.build_id !== nextManifest.build_id
+  );
 }
 
 function compareVersions(left: string, right: string): number {
@@ -403,10 +589,27 @@ function cloneState(currentState: AppUpdateState): AppUpdateState {
   };
 }
 
-function notifyListeners(): void {
+function notifyListeners(options: { broadcast?: boolean } = {}): void {
+  syncSafetyState();
   const snapshot = cloneState(state);
 
   listeners.forEach((listener) => {
     listener(snapshot);
   });
+
+  if (options.broadcast !== false) {
+    broadcastMessage({ type: "state", sourceId, state: snapshot });
+  }
+}
+
+function broadcastMessage(message: BroadcastMessage): void {
+  try {
+    updateBroadcast?.postMessage(message);
+  } catch {
+    // BroadcastChannel is best-effort. A single tab can still update safely.
+  }
+}
+
+function createSourceId(): string {
+  return `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }

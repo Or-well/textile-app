@@ -4,6 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "prebuild": "node scripts/generate-version-manifest.mjs",
+    "version:manifest": "node scripts/generate-version-manifest.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build --configLoader runner",
     "preview": "vite preview"

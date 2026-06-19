@@ -205,11 +205,16 @@ const lastUpdateCheckText = computed(() => {
 });
 const updateStatusText = computed(() => {
   if (updateState.value.pwaRefreshReady) {
-    return "新版本已准备好，刷新后即可使用。";
+    return updateState.value.canAutoRefresh
+      ? "新版本已准备好，Textile 会在安全时机自动刷新。"
+      : updateState.value.refreshBlockedReason || "新版本已准备好，刷新后即可使用。";
   }
 
   return updateState.value.message;
 });
+const latestBuildText = computed(() =>
+  updateState.value.latest?.build_id ? updateState.value.latest.build_id : "尚未获取",
+);
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
 
 function applyProject(project: ProjectConfig): void {
@@ -1270,7 +1275,7 @@ onBeforeUnmount(() => {
             <div class="form-row">
               <div class="row-label">
                 <span>手动检查</span>
-                <p>读取固定的版本清单，发现新版本时显示下载入口。</p>
+                <p>读取 Textile 版本清单；PWA 新版下载完成后可直接刷新使用。</p>
               </div>
               <div class="row-control button-control">
                 <button
@@ -1289,11 +1294,12 @@ onBeforeUnmount(() => {
                   打开下载页
                 </button>
                 <button
+                  v-if="updateState.pwaRefreshReady"
                   class="secondary-button"
                   type="button"
                   @click="handleInstallProgramUpdate"
                 >
-                  {{ updateState.pwaRefreshReady ? "立即刷新" : "安装占位" }}
+                  立即刷新
                 </button>
               </div>
             </div>
@@ -1307,11 +1313,18 @@ onBeforeUnmount(() => {
                 <strong>{{ updateState.message }}</strong>
                 <span>检查时间：{{ lastUpdateCheckText }}</span>
                 <span>最新版本：{{ latestProgramVersion }}</span>
+                <span>构建编号：{{ latestBuildText }}</span>
                 <span v-if="updateState.latest">
                   发布日期：{{ updateState.latest.release_date }} ·
                   通道：{{ updateState.latest.channel }}
                 </span>
                 <span v-if="updateState.latest?.critical">这是重要更新。</span>
+                <span v-if="updateState.pwaRefreshReady">
+                  新版资源已下载：{{ updateState.latestDownloadedAt ? new Date(updateState.latestDownloadedAt).toLocaleString() : "刚刚" }}
+                </span>
+                <span v-if="updateState.refreshBlockedReason">
+                  暂缓刷新：{{ updateState.refreshBlockedReason }}
+                </span>
               </div>
             </div>
           </div>
@@ -1324,7 +1337,7 @@ onBeforeUnmount(() => {
           </div>
 
           <p class="notice-text">
-            Web / PWA 版本只提示刷新或打开下载页；桌面自动安装尚未实现。将来接入桌面 updater 时，需要做安装包签名校验。
+            Web / PWA 版本会在后台准备新版资源；若当前正在编辑、导入导出或调整设置，Textile 会先提示，等你确认后再刷新。
           </p>
         </section>
 
