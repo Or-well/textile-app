@@ -9,7 +9,7 @@ export interface ProjectFileHandle {
 }
 
 export interface ProjectWritableFileStream {
-  write(content: string): Promise<void>;
+  write(content: string | Blob | Uint8Array): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -135,7 +135,7 @@ function notifyPackedProjectWrite(state: PackedProjectState): void {
 }
 
 class PackedProjectWritableFileStream implements ProjectWritableFileStream {
-  private content = "";
+  private content = new Uint8Array();
   private readonly state: PackedProjectState;
   private readonly path: string;
 
@@ -147,12 +147,22 @@ class PackedProjectWritableFileStream implements ProjectWritableFileStream {
     this.path = path;
   }
 
-  async write(content: string): Promise<void> {
-    this.content = content;
+  async write(content: string | Blob | Uint8Array): Promise<void> {
+    if (typeof content === "string") {
+      this.content = textEncoder.encode(content);
+      return;
+    }
+
+    if (content instanceof Blob) {
+      this.content = new Uint8Array(await content.arrayBuffer());
+      return;
+    }
+
+    this.content = new Uint8Array(content);
   }
 
   async close(): Promise<void> {
-    this.state.files.set(this.path, textEncoder.encode(this.content));
+    this.state.files.set(this.path, this.content);
     rememberPackedFilePath(this.state, this.path);
     notifyPackedProjectWrite(this.state);
   }
@@ -368,6 +378,7 @@ async function getFileByPath(
 export function createMemoryProjectDirectory(
   files: PackedProjectContent,
   sourceFileName: string,
+  directories: string[] = [],
 ): ProjectDirectoryHandle {
   const state: PackedProjectState = {
     name: sourceFileName,
@@ -375,6 +386,14 @@ export function createMemoryProjectDirectory(
     directories: new Set([""]),
     dirty: false,
   };
+
+  for (const path of directories) {
+    const normalizedPath = normalizeProjectPath(path);
+
+    if (normalizedPath) {
+      ensurePackedDirectory(state, normalizedPath);
+    }
+  }
 
   for (const [path, content] of Object.entries(files)) {
     const normalizedPath = normalizeProjectPath(path);
@@ -439,6 +458,20 @@ export async function writeTextFile(
   root: ProjectDirectoryHandle,
   path: string,
   content: string,
+): Promise<void> {
+  await withAppOperation("项目写入", async () => {
+    const fileHandle = await getFileByPath(root, path, true);
+    const writable = await fileHandle.createWritable();
+
+    await writable.write(content);
+    await writable.close();
+  });
+}
+
+export async function writeBinaryFile(
+  root: ProjectDirectoryHandle,
+  path: string,
+  content: Uint8Array,
 ): Promise<void> {
   await withAppOperation("项目写入", async () => {
     const fileHandle = await getFileByPath(root, path, true);

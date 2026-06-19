@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import LauncherActionCard from "../components/LauncherActionCard.vue";
 import RecentProjectCard from "../components/RecentProjectCard.vue";
+import type { ProjectPackagePreview } from "../services/projectPackage";
 import type { RecentProjectRecord } from "../services/recentProjects";
 import { formatDateTime } from "../utils/time";
 
@@ -21,36 +22,132 @@ const props = defineProps<{
   recentProjects: RecentProjectRecord[];
   isOpening?: boolean;
   isOpeningFile?: boolean;
+  isPreviewingFile?: boolean;
   isRestoring?: boolean;
   errorMessage?: string;
+  projectFilePreview?: ProjectPackagePreview | null;
 }>();
 
 const emit = defineEmits<{
   createProject: [];
   openLocalProject: [];
-  openProjectFile: [file: File];
+  importProjectFile: [file: File];
+  previewProjectFile: [file: File];
+  importPreviewedProjectFile: [];
+  clearProjectFilePreview: [];
   openRecentProject: [project: RecentProjectRecord];
-  removeRecentProject: [projectId: string];
+  removeRecentProject: [recordId: string];
   enterCurrentProject: [];
 }>();
 
 const hasRecentProjects = computed(() => props.recentProjects.length > 0);
-const projectFileInput = ref<HTMLInputElement | null>(null);
+const importProjectFileInput = ref<HTMLInputElement | null>(null);
+const previewProjectFileInput = ref<HTMLInputElement | null>(null);
+const isProjectDescriptionExpanded = ref(false);
+const previewBadgeText = computed(() => {
+  if (!props.projectFilePreview) {
+    return "";
+  }
+
+  if (props.projectFilePreview.importStatus === "ready") {
+    return "可导入";
+  }
+
+  if (props.projectFilePreview.importStatus === "warning") {
+    return "需注意";
+  }
+
+  return "不可导入";
+});
+const previewBadgeClass = computed(() =>
+  props.projectFilePreview
+    ? `status-${props.projectFilePreview.importStatus}`
+    : "",
+);
+const previewRevisionText = computed(
+  () => props.projectFilePreview?.revision || "未记录",
+);
+const previewUpdatedAtText = computed(() => {
+  const updatedAt = props.projectFilePreview?.updatedAt;
+
+  if (!updatedAt) {
+    return "未记录";
+  }
+
+  return formatDateTime(updatedAt) || "未记录";
+});
+const previewContentText = computed(() => {
+  const preview = props.projectFilePreview;
+
+  if (!preview) {
+    return "";
+  }
+
+  return `${preview.projectFileCount} 文件 / ${preview.entryCount} 词条`;
+});
+const previewMemberText = computed(() => {
+  const preview = props.projectFilePreview;
+
+  if (!preview) {
+    return "";
+  }
+
+  return preview.missingPaths.includes("members.json")
+    ? "缺少成员数据"
+    : String(preview.memberCount);
+});
+const previewLanguageText = computed(() => {
+  const preview = props.projectFilePreview;
+
+  if (!preview) {
+    return "";
+  }
+
+  const sourceLanguage = preview.sourceLanguage || "-";
+  const targetLanguage = preview.targetLanguage || "-";
+
+  return `${sourceLanguage} -> ${targetLanguage}`;
+});
+const hasLongProjectDescription = computed(
+  () => (props.projectFilePreview?.projectDescription.length ?? 0) > 72,
+);
 
 function getSourceTypeText(sourceType: RecentProjectRecord["sourceType"]): string {
   return sourceType === "folder" ? "Textile 项目文件夹" : "Textile 项目文件";
 }
 
-function handleSelectProjectFile(event: Event) {
+function handleSelectImportProjectFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
 
   if (file) {
-    emit("openProjectFile", file);
+    emit("importProjectFile", file);
   }
 
   input.value = "";
 }
+
+function handleSelectPreviewProjectFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (file) {
+    emit("previewProjectFile", file);
+  }
+
+  input.value = "";
+}
+
+function toggleProjectDescription() {
+  isProjectDescriptionExpanded.value = !isProjectDescriptionExpanded.value;
+}
+
+watch(
+  () => props.projectFilePreview?.fileName,
+  () => {
+    isProjectDescriptionExpanded.value = false;
+  },
+);
 
 </script>
 
@@ -87,17 +184,128 @@ function handleSelectProjectFile(event: Event) {
 
           <LauncherActionCard
             :title="isOpeningFile ? '正在导入...' : '导入 Textile 项目文件'"
-            description="选择本地 .hproj 项目文件并进入 Textile 项目"
+            description="选择 .hproj，再选择导入位置，生成本地项目文件夹"
             :busy="isOpeningFile"
-            @activate="projectFileInput?.click()"
+            @activate="importProjectFileInput?.click()"
           />
           <input
-            ref="projectFileInput"
+            ref="importProjectFileInput"
             class="hidden-file-input"
             type="file"
             accept=".hproj,application/zip"
-            @change="handleSelectProjectFile"
+            @change="handleSelectImportProjectFile"
           />
+
+          <LauncherActionCard
+            :title="isPreviewingFile ? '正在预览...' : '预览 Textile 项目文件'"
+            description="只读取 .hproj 摘要，不写入本地项目"
+            :busy="isPreviewingFile"
+            @activate="previewProjectFileInput?.click()"
+          />
+          <input
+            ref="previewProjectFileInput"
+            class="hidden-file-input"
+            type="file"
+            accept=".hproj,application/zip"
+            @change="handleSelectPreviewProjectFile"
+          />
+
+          <section v-if="projectFilePreview" class="project-file-preview">
+            <div class="preview-heading">
+              <div>
+                <p class="eyebrow">项目文件预览</p>
+                <h3>{{ projectFilePreview.projectName || projectFilePreview.fileName }}</h3>
+              </div>
+              <div class="preview-heading-actions">
+                <span :class="['preview-status-badge', previewBadgeClass]">
+                  {{ previewBadgeText }}
+                </span>
+                <button
+                  class="small-secondary-button"
+                  type="button"
+                  @click="emit('clearProjectFilePreview')"
+                >
+                  清除
+                </button>
+              </div>
+            </div>
+
+            <section
+              v-if="projectFilePreview.projectDescription"
+              class="preview-description"
+            >
+              <p class="preview-label">项目简介</p>
+              <p
+                :class="[
+                  'preview-description-text',
+                  { expanded: isProjectDescriptionExpanded },
+                ]"
+              >
+                {{ projectFilePreview.projectDescription }}
+              </p>
+              <button
+                v-if="hasLongProjectDescription"
+                class="text-button"
+                type="button"
+                @click="toggleProjectDescription"
+              >
+                {{ isProjectDescriptionExpanded ? "收起" : "展开" }}
+              </button>
+            </section>
+
+            <dl class="preview-grid">
+              <div>
+                <dt>项目修订</dt>
+                <dd>{{ previewRevisionText }}</dd>
+              </div>
+              <div>
+                <dt>更新时间</dt>
+                <dd>{{ previewUpdatedAtText }}</dd>
+              </div>
+              <div>
+                <dt>内容规模</dt>
+                <dd>{{ previewContentText }}</dd>
+              </div>
+              <div>
+                <dt>成员数</dt>
+                <dd>{{ previewMemberText }}</dd>
+              </div>
+              <div>
+                <dt>语言方向</dt>
+                <dd>{{ previewLanguageText }}</dd>
+              </div>
+              <div>
+                <dt>导入状态</dt>
+                <dd>{{ projectFilePreview.importStatusText }}</dd>
+              </div>
+            </dl>
+
+            <p class="preview-folder-name">
+              导入后会创建文件夹：{{ projectFilePreview.suggestedFolderName }}
+            </p>
+
+            <p
+              v-if="projectFilePreview.missingPaths.length > 0"
+              class="preview-warning"
+            >
+              缺少：{{ projectFilePreview.missingPaths.join("、") }}
+            </p>
+
+            <ul v-if="projectFilePreview.warnings.length > 0" class="preview-list">
+              <li v-for="warning in projectFilePreview.warnings" :key="warning">
+                {{ warning }}
+              </li>
+            </ul>
+
+            <button
+              class="small-primary-button"
+              type="button"
+              :disabled="!projectFilePreview.valid || isOpeningFile"
+              @click="emit('importPreviewedProjectFile')"
+            >
+              {{ isOpeningFile ? "正在导入..." : "导入为本地项目" }}
+            </button>
+          </section>
 
           <LauncherActionCard
             title="创建项目"
@@ -144,7 +352,7 @@ function handleSelectProjectFile(event: Event) {
           <div v-if="hasRecentProjects" class="recent-list">
             <RecentProjectCard
               v-for="project in recentProjects"
-              :key="project.projectId"
+              :key="project.recordId"
               :project="project"
               :source-label="getSourceTypeText(project.sourceType)"
               :last-opened-text="formatDateTime(project.lastOpenedAt)"
@@ -333,6 +541,140 @@ dl div {
   padding: 7px 9px;
   border-radius: 6px;
   background: #f3f5f7;
+}
+
+.project-file-preview {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.preview-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.preview-heading h3 {
+  overflow-wrap: anywhere;
+}
+
+.preview-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preview-status-badge {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid #c8d0dc;
+  background: #ffffff;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.preview-status-badge.status-ready {
+  border-color: #a8d3bd;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.preview-status-badge.status-warning {
+  border-color: #f3d08a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.preview-status-badge.status-blocked {
+  border-color: #f0b8aa;
+  background: #fff5f3;
+  color: #b42318;
+}
+
+.preview-description {
+  display: grid;
+  gap: 6px;
+}
+
+.preview-label {
+  color: #5b6472;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preview-description-text {
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.preview-description-text.expanded {
+  display: block;
+  max-height: 140px;
+  overflow: auto;
+}
+
+.text-button {
+  justify-self: start;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2f6f73;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.preview-grid div {
+  min-width: 0;
+}
+
+.preview-grid dd {
+  overflow-wrap: anywhere;
+}
+
+.preview-folder-name,
+.preview-warning,
+.preview-list {
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.preview-warning {
+  color: #b42318;
+}
+
+.preview-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
 }
 
 .recent-list {

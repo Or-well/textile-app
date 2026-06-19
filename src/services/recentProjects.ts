@@ -4,6 +4,7 @@ import type { ProjectDirectoryHandle } from "./projectFs";
 export type RecentProjectSourceType = "folder" | "hproj";
 
 export interface RecentProjectRecord {
+  recordId: string;
   projectId: string;
   name: string;
   sourceType: RecentProjectSourceType;
@@ -44,11 +45,28 @@ function readRecentProjects(): RecentProjectRecord[] {
   try {
     const rows = JSON.parse(text) as RecentProjectRecord[];
 
-    return Array.isArray(rows) ? sortRecentProjects(rows) : [];
+    return Array.isArray(rows) ? sortRecentProjects(normalizeRecords(rows)) : [];
   } catch {
     window.localStorage.removeItem(RECENT_PROJECTS_STORAGE_KEY);
     return [];
   }
+}
+
+function buildRecentProjectRecordId(input: RecentProjectInput): string {
+  return [
+    input.projectId,
+    input.sourceType,
+    input.displayPath.trim() || input.name.trim() || "project",
+  ].join("::");
+}
+
+function normalizeRecords(records: RecentProjectRecord[]): RecentProjectRecord[] {
+  return records
+    .filter((record) => record?.projectId && record.name)
+    .map((record) => ({
+      ...record,
+      recordId: record.recordId || record.projectId,
+    }));
 }
 
 function writeRecentProjects(records: RecentProjectRecord[]): void {
@@ -95,7 +113,7 @@ function openRecentProjectDatabase(): Promise<IDBDatabase | null> {
 }
 
 async function writeProjectHandle(
-  projectId: string,
+  recordId: string,
   root?: ProjectDirectoryHandle,
 ): Promise<void> {
   if (!root || root.storageKind === "packed") {
@@ -112,7 +130,7 @@ async function writeProjectHandle(
     const transaction = database.transaction(PROJECT_HANDLES_STORE, "readwrite");
 
     try {
-      transaction.objectStore(PROJECT_HANDLES_STORE).put(root, projectId);
+      transaction.objectStore(PROJECT_HANDLES_STORE).put(root, recordId);
     } catch {
       resolve();
       return;
@@ -124,7 +142,7 @@ async function writeProjectHandle(
   database.close();
 }
 
-async function deleteProjectHandle(projectId: string): Promise<void> {
+async function deleteProjectHandle(recordId: string): Promise<void> {
   const database = await openRecentProjectDatabase();
 
   if (!database) {
@@ -134,7 +152,7 @@ async function deleteProjectHandle(projectId: string): Promise<void> {
   await new Promise<void>((resolve) => {
     const transaction = database.transaction(PROJECT_HANDLES_STORE, "readwrite");
 
-    transaction.objectStore(PROJECT_HANDLES_STORE).delete(projectId);
+    transaction.objectStore(PROJECT_HANDLES_STORE).delete(recordId);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => resolve();
   });
@@ -166,16 +184,18 @@ export async function rememberRecentProject(
   input: RecentProjectInput,
   root?: ProjectDirectoryHandle,
 ): Promise<RecentProjectRecord[]> {
+  const recordId = buildRecentProjectRecordId(input);
   const existing = readRecentProjects().filter(
-    (record) => record.projectId !== input.projectId,
+    (record) => record.recordId !== recordId,
   );
   const record: RecentProjectRecord = {
     ...input,
+    recordId,
     lastOpenedAt: nowIso(),
   };
 
   writeRecentProjects([record, ...existing]);
-  await writeProjectHandle(input.projectId, root);
+  await writeProjectHandle(recordId, root);
 
   return listRecentProjects();
 }
@@ -193,13 +213,11 @@ export function updateRecentProjectUser(
   return listRecentProjects();
 }
 
-export async function removeRecentProject(
-  projectId: string,
-): Promise<RecentProjectRecord[]> {
+export async function removeRecentProject(recordId: string): Promise<RecentProjectRecord[]> {
   writeRecentProjects(
-    readRecentProjects().filter((record) => record.projectId !== projectId),
+    readRecentProjects().filter((record) => record.recordId !== recordId),
   );
-  await deleteProjectHandle(projectId);
+  await deleteProjectHandle(recordId);
 
   return listRecentProjects();
 }
@@ -212,7 +230,7 @@ export async function clearRecentProjects(): Promise<RecentProjectRecord[]> {
 }
 
 export async function getRecentProjectHandle(
-  projectId: string,
+  recordId: string,
 ): Promise<ProjectDirectoryHandle | null> {
   const database = await openRecentProjectDatabase();
 
@@ -222,7 +240,7 @@ export async function getRecentProjectHandle(
 
   const handle = await new Promise<ProjectDirectoryHandle | null>((resolve) => {
     const transaction = database.transaction(PROJECT_HANDLES_STORE, "readonly");
-    const request = transaction.objectStore(PROJECT_HANDLES_STORE).get(projectId);
+    const request = transaction.objectStore(PROJECT_HANDLES_STORE).get(recordId);
 
     request.onsuccess = () =>
       resolve((request.result as ProjectDirectoryHandle | undefined) ?? null);

@@ -8,7 +8,7 @@
 
 Textile 是本地优先、无业务服务器依赖的汉化项目管理工具。核心设计原则：
 
-1. 项目文件由用户掌握，保存在本地文件夹或 `.hproj` 中。
+1. 项目文件由用户掌握，主要保存在本地文件夹中；`.hproj` 用于备份、迁移和分发。
 2. Web/PWA 和 Tauri 桌面壳共享 Vue 前端和业务 service。
 3. Vue 页面负责交互编排，不直接读写项目文件。
 4. service 负责业务规则、权限兜底、数据读取和写入。
@@ -123,7 +123,7 @@ textile/
   vite.config.ts
 ```
 
-`docs/01_*` 到 `docs/04_*` 是早期设计资料，包含部分已废弃的 Git 协作路线和旧数据模型，不应作为当前实现依据。
+
 
 ## 5. 应用入口
 
@@ -196,15 +196,17 @@ const route = computed(() => parseRoute(routePath.value));
 
 当 URL 指向项目页而内存中没有项目时，`restoreProjectFromRoute()`：
 
-1. 从 IndexedDB 查找该项目的文件夹句柄。
-2. 检查读写权限。
-3. 重新打开项目。
-4. 恢复会话。
+1. 从最近项目列表查找匹配 `projectId` 的记录。
+2. 使用记录的 `recordId` 从 IndexedDB 查找文件夹句柄。
+3. 检查读写权限。
+4. 重新打开项目。
+5. 恢复会话。
 
 限制：
 
 - 只支持已保存句柄的普通文件夹项目。
-- `.hproj` 句柄不会保存在 IndexedDB，直接刷新后不能自动恢复。
+- `.hproj` 预览不会写 IndexedDB；导入成功后保存的是新本地项目文件夹句柄。
+- packed `.hproj` 临时打开句柄不会保存在 IndexedDB，直接刷新后不能自动恢复。
 - 浏览器撤销授权后必须重新选择文件夹。
 
 ### 新增页面的注意点
@@ -323,20 +325,39 @@ changes/
 4. 生成 Blob。
 5. 对内存项目调用 `markProjectPackageExported()` 清除 dirty 状态。
 
-导入：
+预览：
 
-1. 读取 ZIP 中所有二进制文件。
+1. 读取 ZIP 中所有二进制文件和目录项。
 2. 规范化路径分隔符。
 3. 拒绝包含 `..` 的路径。
-4. 必须包含 `project.json`。
-5. 构造内存 `ProjectDirectoryHandle`。
+4. 解析 `project.json` 和可选的 `members.json`。
+5. 统计项目简介、修订、更新时间、文件数、成员数、词条数、语言方向、导入状态、缺失路径和推荐导入文件夹名。
+6. 不写入任何项目文件。
+
+导入为本地项目：
+
+1. 读取并规范化 `.hproj` 内容。
+2. 必须包含 `project.json`、`members.json`、`entries/`、`terms/` 和 `tasks/`。
+3. 要求用户选择导入位置。
+4. 使用项目名称和项目 ID 生成目标子目录名。
+5. 目标子目录已存在时停止导入，不覆盖已有文件。
+6. 创建目标项目文件夹，写入包内文件并补齐项目常见目录。
+7. 包内文件引用的 `entries_path` 缺失时视为不可导入，避免落地后普通项目打开失败。
+8. 导入失败时尝试清理刚创建的目标子目录；清理失败时报告残留目录。
+9. 调用普通项目打开流程，后续写入都落到本地项目文件夹。
+
+兼容的临时打开：
+
+1. 读取 ZIP 中所有二进制文件和目录项。
+2. 必须包含 `project.json`。
+3. 构造内存 `ProjectDirectoryHandle`。
 
 重要行为：
 
 - `.hproj` 不会挂载为可原地修改的真实文件。
-- 所有写入只更新内存映射。
-- 写入触发 `hproj-project-dirty` 事件。
-- 用户必须再次导出，才能得到持久化的新 `.hproj`。
+- 默认工作流是导入为本地项目文件夹，后续写入持久化到该文件夹。
+- 内存根目录仅用于兼容的临时打开；写入只更新内存映射，并触发 `hproj-project-dirty` 事件。
+- 需要再次分发时，用户导出新的 `.hproj`。
 - 如果包缺少 `members.json`，可以解析配置，但没有可登录成员，正常 UI 无法进入工作台。
 
 ## 10. `project.json`
@@ -629,7 +650,7 @@ comments/<file_id>/<6位entry index>.jsonl
 主要函数：
 
 - `readTextFile` / `writeTextFile`
-- `readBinaryFile`
+- `readBinaryFile` / `writeBinaryFile`
 - `readJson` / `writeJson`
 - `readJsonl` / `writeJsonl`
 - `listFiles`
@@ -642,7 +663,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - 不是事务存储。
 - 多文件操作需要上层安排安全顺序。
-- 内存项目写入不会自动持久化到原 `.hproj`。
+- 内存项目写入不会自动持久化到原 `.hproj`，默认 `.hproj` 导入流程应落地为普通项目文件夹。
 - 大 JSONL 文件每次写入都会整体重写。
 
 ### `projectStorage.ts`
@@ -1469,7 +1490,9 @@ const privateKeys = new Map<string, string>();
 职责：
 
 - 导出 `.hproj`。
-- 从 `.hproj` 创建内存项目根。
+- 预览 `.hproj` 摘要和缺失路径。
+- 将 `.hproj` 导入为本地项目文件夹。
+- 保留从 `.hproj` 创建内存项目根的兼容能力。
 
 输入：
 
@@ -1478,6 +1501,8 @@ const privateKeys = new Map<string, string>();
 输出：
 
 - `{ fileName, blob }`
+- 预览摘要。
+- 导入后的本地项目根。
 - 内存 `ProjectDirectoryHandle`
 
 包含目录：
@@ -1581,6 +1606,7 @@ store: projectHandles
 
 记录包括：
 
+- recordId
 - projectId
 - name
 - sourceType
@@ -1590,7 +1616,7 @@ store: projectHandles
 
 最多 12 条。
 
-只有普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。读取最近项目时还会检查 readwrite permission。
+`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。只有普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。读取最近项目时还会检查 readwrite permission。
 
 ## 45. 页面与 service 调用关系
 
@@ -1874,8 +1900,8 @@ npm run build
 9. 负责人发布签名项目更新。
 10. 普通成员先导出本地修改，再接收更新。
 11. 导出成品并检查 ZIP。
-12. 导出 `.hproj`，重新打开并确认 source 和 entries。
-13. `.hproj` 修改后重新导出。
+12. 导出 `.hproj`，预览并确认 source、entries 和成员摘要。
+13. 导入 `.hproj` 到新的本地项目文件夹，登录并确认词条可读写。
 14. 无权限成员尝试关键写操作。
 15. Web/PWA 更新提示和安全刷新。
 16. 配置完成后测试 Tauri updater。
@@ -1884,7 +1910,7 @@ npm run build
 
 - 不使用服务器，多设备同步依赖人工传递修改包。
 - 权限不能阻止用户直接修改磁盘文件。
-- `.hproj` 不能原地保存，必须重新导出。
+- `.hproj` 不能原地保存，默认导入为本地项目文件夹；再次分发需要重新导出。
 - service root 是单项目全局状态，不支持同时打开多个项目。
 - 没有完整事务和回滚。
 - 没有多标签页并发锁。
@@ -1908,7 +1934,7 @@ npm run build
 
 1. 为 status、stats、permissions 和 change-package hash 增加纯函数单元测试。
 2. 为项目创建、源文件更新、删除和普通修改包导入增加可回滚写入计划。
-3. 为 `.hproj` 增加更明确的未导出离开保护。
+3. 为 `.hproj` 导入失败增加更完整的写入计划和残留目录检查。
 4. 统一 `ProjectStorage` 抽象，但应分模块迁移，不一次性重写。
 5. 让 `chunk_size` 真正控制分块，并提供旧 chunk 兼容测试。
 6. 明确审核关闭时成品过滤语义。

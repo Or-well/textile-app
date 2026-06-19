@@ -10,7 +10,7 @@ defineProps<{
 
 const emit = defineEmits<{
   open: [project: RecentProjectRecord];
-  remove: [projectId: string];
+  remove: [recordId: string];
 }>();
 </script>
 
@@ -44,7 +44,7 @@ const emit = defineEmits<{
       <button
         class="secondary-button"
         type="button"
-        @click="emit('remove', project.projectId)"
+        @click="emit('remove', project.recordId)"
       >
         从列表移除
       </button>

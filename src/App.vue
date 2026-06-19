@@ -30,11 +30,13 @@ import {
   setupAppUpdate,
 } from "./services/appUpdate";
 import {
+  importProjectFile,
+  inspectProjectFile,
   openProject,
-  openProjectFile,
   openProjectRoot,
   type OpenedProject,
 } from "./services/project";
+import type { ProjectPackagePreview } from "./services/projectPackage";
 import { deleteCurrentProjectSource } from "./services/projectDeletion";
 import {
   getRecentProjectHandle,
@@ -95,16 +97,20 @@ const routePath = ref(`${window.location.pathname}${window.location.search}`);
 const currentProject = ref<OpenedProject | null>(null);
 const currentUser = ref<Member | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
+const currentRecentRecordId = ref("");
 const taskCount = ref(0);
 const recentProjects = ref<RecentProjectRecord[]>(listRecentProjects());
 const isOpeningProject = ref(false);
 const isOpeningProjectFile = ref(false);
+const isPreviewingProjectFile = ref(false);
 const isLoggingIn = ref(false);
 const isRestoringProject = ref(false);
 const appErrorMessage = ref("");
 const appNoticeMessage = ref("");
 const loginErrorMessage = ref("");
 const packedProjectNotice = ref("");
+const projectFilePreview = ref<ProjectPackagePreview | null>(null);
+const previewedProjectFile = ref<File | null>(null);
 
 const route = computed(() => parseRoute(routePath.value));
 const currentProjectSummary = computed<ProjectSummary | null>(() => {
@@ -199,6 +205,7 @@ function syncAppUpdateSafety() {
     isBusy:
       isOpeningProject.value ||
       isOpeningProjectFile.value ||
+      isPreviewingProjectFile.value ||
       isLoggingIn.value ||
       isRestoringProject.value,
   });
@@ -241,16 +248,26 @@ async function rememberOpenedProject(
   project: OpenedProject,
   lastUserId?: string,
 ): Promise<void> {
+  const sourceType = project.storageKind === "packed" ? "hproj" : "folder";
+  const displayPath = getProjectDisplayPath(project);
+
   recentProjects.value = await rememberRecentProject(
     {
       projectId: project.config.project_id,
       name: project.config.name,
-      sourceType: project.storageKind === "packed" ? "hproj" : "folder",
-      displayPath: getProjectDisplayPath(project),
+      sourceType,
+      displayPath,
       lastUserId,
     },
     project.root,
   );
+  currentRecentRecordId.value =
+    recentProjects.value.find(
+      (record) =>
+        record.projectId === project.config.project_id &&
+        record.sourceType === sourceType &&
+        record.displayPath === displayPath,
+    )?.recordId ?? "";
 }
 
 function restoreUserFromSession(project: OpenedProject): Member | null {
@@ -355,23 +372,63 @@ async function handleOpenLocalProject() {
   }
 }
 
-async function handleOpenProjectFile(file: File) {
+async function handleImportProjectFile(file: File) {
   isOpeningProjectFile.value = true;
   appErrorMessage.value = "";
+  appNoticeMessage.value = "";
 
   try {
-    const project = await openProjectFile(file);
+    const project = await importProjectFile(file);
 
+    projectFilePreview.value = null;
+    previewedProjectFile.value = null;
     await enterOpenedProject(project);
   } catch (error) {
-    if (error instanceof Error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      appErrorMessage.value = "没有选择导入位置。你可以重新点击按钮选择目标文件夹。";
+    } else if (error instanceof Error) {
       appErrorMessage.value = error.message;
     } else {
-      appErrorMessage.value = "导入 Textile 项目文件失败。请确认选择的是 .hproj 项目文件。";
+      appErrorMessage.value =
+        "导入 Textile 项目文件失败。请确认选择的是 .hproj 项目文件。";
     }
   } finally {
     isOpeningProjectFile.value = false;
   }
+}
+
+async function handlePreviewProjectFile(file: File) {
+  isPreviewingProjectFile.value = true;
+  appErrorMessage.value = "";
+  appNoticeMessage.value = "";
+
+  try {
+    projectFilePreview.value = await inspectProjectFile(file);
+    previewedProjectFile.value = file;
+  } catch (error) {
+    projectFilePreview.value = null;
+    previewedProjectFile.value = null;
+    appErrorMessage.value =
+      error instanceof Error
+        ? error.message
+        : "预览 Textile 项目文件失败。请确认选择的是 .hproj 项目文件。";
+  } finally {
+    isPreviewingProjectFile.value = false;
+  }
+}
+
+async function handleImportPreviewedProjectFile() {
+  if (!previewedProjectFile.value) {
+    appErrorMessage.value = "请先选择要预览的 Textile 项目文件。";
+    return;
+  }
+
+  await handleImportProjectFile(previewedProjectFile.value);
+}
+
+function handleClearProjectFilePreview() {
+  projectFilePreview.value = null;
+  previewedProjectFile.value = null;
 }
 
 async function handleOpenRecentProject(record: RecentProjectRecord) {
@@ -384,7 +441,7 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
       return;
     }
 
-    const storedRoot = await getRecentProjectHandle(record.projectId);
+    const storedRoot = await getRecentProjectHandle(record.recordId);
 
     if (!storedRoot || !(await hasRecentProjectAccess(storedRoot))) {
       appErrorMessage.value =
@@ -413,8 +470,8 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
   }
 }
 
-async function handleRemoveRecentProject(projectId: string) {
-  recentProjects.value = await removeRecentProject(projectId);
+async function handleRemoveRecentProject(recordId: string) {
+  recentProjects.value = await removeRecentProject(recordId);
 }
 
 async function handleProjectCreated(project: OpenedProject, owner: Member) {
@@ -550,11 +607,14 @@ async function handleDeleteProjectRequested() {
       currentUser.value,
     );
 
-    recentProjects.value = await removeRecentProject(project.config.project_id);
+    recentProjects.value = await removeRecentProject(
+      currentRecentRecordId.value || project.config.project_id,
+    );
     clearProjectSession(project.config.project_id);
     setCurrentUser(null);
     currentUser.value = null;
     currentProject.value = null;
+    currentRecentRecordId.value = "";
     currentStats.value = null;
     taskCount.value = 0;
     loginErrorMessage.value = "";
@@ -647,7 +707,12 @@ async function restoreProjectFromRoute() {
   isRestoringProject.value = true;
 
   try {
-    const root = await getRecentProjectHandle(currentRoute.projectId);
+    const recentRecord = recentProjects.value.find(
+      (record) => record.projectId === currentRoute.projectId,
+    );
+    const root = await getRecentProjectHandle(
+      recentRecord?.recordId ?? currentRoute.projectId,
+    );
 
     if (!root || !(await hasRecentProjectAccess(root))) {
       appErrorMessage.value =
@@ -686,6 +751,7 @@ watch(
     currentUser,
     isOpeningProject,
     isOpeningProjectFile,
+    isPreviewingProjectFile,
     isLoggingIn,
     isRestoringProject,
   ],
@@ -729,12 +795,17 @@ onBeforeUnmount(() => {
       :current-project="currentProjectSummary"
       :is-opening="isOpeningProject"
       :is-opening-file="isOpeningProjectFile"
+      :is-previewing-file="isPreviewingProjectFile"
       :is-restoring="isRestoringProject"
       :error-message="appErrorMessage"
+      :project-file-preview="projectFilePreview"
       :recent-projects="recentProjects"
       @create-project="navigate('/projects/create')"
       @open-local-project="handleOpenLocalProject"
-      @open-project-file="handleOpenProjectFile"
+      @import-project-file="handleImportProjectFile"
+      @preview-project-file="handlePreviewProjectFile"
+      @import-previewed-project-file="handleImportPreviewedProjectFile"
+      @clear-project-file-preview="handleClearProjectFilePreview"
       @open-recent-project="handleOpenRecentProject"
       @remove-recent-project="handleRemoveRecentProject"
       @enter-current-project="handleEnterCurrentProject"

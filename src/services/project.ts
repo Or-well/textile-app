@@ -21,7 +21,12 @@ import {
   updateEntriesFromSourceFile,
   writeEntriesForFile,
 } from "./entries";
-import { createProjectRootFromPackage } from "./projectPackage";
+import {
+  createProjectRootFromPackage,
+  importProjectPackageToDirectory,
+  inspectProjectPackage,
+  type ProjectPackagePreview,
+} from "./projectPackage";
 import {
   deleteEntry,
   ensureDirectory,
@@ -854,4 +859,16 @@ export async function openProjectFile(file: File): Promise<OpenedProject> {
     storageKind: "packed",
     sourceFileName: file.name,
   };
+}
+
+export async function inspectProjectFile(
+  file: File,
+): Promise<ProjectPackagePreview> {
+  return inspectProjectPackage(file);
+}
+
+export async function importProjectFile(file: File): Promise<OpenedProject> {
+  const imported = await importProjectPackageToDirectory(file);
+
+  return openProjectRoot(imported.root);
 }
