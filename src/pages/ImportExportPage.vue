@@ -37,11 +37,12 @@ import {
   canExportRelease,
   canImportChangePackage,
   canImportMaintenanceChangePackage,
+  canProjectBackup,
+  canReviewChangePackage,
   getCurrentUser,
 } from "../services/permissions";
 import { openProject } from "../services/project";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
-import { getSyncStatus, type SyncStatus } from "../services/sync";
 import { loadTasks, setTasksProjectRoot } from "../services/tasks";
 
 const props = defineProps<{
@@ -63,7 +64,6 @@ const releaseIncludeKey = ref(true);
 const releaseIncludeReport = ref(true);
 const releaseIncludeManifest = ref(true);
 const releaseSummary = ref<ReleaseExportSummary>();
-const syncStatus = ref<SyncStatus>();
 const isLoading = ref(false);
 const isExporting = ref(false);
 const isExportingRelease = ref(false);
@@ -87,10 +87,12 @@ const canImportPackages = computed(() => canImportChangePackage(currentUser.valu
 const canImportMaintenance = computed(() =>
   canImportMaintenanceChangePackage(currentUser.value),
 );
+const canReviewPackages = computed(() => canReviewChangePackage(currentUser.value));
 const canDangerousImport = computed(() =>
   canDangerousImportChangePackage(currentUser.value),
 );
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
+const canExportProjectBackup = computed(() => canProjectBackup(currentUser.value));
 const projectRootForExport = computed(() => props.projectRoot ?? localRoot.value);
 const canSelectImportFile = computed(
   () => canImportPackages.value || canImportMaintenance.value,
@@ -99,15 +101,6 @@ const canExportSelectedMode = computed(() =>
   exportMode.value === "maintenance_changes"
     ? canExportMaintenance.value
     : canExportChanges.value,
-);
-const showSyncFallback = computed(() =>
-  Boolean(
-    syncStatus.value &&
-      (syncStatus.value.state === "disabled" ||
-        syncStatus.value.state === "error" ||
-        syncStatus.value.state === "conflict" ||
-        !syncStatus.value.canUpload),
-  ),
 );
 const emptyStateText = computed(() =>
   projectName.value
@@ -192,10 +185,6 @@ function downloadBlob(blob: Blob, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
-async function refreshSyncStatus() {
-  syncStatus.value = await getSyncStatus(currentUser.value);
-}
-
 function applyReleaseSettings(project: ProjectConfig) {
   const options = normalizeReleaseExportOptions(project);
 
@@ -231,10 +220,8 @@ async function loadImportExportState() {
   changePackage.value = undefined;
   packagePreview.value = undefined;
   conflicts.value = [];
-  syncStatus.value = undefined;
 
   try {
-    await refreshSyncStatus();
     tasks.value = await loadTasks();
     selectedTaskId.value = tasks.value[0]?.id ?? "";
     await refreshReleaseSummary();
@@ -286,7 +273,6 @@ async function handleOpenProject() {
     changePackage.value = undefined;
     packagePreview.value = undefined;
     conflicts.value = [];
-    syncStatus.value = undefined;
 
     if (error instanceof DOMException && error.name === "AbortError") {
       errorMessage.value = "没有打开项目文件夹。你可以重新点击按钮选择项目。";
@@ -480,8 +466,13 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
 }
 
 async function handleExportProjectFile() {
+  if (!canExportProjectBackup.value) {
+    errorMessage.value = "当前成员没有导出项目备份的权限。";
+    return;
+  }
+
   if (!projectRootForExport.value) {
-    errorMessage.value = "请先打开项目，再导出为项目文件。";
+    errorMessage.value = "请先打开项目，再导出项目备份。";
     return;
   }
 
@@ -493,10 +484,10 @@ async function handleExportProjectFile() {
     const result = await exportProjectPackage(projectRootForExport.value);
 
     downloadBlob(result.blob, result.fileName);
-    message.value = `已导出为项目文件：${result.fileName}`;
+    message.value = `已导出项目备份：${result.fileName}`;
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "导出项目文件失败。请稍后再试。";
+      error instanceof Error ? error.message : "导出项目备份失败。请稍后再试。";
   } finally {
     isExportingProjectFile.value = false;
   }
@@ -552,32 +543,27 @@ watch(
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
       <p v-if="message" class="message">{{ message }}</p>
 
-      <section v-if="projectName && showSyncFallback" class="sync-fallback-section">
-        <h2>同步失败兜底</h2>
-        <p class="section-note">
-          同步失败时，你可以先导出修改包。
-        </p>
-        <p v-if="syncStatus" class="section-note">
-          当前同步状态：{{ syncStatus.title }}
-        </p>
-      </section>
-
       <section v-if="projectName" class="project-file-section">
-        <h2>备份项目</h2>
+        <h2>导出项目备份</h2>
         <p class="section-note">
           导出为 .hproj 项目文件，方便备份或在另一台设备打开。
         </p>
         <button
           class="export-button"
           type="button"
-          :disabled="isExportingProjectFile"
+          :disabled="isExportingProjectFile || !canExportProjectBackup"
           @click="handleExportProjectFile"
         >
-          {{ isExportingProjectFile ? "正在导出..." : "导出为项目文件" }}
+          {{ isExportingProjectFile ? "正在导出..." : "导出项目备份" }}
         </button>
       </section>
 
-      <div v-if="projectName" class="form-grid">
+      <section v-if="projectName" class="form-grid change-export-section">
+        <h2>导出修改包</h2>
+        <p class="section-note">
+          成员把自己的译文、评论、术语或任务修改导出为签名修改包。
+        </p>
+
         <div class="current-user-field">
           <span>当前用户</span>
           <strong>{{ currentUser?.name || "未登录" }}</strong>
@@ -641,10 +627,13 @@ watch(
               : "当前成员没有导出修改包的权限。"
           }}
         </p>
-      </div>
+      </section>
 
       <section v-if="projectName" class="import-section">
         <h2>导入修改包</h2>
+        <p class="section-note">
+          负责人可在这里查看待合并修改、验证签名并处理冲突。
+        </p>
         <label v-if="canSelectImportFile" class="file-field">
           <span>选择修改包</span>
           <input
@@ -660,6 +649,10 @@ watch(
           :preview="packagePreview"
           :conflict-count="conflicts.length"
         />
+
+        <p v-if="packagePreview && !canReviewPackages" class="section-note">
+          当前成员没有查看待合并修改的权限，只能按已有导入权限继续操作。
+        </p>
 
         <button
           v-if="packagePreview && conflicts.length === 0 && canSelectImportFile"
@@ -680,6 +673,12 @@ watch(
           {{ applyDisabledReason }}
         </p>
 
+        <section class="conflict-section">
+          <h2>冲突处理</h2>
+          <p class="section-note">
+            如果修改包和当前项目内容同时改过同一词条，请先选择保留哪一版。
+          </p>
+
         <ConflictResolver
           :conflicts="conflicts"
           :is-applying="isApplyingPackage"
@@ -687,6 +686,7 @@ watch(
           :disabled-reason="applyDisabledReason"
           @apply="handleApplyPackage"
         />
+        </section>
       </section>
 
       <section v-if="projectName" class="release-section">
@@ -848,16 +848,15 @@ button:disabled {
 }
 
 .form-grid,
-.sync-fallback-section,
 .project-file-section,
 .import-section,
+.conflict-section,
 .release-section {
   display: grid;
   gap: 16px;
   margin-top: 24px;
 }
 
-.sync-fallback-section,
 .project-file-section,
 .import-section,
 .release-section {
@@ -868,6 +867,11 @@ button:disabled {
 .section-note {
   color: #4b5563;
   line-height: 1.7;
+}
+
+.conflict-section {
+  padding-top: 18px;
+  border-top: 1px solid #e5e7eb;
 }
 
 h2 {

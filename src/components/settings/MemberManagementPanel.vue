@@ -218,7 +218,7 @@ async function handleChangeOwnPassword() {
         oldPassword.value,
         newPassword.value,
       ),
-    "密码已在当前项目副本中修改。如果你在其他设备或其他副本中使用此项目，请同步项目或重新导出项目文件。",
+    "密码已在当前项目副本中修改。如果你在其他设备或其他副本中使用此项目，请重新导出项目备份。",
   );
 
   if (!errorMessage.value) {

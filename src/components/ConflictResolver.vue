@@ -137,18 +137,18 @@ function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
           >
             <option value="keep_main">保留主项目</option>
             <option value="use_package">使用我的修改</option>
-            <option value="manual_merge">手动合并</option>
+            <option value="manual_merge">手动处理</option>
             <option value="skip">跳过</option>
           </select>
         </label>
 
         <label v-if="draft.action === 'manual_merge'">
-          <span>合并后的译文</span>
+          <span>处理后的译文</span>
           <textarea v-model="draft.target" rows="4" />
         </label>
 
         <label v-if="draft.action === 'manual_merge'">
-          <span>合并后的状态</span>
+          <span>处理后的状态</span>
           <select v-model="draft.status">
             <option
               v-for="status in ENTRY_STATUSES"

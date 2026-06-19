@@ -8,12 +8,6 @@ import {
 } from "../services/permissions";
 import { openProject } from "../services/project";
 import {
-  getSyncFallbackAction,
-  getSyncStatus,
-  submitTaskWithSync,
-  type SyncStatus,
-} from "../services/sync";
-import {
   getTaskProgress,
   getTasksByUser,
   loadTasks,
@@ -32,7 +26,6 @@ const allTasks = ref<Task[]>([]);
 const myTasks = ref<Task[]>([]);
 const selectedTask = ref<Task>();
 const selectedProgress = ref<TaskProgress>();
-const syncStatus = ref<SyncStatus>();
 const projectName = ref("");
 const isLoading = ref(false);
 const isSubmitting = ref(false);
@@ -44,35 +37,15 @@ const hasProjectContext = computed(() => Boolean(props.project));
 const canExportFallback = computed(() =>
   canExportChangePackage(currentUser.value),
 );
-const canSubmitWithSync = computed(() =>
-  Boolean(
-    syncStatus.value &&
-      syncStatus.value.state !== "disabled" &&
-      syncStatus.value.state !== "error" &&
-      (syncStatus.value.canSync || syncStatus.value.canUpload),
-  ),
+const submitActionLabel = computed(() => "导出修改包");
+const submitActionHint = computed(() =>
+  canExportFallback.value
+    ? "提交任务后，请导出修改包交给负责人合并。"
+    : "当前成员没有导出修改包的权限，请联系负责人处理。",
 );
-const submitActionLabel = computed(() =>
-  canSubmitWithSync.value ? "同步提交" : "导出修改包",
-);
-const submitActionHint = computed(() => {
-  if (canSubmitWithSync.value) {
-    return "提交任务后会尝试自动同步修改。";
-  }
-
-  if (!canExportFallback.value) {
-    return "当前成员不能自动同步，也没有导出修改包的权限。";
-  }
-
-  return getSyncFallbackAction().message;
-});
 const emptyStateText = computed(() =>
   projectName.value ? "当前项目暂无任务。" : "请打开项目文件夹，查看任务。",
 );
-
-async function refreshSyncStatus() {
-  syncStatus.value = await getSyncStatus(currentUser.value);
-}
 
 async function refreshMyTasks() {
   myTasks.value = currentUser.value?.id
@@ -95,7 +68,6 @@ async function loadTaskState() {
 
   try {
     allTasks.value = await loadTasks();
-    await refreshSyncStatus();
     await refreshMyTasks();
 
     if (myTasks.value[0]) {
@@ -167,18 +139,9 @@ async function handleSubmitTask(taskId: string) {
     await refreshMyTasks();
     await selectTask(submittedTask);
 
-    if (canSubmitWithSync.value) {
-      const syncResult = await submitTaskWithSync(taskId, currentUser.value);
-      savedMessage.value = syncResult.ok
-        ? syncResult.message
-        : `${syncResult.message} ${syncResult.fallbackMessage ?? ""}`.trim();
-      await refreshSyncStatus();
-      return;
-    }
-
     savedMessage.value = canExportFallback.value
       ? "任务已提交。请导出修改包交给负责人合并。"
-      : "任务已提交，但当前成员不能导出修改包，请联系负责人处理。";
+      : "任务已提交。当前成员没有导出修改包的权限，请联系负责人处理。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "任务提交失败。请稍后再试。";
@@ -416,15 +379,6 @@ h2 {
 .user-field span {
   color: #5b6472;
   font-size: 14px;
-}
-
-select {
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  font: inherit;
 }
 
 section {

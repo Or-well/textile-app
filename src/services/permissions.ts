@@ -278,6 +278,10 @@ export function canExportChangePackage(user: Member | null | undefined): boolean
   return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT);
 }
 
+export function canReviewChangePackage(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW);
+}
+
 export function canDangerousImportChangePackage(
   user: Member | null | undefined,
 ): boolean {
@@ -305,16 +309,8 @@ export function canExportRelease(user: Member | null | undefined): boolean {
   );
 }
 
-export function canViewSync(user: Member | null | undefined): boolean {
-  return can(user, PERMISSION_ACTIONS.SYNC_VIEW);
-}
-
-export function canUseProjectSync(user: Member | null | undefined): boolean {
-  return can(user, PERMISSION_ACTIONS.SYNC_USE);
-}
-
-export function canConfigureSync(user: Member | null | undefined): boolean {
-  return can(user, PERMISSION_ACTIONS.SYNC_CONFIGURE);
+export function canProjectBackup(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.PROJECT_BACKUP);
 }
 
 export function canConfigureStats(user: Member | null | undefined): boolean {

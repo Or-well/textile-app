@@ -625,6 +625,7 @@ onBeforeUnmount(() => {
         :stats="currentStats"
         :task-count="taskCount"
         @open-files="handleOpenProjectSection('files')"
+        @open-import-export="handleOpenProjectSection('import-export')"
       />
 
       <FilesPage

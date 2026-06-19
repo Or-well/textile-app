@@ -1,22 +1,14 @@
 export type GitAdapterKind = "disabled" | "browser" | "desktop";
 
-export type GitAdapterState =
-  | "disabled"
-  | "ready"
-  | "clean"
-  | "dirty"
-  | "need_pull"
-  | "syncing"
-  | "conflict"
-  | "error";
+export type GitAdapterState = "disabled" | "ready" | "conflict" | "error";
 
 export interface GitAdapterStatus {
-  available: boolean;
+  available: false;
   state: GitAdapterState;
   message: string;
-  hasLocalChanges: boolean;
-  hasRemoteChanges: boolean;
-  hasConflicts: boolean;
+  hasLocalChanges: false;
+  hasRemoteChanges: false;
+  hasConflicts: false;
   lastSyncAt?: string;
   errorMessage?: string;
 }
@@ -49,7 +41,7 @@ export interface GitAdapter {
 const disabledStatus: GitAdapterStatus = {
   available: false,
   state: "disabled",
-  message: "当前环境暂不支持自动同步。你可以导出修改包交给负责人合并。",
+  message: "当前项目使用修改包协作。请导出修改包，交给负责人导入合并。",
   hasLocalChanges: false,
   hasRemoteChanges: false,
   hasConflicts: false,
@@ -93,24 +85,10 @@ export class DisabledGitAdapter implements GitAdapter {
 
 export class BrowserGitAdapter extends DisabledGitAdapter {
   override kind: GitAdapterKind = "browser";
-
-  override async getStatus(): Promise<GitAdapterStatus> {
-    return {
-      ...disabledStatus,
-      message: "浏览器自动同步尚未启用。你可以导出修改包交给负责人合并。",
-    };
-  }
 }
 
 export class DesktopGitAdapter extends DisabledGitAdapter {
   override kind: GitAdapterKind = "desktop";
-
-  override async getStatus(): Promise<GitAdapterStatus> {
-    return {
-      ...disabledStatus,
-      message: "桌面自动同步尚未接入。你可以导出修改包交给负责人合并。",
-    };
-  }
 }
 
 let activeAdapter: GitAdapter = new DisabledGitAdapter();
@@ -174,7 +152,5 @@ export async function pushChanges(): Promise<GitAdapterStatus> {
 }
 
 export async function getHistory(): Promise<string[]> {
-  const entries = await getLog();
-
-  return entries.map((entry) => entry.message);
+  return [];
 }

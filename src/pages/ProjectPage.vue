@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
 import SyncStatusPanel from "../components/SyncStatusPanel.vue";
 import type { ProjectConfig } from "../model/types";
-import type { BasicProjectStats } from "../services/stats";
 import {
-  getSyncStatus,
-  syncLatestProject,
-  uploadMyChanges,
-  type SyncStatus,
-} from "../services/sync";
-import { getCurrentUser } from "../services/permissions";
+  canExportChangePackage,
+  canImportChangePackage,
+  getCurrentUser,
+} from "../services/permissions";
+import type { BasicProjectStats } from "../services/stats";
 
 defineProps<{
   project: ProjectConfig;
@@ -20,58 +18,11 @@ defineProps<{
 
 const emit = defineEmits<{
   openFiles: [];
+  openImportExport: [];
 }>();
 
-const syncStatus = ref<SyncStatus>();
-const isSyncBusy = ref(false);
-const syncMessage = ref("");
-const syncErrorMessage = ref("");
-
-async function refreshSyncStatus() {
-  syncStatus.value = await getSyncStatus(getCurrentUser());
-}
-
-async function runSyncAction(action: () => Promise<{ message: string; fallbackMessage?: string }>) {
-  isSyncBusy.value = true;
-  syncMessage.value = "";
-  syncErrorMessage.value = "";
-
-  try {
-    const result = await action();
-
-    syncMessage.value = result.fallbackMessage
-      ? `${result.message} ${result.fallbackMessage}`
-      : result.message;
-    await refreshSyncStatus();
-  } catch (error) {
-    syncErrorMessage.value =
-      error instanceof Error
-        ? error.message
-        : "同步操作失败。你可以先导出修改包，交给负责人合并。";
-  } finally {
-    isSyncBusy.value = false;
-  }
-}
-
-function handleExportFallback() {
-  syncMessage.value = "请到导入 / 导出页导出修改包，交给负责人合并。";
-  syncErrorMessage.value = "";
-}
-
-function handleViewConflict() {
-  if (syncStatus.value?.state === "conflict") {
-    syncMessage.value = "请在导入 / 导出页处理内容冲突。";
-    syncErrorMessage.value = "";
-    return;
-  }
-
-  syncMessage.value = "";
-  syncErrorMessage.value = "当前没有需要处理的内容冲突。";
-}
-
-onMounted(() => {
-  void refreshSyncStatus();
-});
+const canExportPackage = computed(() => canExportChangePackage(getCurrentUser()));
+const canImportPackage = computed(() => canImportChangePackage(getCurrentUser()));
 </script>
 
 <template>
@@ -98,17 +49,14 @@ onMounted(() => {
         <p v-else class="muted-text">正在准备项目统计。</p>
       </section>
 
-      <section class="sync-overview-panel">
+      <section class="collaboration-overview-panel">
         <SyncStatusPanel
-          :status="syncStatus"
-          :is-busy="isSyncBusy"
-          @sync="runSyncAction(() => syncLatestProject(getCurrentUser()))"
-          @upload="runSyncAction(() => uploadMyChanges(getCurrentUser()))"
-          @export-change-package="handleExportFallback"
-          @view-conflict="handleViewConflict"
+          :can-export-change-package="canExportPackage"
+          :can-import-change-package="canImportPackage"
+          @export-change-package="emit('openImportExport')"
+          @import-change-package="emit('openImportExport')"
+          @view-pending-changes="emit('openImportExport')"
         />
-        <p v-if="syncMessage" class="sync-message">{{ syncMessage }}</p>
-        <p v-if="syncErrorMessage" class="sync-error">{{ syncErrorMessage }}</p>
       </section>
 
       <section class="overview-panel">
@@ -235,23 +183,8 @@ h2 {
   grid-column: 1 / -1;
 }
 
-.sync-overview-panel {
+.collaboration-overview-panel {
   display: grid;
-  gap: 10px;
-}
-
-.sync-message,
-.sync-error {
-  margin: 0;
-  line-height: 1.6;
-}
-
-.sync-message {
-  color: #166534;
-}
-
-.sync-error {
-  color: #b42318;
 }
 
 dl {

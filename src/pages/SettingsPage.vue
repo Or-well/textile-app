@@ -38,11 +38,6 @@ import {
 } from "../services/appUpdate";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
 import { normalizeProgressWeights } from "../services/stats";
-import {
-  getSyncStatus,
-  syncLatestProject,
-  type SyncStatus,
-} from "../services/sync";
 
 type SettingsSection =
   | "project"
@@ -79,7 +74,7 @@ const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "workflow", label: "工作流" },
   { key: "progress", label: "进度权重" },
   { key: "export", label: "导出设置" },
-  { key: "sync", label: "同步与备份" },
+  { key: "sync", label: "协作与备份" },
   { key: "updates", label: "关于 / 更新" },
   { key: "danger", label: "危险操作" },
 ];
@@ -152,7 +147,6 @@ const exportDraft = ref({
   include_report: true,
   include_manifest: true,
 });
-const syncStatus = ref<SyncStatus>();
 const updateState = ref<AppUpdateState>(getAppUpdateState());
 const selectedUpdateChannel = ref<UpdateChannel>(getUpdateChannel());
 const isLoading = ref(false);
@@ -160,8 +154,6 @@ const isSavingProject = ref(false);
 const isSavingWorkflow = ref(false);
 const isSavingWeights = ref(false);
 const isSavingExportSettings = ref(false);
-const isRefreshingSync = ref(false);
-const isSyncing = ref(false);
 const isExportingProjectFile = ref(false);
 const isCheckingUpdate = ref(false);
 const message = ref("");
@@ -204,14 +196,6 @@ const roleRows = computed(() =>
     permissions: ROLE_DEFAULT_PERMISSIONS[role] ?? [],
   })),
 );
-const syncStateText = computed(() => {
-  if (!syncStatus.value) {
-    return "尚未检查同步状态";
-  }
-
-  return `${syncStatus.value.title}：${syncStatus.value.message}`;
-});
-const canSyncProject = computed(() => syncStatus.value?.canSync === true);
 const currentProgramVersion = computed(() => `v${getCurrentVersion()}`);
 const latestProgramVersion = computed(() =>
   updateState.value.latest ? `v${updateState.value.latest.latest_version}` : "尚未获取",
@@ -322,7 +306,6 @@ async function handleOpenProject() {
     localRoot.value = project.root;
     applyProject(project.config);
     applyMembers(project.members);
-    await refreshSyncStatus();
     message.value = `已打开项目：${project.config.name}`;
   } catch (error) {
     localProject.value = null;
@@ -507,52 +490,6 @@ function handleRestoreDefaultWeights() {
   errorMessage.value = "";
 }
 
-async function refreshSyncStatus() {
-  isRefreshingSync.value = true;
-
-  try {
-    syncStatus.value = await getSyncStatus();
-  } catch (error) {
-    syncStatus.value = {
-      state: "failed",
-      title: "同步状态检查失败",
-      message:
-        error instanceof Error
-          ? error.message
-          : "当前无法检查同步状态。你可以先导出修改包继续协作。",
-      canSync: false,
-      canUpload: false,
-      fallbackMessage: "你可以先导出修改包，交给负责人合并。",
-    };
-  } finally {
-    isRefreshingSync.value = false;
-  }
-}
-
-async function handleSyncProject() {
-  if (!canSyncProject.value) {
-    return;
-  }
-
-  isSyncing.value = true;
-  message.value = "";
-  errorMessage.value = "";
-
-  try {
-    const result = await syncLatestProject();
-
-    message.value = result.ok
-      ? result.message
-      : result.fallbackMessage ?? result.message;
-    await refreshSyncStatus();
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "同步项目失败。请导出修改包作为备用。";
-  } finally {
-    isSyncing.value = false;
-  }
-}
-
 async function handleExportProjectFile() {
   const root = props.projectRoot ?? localRoot.value;
 
@@ -656,7 +593,6 @@ watch(
     localRoot.value = root ?? null;
     applyProject(project);
     applyMembers(members ?? []);
-    void refreshSyncStatus();
   },
   { immediate: true },
 );
@@ -667,9 +603,6 @@ onMounted(() => {
     selectedUpdateChannel.value = nextState.channel;
   });
 
-  if (localProject.value) {
-    void refreshSyncStatus();
-  }
 });
 
 onBeforeUnmount(() => {
@@ -1147,45 +1080,20 @@ onBeforeUnmount(() => {
 
         <section v-else-if="activeSection === 'sync'" class="settings-card">
           <header class="card-header">
-            <h2>同步与备份</h2>
-            <p>这里仅显示面向成员的协作入口，不暴露底层技术细节。</p>
+            <h2>协作与备份</h2>
+            <p>当前项目推荐使用签名修改包进行协作。</p>
           </header>
 
-          <div class="sync-status">
-            <strong>{{ syncStateText }}</strong>
-            <p v-if="syncStatus?.fallbackMessage">{{ syncStatus.fallbackMessage }}</p>
+          <div class="collaboration-status">
+            <strong>协作方式：修改包</strong>
+            <p>成员导出修改包后交给负责人导入合并；导入时可预览内容并处理冲突。</p>
           </div>
 
           <div class="form-stack">
             <div class="form-row">
               <div class="row-label">
-                <span>同步项目</span>
-                <p>获取负责人合并后的最新内容。</p>
-              </div>
-              <div class="row-control button-control">
-                <button
-                  class="secondary-button"
-                  type="button"
-                  :disabled="!canSyncProject || isSyncing"
-                  @click="handleSyncProject"
-                >
-                  {{ isSyncing ? "正在同步..." : "同步项目" }}
-                </button>
-                <button
-                  class="secondary-button"
-                  type="button"
-                  :disabled="isRefreshingSync"
-                  @click="refreshSyncStatus"
-                >
-                  {{ isRefreshingSync ? "正在检查..." : "刷新状态" }}
-                </button>
-              </div>
-            </div>
-
-            <div class="form-row">
-              <div class="row-label">
                 <span>导出修改包</span>
-                <p>同步不可用时，把本地修改交给负责人合并。</p>
+                <p>把当前成员的修改打包，交给负责人导入合并。</p>
               </div>
               <div class="row-control button-control">
                 <button
@@ -1200,7 +1108,7 @@ onBeforeUnmount(() => {
 
             <div class="form-row">
               <div class="row-label">
-                <span>备份项目</span>
+                <span>导出项目备份</span>
                 <p>导出为 .hproj 项目文件，方便备份或交给其他成员打开。</p>
               </div>
               <div class="row-control button-control">
@@ -1210,7 +1118,7 @@ onBeforeUnmount(() => {
                   :disabled="isExportingProjectFile"
                   @click="handleExportProjectFile"
                 >
-                  {{ isExportingProjectFile ? "正在导出..." : "导出为项目文件" }}
+                  {{ isExportingProjectFile ? "正在导出..." : "导出项目备份" }}
                 </button>
               </div>
             </div>
@@ -1394,6 +1302,7 @@ onBeforeUnmount(() => {
 .member-row span,
 .role-card p,
 .sync-status p,
+.collaboration-status p,
 .update-result span,
 .update-notes,
 .danger-row p {
@@ -1442,6 +1351,7 @@ h3 {
 .success-text,
 .error-inline,
 .sync-status p,
+.collaboration-status p,
 .update-result,
 .update-notes,
 .danger-row p {
@@ -1772,7 +1682,8 @@ button:disabled {
 
 .notice-text,
 .placeholder-note,
-.sync-status {
+.sync-status,
+.collaboration-status {
   padding: 12px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
@@ -1852,12 +1763,14 @@ code {
   font-size: 12px;
 }
 
-.sync-status {
+.sync-status,
+.collaboration-status {
   display: grid;
   gap: 5px;
 }
 
-.sync-status strong {
+.sync-status strong,
+.collaboration-status strong {
   color: #111827;
 }
 
