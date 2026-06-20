@@ -26,6 +26,12 @@ import {
 let currentProjectStorage: ProjectStorage | null = null;
 let cachedEntries: Entry[] = [];
 
+const DEFAULT_ENTRY_CHUNK_SIZE = 500;
+const MIN_ENTRY_CHUNK_SIZE = 1;
+const MAX_ENTRY_CHUNK_SIZE = 5000;
+const ENTRY_CHUNK_FILE_PATTERN = /^chunk_.*\.jsonl$/i;
+const NUMBERED_ENTRY_CHUNK_FILE_PATTERN = /^chunk_(\d+)\.jsonl$/i;
+
 export interface SourceImportResult {
   entries: Entry[];
   supported: boolean;
@@ -40,6 +46,10 @@ export interface TranslationImportResult {
 export interface SaveEntryOptions {
   actor?: Member | null;
   workflow?: ProjectWorkflowSettings;
+}
+
+export interface WriteEntriesOptions {
+  chunkSize?: number;
 }
 
 interface ImportEntryRow {
@@ -416,11 +426,76 @@ function parseTranslationRows(text: string, fileName: string): Array<{
     }));
 }
 
-async function writeFileEntries(fileId: string, entries: Entry[]): Promise<void> {
-  const storage = getProjectStorage();
+function normalizeChunkSize(value?: number): number {
+  const numericValue = Number(value);
 
-  await storage.ensureDirectory(`entries/${fileId}`);
-  await storage.writeJsonl(`entries/${fileId}/chunk_0001.jsonl`, entries);
+  if (!Number.isFinite(numericValue)) {
+    return DEFAULT_ENTRY_CHUNK_SIZE;
+  }
+
+  const chunkSize = Math.trunc(numericValue);
+
+  return Math.max(
+    MIN_ENTRY_CHUNK_SIZE,
+    Math.min(MAX_ENTRY_CHUNK_SIZE, chunkSize),
+  );
+}
+
+function getEntryChunkFileName(chunkIndex: number): string {
+  return `chunk_${String(chunkIndex).padStart(4, "0")}.jsonl`;
+}
+
+function splitEntriesIntoChunks(entries: Entry[], chunkSize: number): Entry[][] {
+  if (entries.length === 0) {
+    return [[]];
+  }
+
+  const chunks: Entry[][] = [];
+
+  for (let index = 0; index < entries.length; index += chunkSize) {
+    chunks.push(entries.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
+function getEntryChunkNumber(fileName: string): number {
+  const match = NUMBERED_ENTRY_CHUNK_FILE_PATTERN.exec(fileName);
+
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+
+async function writeFileEntries(
+  fileId: string,
+  entries: Entry[],
+  options: WriteEntriesOptions = {},
+): Promise<void> {
+  const storage = getProjectStorage();
+  const entryDirectory = `entries/${fileId}`;
+  const chunkSize = normalizeChunkSize(options.chunkSize);
+  const chunks = splitEntriesIntoChunks(entries, chunkSize);
+  const nextChunkNames = new Set(
+    chunks.map((_, index) => getEntryChunkFileName(index + 1)),
+  );
+
+  await storage.ensureDirectory(entryDirectory);
+
+  const existingChunkFiles = await listEntryChunkFiles(storage, fileId);
+
+  await Promise.all(
+    chunks.map((chunk, index) =>
+      storage.writeJsonl(
+        `${entryDirectory}/${getEntryChunkFileName(index + 1)}`,
+        chunk,
+      ),
+    ),
+  );
+
+  await Promise.all(
+    existingChunkFiles
+      .filter((fileName) => !nextChunkNames.has(fileName))
+      .map((fileName) => storage.deleteEntry(`${entryDirectory}/${fileName}`)),
+  );
 
   cachedEntries = [
     ...cachedEntries.filter((entry) => entry.file_id !== fileId),
@@ -439,8 +514,9 @@ export function parseEntriesFromSourceFile(
 export async function writeEntriesForFile(
   fileId: string,
   entries: Entry[],
+  options: WriteEntriesOptions = {},
 ): Promise<void> {
-  await writeFileEntries(fileId, entries);
+  await writeFileEntries(fileId, entries, options);
 }
 
 export function clearCachedEntriesForFile(fileId: string): void {
@@ -573,8 +649,12 @@ async function listEntryChunkFiles(
   const fileNames = await storage.listFiles(entryDirectory);
 
   return fileNames
-    .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
-    .sort((a, b) => a.localeCompare(b));
+    .filter((name) => ENTRY_CHUNK_FILE_PATTERN.test(name))
+    .sort((a, b) => {
+      const chunkNumberDiff = getEntryChunkNumber(a) - getEntryChunkNumber(b);
+
+      return chunkNumberDiff || a.localeCompare(b);
+    });
 }
 
 export async function loadEntries(fileId: string): Promise<Entry[]> {
@@ -606,10 +686,11 @@ export async function createEntriesFromSourceFile(
   fileId: string,
   fileName: string,
   text: string,
+  options: WriteEntriesOptions = {},
 ): Promise<Entry[]> {
   const entries = parseEntriesFromSourceFile(fileId, fileName, text);
 
-  await writeFileEntries(fileId, entries);
+  await writeFileEntries(fileId, entries, options);
 
   return entries;
 }
@@ -618,6 +699,7 @@ export async function updateEntriesFromSourceFile(
   fileId: string,
   fileName: string,
   text: string,
+  options: WriteEntriesOptions = {},
 ): Promise<Entry[]> {
   const result = parseSourceText(fileId, fileName, text);
   let existingEntries: Entry[] = [];
@@ -630,7 +712,7 @@ export async function updateEntriesFromSourceFile(
 
   const mergedEntries = mergeSourceEntries(result.entries, existingEntries);
 
-  await writeFileEntries(fileId, mergedEntries);
+  await writeFileEntries(fileId, mergedEntries, options);
 
   return mergedEntries;
 }
@@ -640,6 +722,7 @@ export async function importEntryTranslations(
   fileName: string,
   text: string,
   userId = "",
+  options: WriteEntriesOptions = {},
 ): Promise<TranslationImportResult> {
   const entries = await loadEntries(fileId);
   const rows = parseTranslationRows(text, fileName);
@@ -676,7 +759,7 @@ export async function importEntryTranslations(
     matched += 1;
   }
 
-  await writeFileEntries(fileId, entries);
+  await writeFileEntries(fileId, entries, options);
 
   return { matched, skipped };
 }

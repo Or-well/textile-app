@@ -429,7 +429,7 @@ changes/
 - `project_id`：跨副本和修改包匹配的稳定 ID。
 - `revision`/`revision_hash`：项目更新包的线性基线。
 - `files`：项目文件索引。
-- `chunk_size`：设计上用于分块，当前写入仍固定为一个 `chunk_0001.jsonl`。
+- `chunk_size`：控制新增、更新源文件和导入译文时每个 entries chunk 的最大词条数；旧的单 chunk 项目仍兼容读取。
 - `auto_save`：保留设置，当前编辑仍以显式保存为主。
 - `allow_change_package`：项目级开关字段，当前主要能力仍由权限 action 决定。
 - `enable_tasks`：保存于工作流，但当前任务页不会因此隐藏。
@@ -485,8 +485,10 @@ changes/
 路径：
 
 ```text
-entries/<file_id>/chunk_0001.jsonl
+entries/<file_id>/chunk_*.jsonl
 ```
+
+新写入使用 `chunk_0001.jsonl`、`chunk_0002.jsonl` 等连续编号，并按项目 `settings.chunk_size` 分块。
 
 每行一个 `Entry`：
 
@@ -796,7 +798,6 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - service 内有模块级词条缓存，写入后必须同步更新。
 - 某些错误信息仍是英文 `Login required.`、`Permission denied.`。
-- 当前单 chunk 写入忽略 `chunk_size`。
 
 ## 23. `terms.ts`
 
@@ -2024,7 +2025,6 @@ npm run build
 - 没有完整事务和回滚。
 - 没有多标签页并发锁。
 - 没有自动化测试套件。
-- `chunk_size` 未用于真实分块。
 - `enable_tasks` 未控制任务页显示。
 - `only_reviewed` 在审核关闭时可能导出空内容。
 - Web 下载地址未配置。
@@ -2042,10 +2042,8 @@ npm run build
 1. 为 status、stats、permissions 和 change-package hash 增加纯函数单元测试。
 2. 为项目创建、源文件更新、删除和普通修改包导入增加可回滚写入计划。
 3. 为 `.hproj` 导入失败增加更完整的写入计划和残留目录检查。
-4. 让 `chunk_size` 真正控制分块，并提供旧 chunk 兼容测试。
-5. 明确审核关闭时成品过滤语义。
-6. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
-7. 增加端到端手动测试清单或 Playwright 流程。
-8. 更新或标记早期设计文档的历史状态，避免误导维护者。
+4. 明确审核关闭时成品过滤语义。
+5. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
+6. 增加端到端手动测试清单或 Playwright 流程。
 
 任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。

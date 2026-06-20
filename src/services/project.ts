@@ -474,7 +474,9 @@ export async function addSourceFileToProject(
   try {
     await storage.ensureDirectory("source");
     await storage.writeText(addedFile.source_path, sourceText);
-    await writeEntriesForFile(addedFile.id, entries);
+    await writeEntriesForFile(addedFile.id, entries, {
+      chunkSize: config.settings.chunk_size,
+    });
     await saveProjectToStorage(storage, nextConfig);
   } catch (error) {
     const residualPaths = await cleanupFailedSourceImport(storage, addedFile);
@@ -542,6 +544,9 @@ export async function updateSourceFileInProject(
     projectFile.id,
     sourceFile.name,
     sourceText,
+    {
+      chunkSize: config.settings.chunk_size,
+    },
   );
 
   await storage.writeText(projectFile.source_path, sourceText);
@@ -581,6 +586,9 @@ export async function importTranslationFileToProject(
     translationFile.name,
     await translationFile.text(),
     writeActor.id,
+    {
+      chunkSize: config.settings.chunk_size,
+    },
   );
 
   return {

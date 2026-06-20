@@ -230,7 +230,7 @@ Textile 的主要数据包括源文件、词条、术语、任务、评论、成
 
 - TXT 和 KS 当前按非空文本行生成词条。
 - JSON/JSONL/CSV 会按可识别的字段读取 key、speaker、source、target 等内容。
-- 当前每个文件写入一个 `chunk_0001.jsonl`；`chunk_size` 已存在于项目设置，但尚未实际拆分多个 chunk。
+- 词条会按项目设置中的 `chunk_size` 写入 `chunk_0001.jsonl`、`chunk_0002.jsonl` 等分块；旧的单 chunk 项目仍可正常读取。
 
 ## 11. 更新源文件
 
