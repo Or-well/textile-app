@@ -1148,8 +1148,8 @@ onBeforeUnmount(() => {
 
             <div class="form-row">
               <div class="row-label">
-                <span>只导出已审核</span>
-                <p>后续用于发布前过滤未审核内容。</p>
+                <span>只导出流程完成词条</span>
+                <p>发布前按项目工作流过滤未完成内容。</p>
               </div>
               <div class="row-control checkbox-control">
                 <input
@@ -1158,7 +1158,7 @@ onBeforeUnmount(() => {
                   type="checkbox"
                   :disabled="!canManageProject"
                 />
-                <label for="reviewed-only">只把已审核词条放入成品数据</label>
+                <label for="reviewed-only">只把流程完成词条放入成品数据</label>
               </div>
             </div>
 

@@ -1483,7 +1483,10 @@ const privateKeys = new Map<string, string>();
 
 - 隐藏项目文件不导出。
 - 隐藏词条不导出。
-- `only_reviewed` 时只保留 `status === "reviewed"`。
+- `only_reviewed` 是兼容保留的配置键；开启时按当前项目工作流保留“流程完成”词条：
+  - 审核开启：保留 `status === "reviewed"`。
+  - 审核关闭且校对开启：保留达到 `proofread_required` 的词条。
+  - 审核和校对都关闭：保留有译文的词条。
 
 报告：
 
@@ -1493,7 +1496,6 @@ const privateKeys = new Map<string, string>();
 
 风险和限制：
 
-- 审核关闭时 `only_reviewed` 仍按 reviewed 严格过滤，可能导出空内容。
 - 结果只下载，不自动写项目 `exports/`。
 
 ## 41. `projectPackage.ts`
@@ -2026,7 +2028,6 @@ npm run build
 - 没有多标签页并发锁。
 - 没有自动化测试套件。
 - `enable_tasks` 未控制任务页显示。
-- `only_reviewed` 在审核关闭时可能导出空内容。
 - Web 下载地址未配置。
 - Tauri updater 公钥和 endpoint 未配置。
 - 私钥文件未加密，内存私钥刷新后丢失。
@@ -2042,8 +2043,7 @@ npm run build
 1. 为 status、stats、permissions 和 change-package hash 增加纯函数单元测试。
 2. 为项目创建、源文件更新、删除和普通修改包导入增加可回滚写入计划。
 3. 为 `.hproj` 导入失败增加更完整的写入计划和残留目录检查。
-4. 明确审核关闭时成品过滤语义。
-5. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
-6. 增加端到端手动测试清单或 Playwright 流程。
+4. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
+5. 增加端到端手动测试清单或 Playwright 流程。
 
 任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。

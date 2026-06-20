@@ -158,6 +158,32 @@ export function isEntryReviewComplete(
   return !settings.review_required || entry.status === "reviewed";
 }
 
+export function isEntryReleaseComplete(
+  entry: {
+    status?: EntryStatus;
+    target?: string;
+    proofread_by?: string[] | string;
+    proofread_count?: number;
+  },
+  workflow?: ProjectWorkflowSettings,
+): boolean {
+  const settings = normalizeWorkflowSettings(workflow);
+
+  if (entry.status === "reviewed") {
+    return true;
+  }
+
+  if (settings.review_required) {
+    return false;
+  }
+
+  if (settings.proofread_required > 0) {
+    return isEntryProofreadComplete(entry, settings);
+  }
+
+  return hasText(entry.target);
+}
+
 export function inferEntryStatus(entry: {
   status?: LegacyEntryStatus;
   target?: string;

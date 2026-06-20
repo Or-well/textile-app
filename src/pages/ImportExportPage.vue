@@ -802,7 +802,7 @@ watch(
 
           <label class="checkbox-line">
             <input v-model="releaseOnlyReviewed" type="checkbox" />
-            <span>只导出已审核</span>
+            <span>只导出流程完成词条</span>
           </label>
 
           <label class="checkbox-line">
@@ -832,8 +832,8 @@ watch(
               总词条数
             </span>
             <span>
-              <strong>{{ releaseSummary.reviewedEntries }}</strong>
-              已审核数
+              <strong>{{ releaseSummary.exportEntries }}</strong>
+              将导出
             </span>
             <span>
               <strong>{{ releaseSummary.untranslatedEntries }}</strong>

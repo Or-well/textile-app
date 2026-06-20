@@ -6,7 +6,7 @@ import type {
   ReleaseExportSettings,
   Term,
 } from "../model/types";
-import { normalizeEntries } from "../model/status";
+import { isEntryReleaseComplete, normalizeEntries } from "../model/status";
 import { nowIso } from "../utils/time";
 import { APP_VERSION } from "../utils/appVersion";
 import { createZip, type ZipContent } from "../utils/zip";
@@ -206,11 +206,14 @@ function fileNameWithoutExtension(name: string): string {
 }
 
 function filterReleaseEntries(
+  project: ProjectConfig,
   entries: Entry[],
   options: ReleaseExportOptions,
 ): Entry[] {
   return options.only_reviewed
-    ? entries.filter((entry) => entry.status === "reviewed")
+    ? entries.filter((entry) =>
+        isEntryReleaseComplete(entry, project.settings.workflow),
+      )
     : entries;
 }
 
@@ -334,7 +337,7 @@ async function collectReleaseFiles(
 
   for (const projectFile of project.files.filter((file) => !file.hidden)) {
     const entries = await loadEntryChunks(projectFile);
-    const releaseEntries = filterReleaseEntries(entries, options);
+    const releaseEntries = filterReleaseEntries(project, entries, options);
     const baseName = fileNameWithoutExtension(projectFile.name);
     const asset = exportWithAdapter({
       project,
@@ -402,7 +405,11 @@ export async function exportFile(
     throw new Error("没有找到要导出的文件。请检查项目配置。");
   }
 
-  const entries = filterReleaseEntries(await loadEntryChunks(projectFile), releaseOptions);
+  const entries = filterReleaseEntries(
+    config,
+    await loadEntryChunks(projectFile),
+    releaseOptions,
+  );
   const asset = exportWithAdapter({
     project: config,
     projectFile,
