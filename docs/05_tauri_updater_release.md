@@ -789,6 +789,10 @@ npm.cmd run build
 
 如果构建后 `public/version.json` 变化，应把最终版本提交进去。
 
+如果本次修改过 `docs/MANUAL.md`，发布前还要重新生成 `public/manual.pdf`。`docs/MANUAL.md` 是维护源，`public/manual.pdf` 是随程序打包给用户打开的成品文件；两者应在同一个提交中保持一致。
+
+生成 PDF 时可以使用临时目录或浏览器打印导出，但只保留最终的 `public/manual.pdf`。临时 HTML、临时图片、下载测试文件和中间脚本不要放进仓库。
+
 ### 7.8 运行桌面发布检查
 
 ```powershell
@@ -833,6 +837,7 @@ git add -p
 
 ```powershell
 git add package.json package-lock.json public/version.json
+git add public/manual.pdf
 git add src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
 git add CHANGELOG.md
 ```
@@ -1883,6 +1888,7 @@ git push origin --delete "v$Version"
 - [ ] 没有私钥、密码和凭据。
 - [ ] `npm.cmd run test:unit` 通过。
 - [ ] `npm.cmd run build` 通过。
+- [ ] 如果更新了用户手册，`public/manual.pdf` 已从 `docs/MANUAL.md` 重新生成并提交。
 
 ### 版本
 

@@ -16,6 +16,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   navigate: [section: ProjectSection];
+  openHelp: [];
 }>();
 
 const navItems: Array<{ section: ProjectSection; label: string }> = [
@@ -50,6 +51,14 @@ function isActive(section: ProjectSection): boolean {
       @click="emit('navigate', item.section)"
     >
       {{ item.label }}
+    </button>
+
+    <button
+      class="nav-item help-item"
+      type="button"
+      @click="emit('openHelp')"
+    >
+      帮助
     </button>
   </nav>
 </template>
@@ -98,6 +107,11 @@ function isActive(section: ProjectSection): boolean {
   box-shadow: inset 3px 0 0 #2f6f73;
 }
 
+.help-item {
+  margin-top: 10px;
+  border-top: 1px solid #eef1f5;
+}
+
 @media (max-width: 840px) {
   .project-sidebar {
     display: flex;
@@ -114,6 +128,11 @@ function isActive(section: ProjectSection): boolean {
   .nav-item {
     flex: 0 0 auto;
     white-space: nowrap;
+  }
+
+  .help-item {
+    margin-top: 0;
+    border-top: 0;
   }
 }
 </style>

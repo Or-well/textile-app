@@ -1696,6 +1696,8 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
+工作台侧边栏的“帮助”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，让系统默认 PDF 阅读器打开随包资源。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
+
 ## 46. 词条编辑页滚动布局
 
 `EntryPage` 桌面端使用固定视口剩余高度：标题区占自然高度，内容区使用 `minmax(0, 1fr)`。内容区内部通过 flex 将提示消息作为自然高度，将三栏工作区作为剩余高度。
@@ -1748,6 +1750,8 @@ store: projectHandles
 - `UpdateCheckResult`。
 - 更新状态订阅通知。
 - Web 下载页打开、PWA 刷新或 Tauri 安装重启动作。
+
+内置用户手册不进入更新状态机。手册入口位于工作台侧边栏“帮助”，桌面版通过 Tauri `open_manual_pdf` 命令打开打包资源，Web/PWA 通过浏览器打开 `/manual.pdf`。
 
 状态机包含：
 
@@ -1841,6 +1845,8 @@ installing / refreshing / restarting
 - download
 - install
 - relaunch
+
+Tauri Updater 在没有可用更新时 `check()` 返回空结果，不会向 UI 暴露远端 `latest.json` 的完整 manifest。设置页在 `desktop + up-to-date + latest 为空` 时使用当前版本作为“最新版本”展示，并把构建编号显示为桌面通道不提供；有可用更新时仍展示 Tauri 返回的版本、日期和 notes。
 
 `src-tauri/capabilities/default.json` 允许：
 

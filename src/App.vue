@@ -36,6 +36,7 @@ import {
   openProjectRoot,
   type OpenedProject,
 } from "./services/project";
+import { openUserManual } from "./services/helpManual";
 import type { ProjectPackagePreview } from "./services/projectPackage";
 import { deleteCurrentProjectSource } from "./services/projectDeletion";
 import {
@@ -403,6 +404,15 @@ async function handleImportProjectFile(file: File) {
     }
   } finally {
     isOpeningProjectFile.value = false;
+  }
+}
+
+async function handleOpenHelp() {
+  try {
+    await openUserManual();
+  } catch (error) {
+    appNoticeMessage.value =
+      error instanceof Error ? error.message : "无法打开内置用户手册。";
   }
 }
 
@@ -864,6 +874,7 @@ onBeforeUnmount(() => {
     :current-user="currentUser"
     @navigate-project-list="navigate('/projects')"
     @navigate-section="handleOpenProjectSection"
+    @open-help="handleOpenHelp"
     @logout="handleLogout"
   >
     <template v-if="currentProject">

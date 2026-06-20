@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
 import ClearCacheDialog from "../components/settings/ClearCacheDialog.vue";
@@ -191,8 +191,18 @@ const weightsAreValid = computed(
     weightTotal.value === 100,
 );
 const currentProgramVersion = computed(() => `v${getCurrentVersion()}`);
+const desktopUpToDateWithoutManifest = computed(
+  () =>
+    updateState.value.platform === "desktop" &&
+    updateState.value.status === "up-to-date" &&
+    !updateState.value.latest,
+);
 const latestProgramVersion = computed(() =>
-  updateState.value.latest ? `v${updateState.value.latest.latest_version}` : "尚未获取",
+  updateState.value.latest
+    ? `v${updateState.value.latest.latest_version}`
+    : desktopUpToDateWithoutManifest.value
+    ? currentProgramVersion.value
+    : "尚未获取",
 );
 const updatePlatformText = computed(() => {
   const labels = {
@@ -214,7 +224,11 @@ const updateStatusText = computed(() =>
   getAppUpdateStatusMessage(updateState.value),
 );
 const latestBuildText = computed(() =>
-  updateState.value.latest?.build_id ? updateState.value.latest.build_id : "尚未获取",
+  updateState.value.latest?.build_id
+    ? updateState.value.latest.build_id
+    : desktopUpToDateWithoutManifest.value
+    ? "桌面通道不提供"
+    : "尚未获取",
 );
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
 const isDesktopUpdate = computed(() => updateState.value.platform === "desktop");

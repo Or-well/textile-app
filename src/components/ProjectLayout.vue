@@ -23,6 +23,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigateProjectList: [];
   navigateSection: [section: ProjectSection];
+  openHelp: [];
   logout: [];
 }>();
 
@@ -81,6 +82,7 @@ const sectionLabels: Record<ProjectSection, string> = {
       <ProjectSidebar
         :active-section="activeSection"
         @navigate="emit('navigateSection', $event)"
+        @open-help="emit('openHelp')"
       />
 
       <section class="workspace-content">
