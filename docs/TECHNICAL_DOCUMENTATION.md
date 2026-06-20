@@ -1835,6 +1835,8 @@ installing / refreshing / restarting
 
 `latest_version` 表示程序版本号，`build_id` 和 `assets_hash` 表示同一版本下的构建资源。设置页会分别显示版本和构建编号。
 
+`scripts/generate-version-manifest.mjs` 计算 `assets_hash` 时会把文本文件的 CRLF/CR 换行统一为 LF，再参与 hash；PDF、PNG 等二进制文件仍按原始字节计算。这样本机 Windows 和 GitHub Actions 的 checkout 换行差异不会让同一份代码生成不同的 `public/version.json`。
+
 当前 `download_url` 为空，Web 下载按钮禁用。
 
 ### Tauri Updater

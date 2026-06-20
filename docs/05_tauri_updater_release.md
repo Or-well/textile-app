@@ -2416,6 +2416,8 @@ npm.cmd run tauri:release:check
 - `public/version.json` 没有提交。
 - Tauri 版本文件没有同步。
 
+如果本机已经提交了 `public/version.json`，但 GitHub Actions 仍生成不同的 `build_id`，优先检查当前提交是否包含修复后的 `scripts/generate-version-manifest.mjs`。该脚本应对文本文件统一按 LF 计算 hash，避免本机和 Actions 因 CRLF/LF 差异反复生成不同清单。
+
 不要删除该检查。回到本机生成并提交这些文件，再发布一个正确 tag。
 
 #### Release 创建失败
