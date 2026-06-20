@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import EntryAssistPanel from "../components/EntryAssistPanel.vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntrySideList from "../components/EntrySideList.vue";
+import { useAppDraft } from "../composables/useAppDraft";
 import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
 import { getEntryById, loadEntries, saveEntry } from "../services/entries";
@@ -85,6 +86,13 @@ const entryCountLabel = computed(() => {
     : `共 ${entries.value.length} 条`;
 });
 const currentUser = computed(() => getCurrentUser());
+const hasUnsavedTranslation = computed(
+  () =>
+    Boolean(selectedEntry.value) &&
+    draftTarget.value !== selectedEntry.value?.target,
+);
+
+useAppDraft("译文", hasUnsavedTranslation);
 
 function getSaveEntryOptions() {
   return {

@@ -99,7 +99,7 @@ npm run tauri:release:check
 - Tauri Updater 公钥非空。
 - 至少配置一个 HTTPS updater endpoint。
 
-当前 Tauri 公钥和 endpoints 都为空，正式桌面更新发布检查会失败，这是预期保护。
+当前仓库已经配置 Tauri updater 公钥和 GitHub Releases endpoint；发布前仍必须运行该检查，防止版本或发布配置回退。
 
 ## 4. 目录结构
 
@@ -1724,8 +1724,8 @@ store: projectHandles
 - 统一 Web、PWA 和 Tauri 三种运行环境的更新状态。
 - 读取和保存 stable/beta 通道。
 - 检查版本、下载更新、安装或刷新。
-- 订阅 PWA service worker 和应用写操作状态。
-- 在安全时机应用已经准备好的更新。
+- 订阅 PWA service worker、应用写操作和未保存草稿状态。
+- 只在没有真实阻止项时允许用户应用已经准备好的更新。
 - 通过 BroadcastChannel 在 Web/PWA 标签页之间同步更新状态。
 
 `appUpdatePresentation.ts` 提供更新状态的纯函数展示语义：
@@ -1742,7 +1742,7 @@ store: projectHandles
 - Web `version.json`。
 - PWA service worker 事件。
 - Tauri Updater 返回的 manifest 和下载进度。
-- `updateSafety.ts` 提供的页面和写操作安全状态。
+- `updateSafety.ts` 聚合的活动操作和未保存草稿状态。
 
 主要输出：
 
@@ -1790,12 +1790,12 @@ installing / refreshing / restarting
 
 - PWA 已有待刷新资源时，后续 `up-to-date` 或 `failed` 不会清除 `ready-to-refresh`。
 - 同版本的新 `build_id`/`assets_hash` 可以作为新构建资源处理，不等同于版本号升级。
-- `refreshBlockedReason` 只在确实存在待刷新或待安装更新且当前状态不安全时保留。
+- `applyBlockedReason` 只在确实存在待刷新或待安装更新且当前有真实阻止项时保留。
 
 风险点：
 
 - Web/PWA 清单与 Tauri `latest.json` 不是同一种格式，不能混用。
-- 安装和刷新前必须继续尊重活动写操作与页面安全状态。
+- 安装和刷新前必须继续尊重活动写操作与未保存草稿状态。
 - Web 下载 URL 为空时不能打开占位地址。
 - Tauri updater 未配置公钥或 endpoint 时检查会失败，不应绕过发布检查。
 
@@ -1961,14 +1961,17 @@ GitHub Release 应上传：
 
 ### 更新安全
 
-`appOperation.ts` 跟踪写操作。
+`appOperation.ts` 跟踪不能被更新中断的写入、导入和导出操作。调用方使用 `withAppOperation()` 包住完整异步流程，`finally` 会保证成功或失败后都清除活动状态。
 
-`updateSafety.ts` 只把以下项目页面视为自动刷新安全：
+`appDraft.ts` 保存当前未提交的编辑草稿；Vue 页面和组件通过 `useAppDraft.ts` 按实际值差异登记，并在卸载时清理。磁盘项目已经成功写入后的 `.hproj` dirty 状态不属于“未保存表单”，两者不能混用。
 
-- overview
-- stats
+`updateSafety.ts` 不再根据页面或路由推断风险，只聚合：
 
-其他项目编辑页面、busy 状态或活动写操作会阻止自动安装/刷新。
+- `appOperation.ts` 中的活动操作。
+- `appDraft.ts` 中的未保存草稿。
+- 项目打开、恢复等顶层 busy 状态。
+
+没有以上阻止项时，无论用户位于概览、文件、设置还是导入导出页面，都允许应用更新。PWA 新资源准备完成后不会自动刷新，由用户点击“刷新并应用”；桌面版由用户点击“安装并重启”。展示文案统一由 `appUpdatePresentation.ts` 按平台生成。
 
 ## 47. 数据一致性注意事项
 

@@ -33,8 +33,8 @@ function createUpdateState(
     message: "当前已经是最新版本。",
     pwaRefreshReady: false,
     desktopUpdateDownloaded: false,
-    canAutoRefresh: true,
-    refreshBlockedReason: "",
+    canApplyUpdate: true,
+    applyBlockedReason: "",
     downloadProgress: 0,
     downloadedBytes: 0,
     totalBytes: 0,
@@ -72,13 +72,13 @@ describe("PWA update presentation", () => {
       message: "检查更新失败。",
       errorMessage: "检查更新失败。",
       pwaRefreshReady: true,
-      canAutoRefresh: false,
-      refreshBlockedReason: "完成当前编辑后再刷新。",
+      canApplyUpdate: false,
+      applyBlockedReason: "存在未保存的译文，请先保存或放弃修改。",
     });
     const effective = applyPendingUpdatePriority(state);
 
     expect(effective.status).toBe("ready-to-refresh");
-    expect(effective.message).toContain("完成当前编辑后再刷新");
+    expect(effective.message).toContain("存在未保存的译文");
     expect(effective.errorMessage).toBe("检查更新失败。");
   });
 
@@ -102,13 +102,13 @@ describe("desktop update presentation", () => {
     const state = createUpdateState({
       platform: "desktop",
       desktopUpdateDownloaded: true,
-      canAutoRefresh: true,
+      canApplyUpdate: true,
     });
     const effective = applyPendingUpdatePriority(state);
 
     expect(effective.status).toBe("downloaded");
     expect(getDesktopDownloadedMessage(effective)).toBe(
-      "桌面更新已下载，可以安装并重启。",
+      "更新已下载，可以安装并重启 Textile。",
     );
     expect(getDesktopUpdateActionLabel(effective)).toBe("安装并重启");
   });
@@ -117,13 +117,26 @@ describe("desktop update presentation", () => {
     const state = createUpdateState({
       platform: "desktop",
       desktopUpdateDownloaded: true,
-      canAutoRefresh: false,
-      refreshBlockedReason: "当前正在导出项目。",
+      canApplyUpdate: false,
+      applyBlockedReason: "正在执行项目导出，完成后即可继续。",
     });
     const effective = applyPendingUpdatePriority(state);
 
     expect(effective.status).toBe("waiting-for-safe-state");
-    expect(getDesktopDownloadedMessage(effective)).toBe("当前正在导出项目。");
+    expect(getDesktopDownloadedMessage(effective)).toBe(
+      "正在执行项目导出，完成后即可继续。",
+    );
     expect(getDesktopUpdateActionLabel(effective)).toBe("等待当前操作完成");
+  });
+
+  it("does not use refresh wording for a blocked desktop update", () => {
+    const state = createUpdateState({
+      platform: "desktop",
+      desktopUpdateDownloaded: true,
+      canApplyUpdate: false,
+      applyBlockedReason: "存在未保存的项目设置，请先保存或放弃修改。",
+    });
+
+    expect(getAppUpdateStatusMessage(state)).not.toContain("刷新");
   });
 });

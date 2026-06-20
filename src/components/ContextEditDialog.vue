@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import { useAppDraft } from "../composables/useAppDraft";
 
 const props = defineProps<{
   title: string;
@@ -13,6 +14,11 @@ const emit = defineEmits<{
 }>();
 
 const contextText = ref("");
+const hasUnsavedContext = computed(
+  () => contextText.value !== (props.initialValue ?? ""),
+);
+
+useAppDraft("上下文", hasUnsavedContext);
 
 watch(
   () => props.initialValue,

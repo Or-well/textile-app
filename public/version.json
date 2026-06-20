@@ -1,16 +1,16 @@
 {
   "version": "0.2.3",
   "latest_version": "0.2.3",
-  "build_id": "0.2.3-0070adba5147",
-  "assets_hash": "0070adba514722f96b1062ddbaf6e976d28cda929c9467086c20a456dc5eedbe",
+  "build_id": "0.2.3-2e45d26b8f16",
+  "assets_hash": "2e45d26b8f16b23274aaae1efa87caca1a57d6dd383e38030af06102096f326a",
   "schema_version": 1,
   "release_date": "2026-06-20",
   "channel": "stable",
   "critical": false,
   "download_url": "",
   "notes": [
-    "完善 Textile Web / PWA 自动更新流程。",
-    "新版资源可在后台准备，安全时机刷新生效。",
-    "优化关于 / 更新页面的状态说明。"
+    "程序更新只在实际操作或存在未保存草稿时暂缓。",
+    "桌面版使用安装并重启，PWA 由用户点击刷新并应用。",
+    "修复未编辑时错误提示需要完成当前编辑的问题。"
   ]
 }

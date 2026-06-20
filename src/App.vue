@@ -202,15 +202,7 @@ function handlePopState() {
 }
 
 function syncAppUpdateSafety() {
-  const currentRoute = route.value;
-  const section =
-    currentRoute.page === "project" ? currentRoute.section : undefined;
-
   setAppUpdateSafety({
-    page: currentRoute.page,
-    section,
-    hasProject: Boolean(currentProject.value),
-    hasUser: Boolean(currentUser.value),
     isBusy:
       isOpeningProject.value ||
       isOpeningProjectFile.value ||

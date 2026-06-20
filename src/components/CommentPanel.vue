@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { useAppDraft } from "../composables/useAppDraft";
 import CommentEditor from "./CommentEditor.vue";
 import CommentListItem from "./CommentListItem.vue";
 import type { Comment, Entry } from "../model/types";
@@ -55,6 +56,14 @@ const canMarkEntryDisputed = computed(() =>
 const commentById = computed(
   () => new Map(comments.value.map((comment) => [comment.id, comment])),
 );
+const hasUnsavedComment = computed(
+  () =>
+    Boolean(newComment.value.trim()) ||
+    Boolean(replyText.value.trim()) ||
+    Boolean(disputeReason.value.trim()),
+);
+
+useAppDraft("评论或争议说明", hasUnsavedComment);
 
 async function focusHighlightedComment() {
   if (!props.highlightCommentId || typeof document === "undefined") {

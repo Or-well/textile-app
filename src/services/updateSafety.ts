@@ -1,42 +1,24 @@
-export type UpdateSafetyPage =
-  | "home"
-  | "projects"
-  | "create-project"
-  | "project"
-  | "not-found";
-
-export type UpdateSafetySection =
-  | "overview"
-  | "files"
-  | "tasks"
-  | "terms"
-  | "comments"
-  | "stats"
-  | "import-export"
-  | "settings"
-  | "file-entry";
+import { getActiveAppDrafts } from "./appDraft";
+import { getActiveAppOperations } from "./appOperation";
 
 export interface UpdateSafetyInput {
-  page: UpdateSafetyPage;
-  section?: UpdateSafetySection;
-  hasProject: boolean;
-  hasUser: boolean;
   isBusy?: boolean;
 }
 
-export interface UpdateSafetyState {
-  canAutoRefresh: boolean;
-  reason: string;
+export interface UpdateBlocker {
+  kind: "operation" | "unsaved-draft";
+  labels: string[];
 }
 
-const SAFE_PROJECT_SECTIONS = new Set<UpdateSafetySection>([
-  "overview",
-  "stats",
-]);
+export interface UpdateSafetyState {
+  canApplyUpdate: boolean;
+  reason: string;
+  blocker?: UpdateBlocker;
+}
 
 let state: UpdateSafetyState = {
-  canAutoRefresh: true,
-  reason: "当前页面可以自动切换到新版。",
+  canApplyUpdate: true,
+  reason: "",
 };
 
 export function setAppUpdateSafety(input: UpdateSafetyInput): UpdateSafetyState {
@@ -52,54 +34,55 @@ export function getPendingUpdateBlockedReason(
   safety: UpdateSafetyState,
   hasPendingUpdate: boolean,
 ): string {
-  return hasPendingUpdate && !safety.canAutoRefresh ? safety.reason : "";
+  return hasPendingUpdate && !safety.canApplyUpdate ? safety.reason : "";
 }
 
 function evaluateUpdateSafety(input: UpdateSafetyInput): UpdateSafetyState {
   const activeOperations = getActiveAppOperations();
 
   if (activeOperations.length > 0) {
-    const operationLabels = Array.from(
+    const labels = Array.from(
       new Set(activeOperations.map((operation) => operation.label)),
-    ).join("、");
+    );
 
     return {
-      canAutoRefresh: false,
-      reason: `Textile 正在执行${operationLabels}，完成后才能安装更新。`,
+      canApplyUpdate: false,
+      reason: `正在执行${labels.join("、")}，完成后即可继续。`,
+      blocker: {
+        kind: "operation",
+        labels,
+      },
     };
   }
 
   if (input.isBusy) {
     return {
-      canAutoRefresh: false,
-      reason: "Textile 正在处理当前操作，完成后再刷新使用新版。",
+      canApplyUpdate: false,
+      reason: "正在处理当前操作，完成后即可继续。",
+      blocker: {
+        kind: "operation",
+        labels: ["当前操作"],
+      },
     };
   }
 
-  if (input.page !== "project") {
-    return {
-      canAutoRefresh: true,
-      reason: "当前未进入项目编辑流程，可以自动切换到新版。",
-    };
-  }
+  const activeDrafts = getActiveAppDrafts();
 
-  if (!input.hasProject || !input.hasUser) {
-    return {
-      canAutoRefresh: true,
-      reason: "当前没有正在编辑的项目内容，可以自动切换到新版。",
-    };
-  }
+  if (activeDrafts.length > 0) {
+    const labels = Array.from(new Set(activeDrafts.map((draft) => draft.label)));
 
-  if (input.section && SAFE_PROJECT_SECTIONS.has(input.section)) {
     return {
-      canAutoRefresh: true,
-      reason: "当前页面没有正在编辑的内容，可以自动切换到新版。",
+      canApplyUpdate: false,
+      reason: `存在未保存的${labels.join("、")}，请先保存或放弃修改。`,
+      blocker: {
+        kind: "unsaved-draft",
+        labels,
+      },
     };
   }
 
   return {
-    canAutoRefresh: false,
-    reason: "Textile 新版本已准备好。完成当前编辑或导入导出后，刷新即可使用新版。",
+    canApplyUpdate: true,
+    reason: "",
   };
 }
-import { getActiveAppOperations } from "./appOperation";

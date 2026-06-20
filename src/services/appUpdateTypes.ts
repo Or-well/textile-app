@@ -41,8 +41,8 @@ export interface UpdateCheckResult {
 export interface AppUpdateState extends UpdateCheckResult {
   pwaRefreshReady: boolean;
   desktopUpdateDownloaded: boolean;
-  canAutoRefresh: boolean;
-  refreshBlockedReason: string;
+  canApplyUpdate: boolean;
+  applyBlockedReason: string;
   downloadProgress: number;
   downloadedBytes: number;
   totalBytes: number;
@@ -50,4 +50,3 @@ export interface AppUpdateState extends UpdateCheckResult {
   dismissedVersion: string;
   errorMessage: string;
 }
-

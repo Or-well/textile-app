@@ -1,3 +1,4 @@
+import { subscribeAppDrafts } from "./appDraft";
 import { subscribeAppOperations } from "./appOperation";
 import { APP_VERSION } from "../utils/appVersion";
 import type {
@@ -68,6 +69,7 @@ let setupDone = false;
 let isApplyingUpdate = false;
 let updateBroadcast: BroadcastChannel | null = null;
 let unsubscribeOperations: (() => void) | null = null;
+let unsubscribeDrafts: (() => void) | null = null;
 
 let state: AppUpdateState = {
   status: "idle",
@@ -79,8 +81,8 @@ let state: AppUpdateState = {
   message: "尚未检查更新。",
   pwaRefreshReady: false,
   desktopUpdateDownloaded: false,
-  canAutoRefresh: true,
-  refreshBlockedReason: "",
+  canApplyUpdate: true,
+  applyBlockedReason: "",
   downloadProgress: 0,
   downloadedBytes: 0,
   totalBytes: 0,
@@ -143,6 +145,9 @@ export function setupAppUpdate(): void {
   unsubscribeOperations = subscribeAppOperations(() => {
     reevaluatePendingAppUpdate();
   });
+  unsubscribeDrafts = subscribeAppDrafts(() => {
+    reevaluatePendingAppUpdate();
+  });
 
   if (state.platform === "desktop") {
     notifyListeners();
@@ -169,6 +174,8 @@ export function setupAppUpdate(): void {
 export function disposeAppUpdate(): void {
   unsubscribeOperations?.();
   unsubscribeOperations = null;
+  unsubscribeDrafts?.();
+  unsubscribeDrafts = null;
   updateBroadcast?.close();
   updateBroadcast = null;
   setupDone = false;
@@ -264,6 +271,21 @@ export async function installUpdate(): Promise<UpdateCheckResult> {
     return handleDesktopUpdateAction();
   }
 
+  if (state.pwaRefreshReady) {
+    syncSafetyState();
+
+    if (!state.canApplyUpdate) {
+      state = applyPendingUpdatePriority(state);
+      notifyListeners();
+      return buildResult(
+        state.status,
+        state.latest,
+        state.checkedAt,
+        state.message,
+      );
+    }
+  }
+
   if (state.pwaRefreshReady && canApplyPwaUpdate()) {
     await applyReadyPwaUpdate();
     return buildResult(
@@ -293,7 +315,7 @@ export function reevaluatePendingAppUpdate(): void {
     state.platform === "desktop" &&
     state.desktopUpdateDownloaded &&
     state.status === "waiting-for-safe-state" &&
-    state.canAutoRefresh
+    state.canApplyUpdate
   ) {
     state = {
       ...state,
@@ -303,10 +325,6 @@ export function reevaluatePendingAppUpdate(): void {
   }
 
   notifyListeners();
-
-  if (state.pwaRefreshReady) {
-    void applyReadyPwaUpdateWhenSafe();
-  }
 }
 
 function commitCheckResult(
@@ -390,13 +408,13 @@ async function handleDesktopUpdateAction(): Promise<UpdateCheckResult> {
     syncSafetyState();
     state = {
       ...state,
-      status: state.canAutoRefresh ? "downloaded" : "waiting-for-safe-state",
+      status: state.canApplyUpdate ? "downloaded" : "waiting-for-safe-state",
       desktopUpdateDownloaded: true,
       downloadProgress: 100,
       latestDownloadedAt: new Date().toISOString(),
-      message: state.canAutoRefresh
+      message: state.canApplyUpdate
         ? "桌面更新已下载，可以安装并重启。"
-        : state.refreshBlockedReason,
+        : state.applyBlockedReason,
     };
     notifyListeners();
     return buildResult(
@@ -409,11 +427,11 @@ async function handleDesktopUpdateAction(): Promise<UpdateCheckResult> {
 
   syncSafetyState();
 
-  if (!state.canAutoRefresh) {
+  if (!state.canApplyUpdate) {
     state = {
       ...state,
       status: "waiting-for-safe-state",
-      message: state.refreshBlockedReason,
+      message: state.applyBlockedReason,
     };
     notifyListeners();
     return buildResult(
@@ -465,19 +483,6 @@ function markPwaRefreshReady(): void {
   syncSafetyState();
   writeStorage(DISMISSED_VERSION_STORAGE_KEY, "");
   notifyListeners();
-  void applyReadyPwaUpdateWhenSafe();
-}
-
-async function applyReadyPwaUpdateWhenSafe(): Promise<void> {
-  if (
-    !state.pwaRefreshReady ||
-    !state.canAutoRefresh ||
-    state.dismissedVersion === "pwa-refresh"
-  ) {
-    return;
-  }
-
-  await applyReadyPwaUpdate();
 }
 
 async function applyReadyPwaUpdate(): Promise<void> {
@@ -511,13 +516,13 @@ function syncSafetyState(): void {
 
   state = {
     ...state,
-    canAutoRefresh: safety.canAutoRefresh,
-    refreshBlockedReason: getPendingUpdateBlockedReason(
+    canApplyUpdate: safety.canApplyUpdate,
+    applyBlockedReason: getPendingUpdateBlockedReason(
       safety,
       updateWaiting,
     ),
     message:
-      updateWaiting && !safety.canAutoRefresh
+      updateWaiting && !safety.canApplyUpdate
         ? safety.reason
         : state.message,
   };
@@ -570,7 +575,6 @@ function mergeBroadcastState(nextState: AppUpdateState): void {
   };
   syncSafetyState();
   notifyListeners({ broadcast: false });
-  void applyReadyPwaUpdateWhenSafe();
 }
 
 function buildResult(

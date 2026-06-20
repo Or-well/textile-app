@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useAppDraft } from "../composables/useAppDraft";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
 import ClearCacheDialog from "../components/settings/ClearCacheDialog.vue";
 import DeleteProjectDialog from "../components/settings/DeleteProjectDialog.vue";
@@ -54,10 +55,9 @@ import type { ProjectDirectoryHandle } from "../services/projectFs";
 import { normalizeProgressWeights } from "../services/stats";
 import {
   getAppUpdateStatusMessage,
-  getDesktopDownloadedMessage,
   getDesktopUpdateActionLabel,
-  hasPendingAppUpdate,
 } from "../services/appUpdatePresentation";
+import { withAppOperation } from "../services/appOperation";
 
 type SettingsSection =
   | "project"
@@ -232,12 +232,6 @@ const latestBuildText = computed(() =>
 );
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
 const isDesktopUpdate = computed(() => updateState.value.platform === "desktop");
-const hasPendingProgramRefresh = computed(() =>
-  hasPendingAppUpdate(updateState.value),
-);
-const desktopDownloadedText = computed(() =>
-  getDesktopDownloadedMessage(updateState.value),
-);
 const downloadUrlConfigured = computed(() =>
   hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
 );
@@ -258,8 +252,53 @@ const desktopUpdateActionDisabled = computed(
       updateState.value.status,
     ) ||
     (updateState.value.desktopUpdateDownloaded &&
-      !updateState.value.canAutoRefresh),
+      !updateState.value.canApplyUpdate),
 );
+const pwaUpdateActionDisabled = computed(
+  () =>
+    updateState.value.status === "refreshing" ||
+    !updateState.value.canApplyUpdate,
+);
+const hasUnsavedSettings = computed(() => {
+  const project = localProject.value;
+
+  if (!project) {
+    return false;
+  }
+
+  const workflow = normalizeWorkflowSettings(project.settings.workflow);
+  const weights = normalizeProgressWeights(project.settings.progress_weights);
+  const exportSettings = normalizeProjectExportSettings(project.settings.export);
+  const draftProofreadRequired = Math.max(
+    0,
+    Math.min(3, Math.trunc(Number(workflowDraft.value.proofread_required))),
+  );
+
+  return (
+    projectDraft.value.name.trim() !== project.name ||
+    projectDraft.value.description.trim() !== (project.description ?? "") ||
+    projectDraft.value.source_language.trim() !== project.source_language ||
+    projectDraft.value.target_language.trim() !== project.target_language ||
+    workflowDraft.value.enable_tasks !== workflow.enable_tasks ||
+    draftProofreadRequired !== workflow.proofread_required ||
+    workflowDraft.value.review_required !== workflow.review_required ||
+    workflowDraft.value.allow_self_proofread !== workflow.allow_self_proofread ||
+    workflowDraft.value.allow_self_review !== workflow.allow_self_review ||
+    workflowDraft.value.allow_same_user_multi_proofread !==
+      workflow.allow_same_user_multi_proofread ||
+    Number(weightDraft.value.translation) / 100 !== weights.translationWeight ||
+    Number(weightDraft.value.proofread) / 100 !== weights.proofreadWeight ||
+    Number(weightDraft.value.review) / 100 !== weights.reviewWeight ||
+    exportDraft.value.default_format !== exportSettings.default_format ||
+    exportDraft.value.only_reviewed !== exportSettings.only_reviewed ||
+    exportDraft.value.include_source !== exportSettings.include_source ||
+    exportDraft.value.include_key !== exportSettings.include_key ||
+    exportDraft.value.include_report !== exportSettings.include_report ||
+    exportDraft.value.include_manifest !== exportSettings.include_manifest
+  );
+});
+
+useAppDraft("项目设置", hasUnsavedSettings);
 
 function applyProject(project: ProjectConfig): void {
   const editableProject = project as EditableProjectConfig;
@@ -539,7 +578,9 @@ async function handleExportProjectFile() {
   errorMessage.value = "";
 
   try {
-    const result = await exportProjectPackage(root);
+    const result = await withAppOperation("导出项目备份", () =>
+      exportProjectPackage(root),
+    );
 
     downloadBlob(result.blob, result.fileName);
     message.value = `已导出为 Textile 项目文件：${result.fileName}`;
@@ -1366,9 +1407,10 @@ onBeforeUnmount(() => {
                   v-if="updateState.pwaRefreshReady"
                   class="secondary-button"
                   type="button"
+                  :disabled="pwaUpdateActionDisabled"
                   @click="handleInstallProgramUpdate"
                 >
-                  立即刷新
+                  刷新并应用
                 </button>
               </div>
             </div>
@@ -1387,9 +1429,6 @@ onBeforeUnmount(() => {
                 <span v-if="isDesktopUpdate && updateState.status === 'downloading'">
                   下载进度：{{ updateState.downloadProgress }}%
                 </span>
-                <span v-if="isDesktopUpdate && updateState.desktopUpdateDownloaded">
-                  {{ desktopDownloadedText }}
-                </span>
                 <span v-if="updateState.latest">
                   发布日期：{{ updateState.latest.release_date }} ·
                   通道：{{ updateState.latest.channel }}
@@ -1397,11 +1436,6 @@ onBeforeUnmount(() => {
                 <span v-if="updateState.latest?.critical">这是重要更新。</span>
                 <span v-if="updateState.pwaRefreshReady">
                   新版资源已下载：{{ updateState.latestDownloadedAt ? new Date(updateState.latestDownloadedAt).toLocaleString() : "刚刚" }}
-                </span>
-                <span
-                  v-if="hasPendingProgramRefresh && updateState.refreshBlockedReason"
-                >
-                  暂缓刷新：{{ updateState.refreshBlockedReason }}
                 </span>
               </div>
             </div>

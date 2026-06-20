@@ -70,7 +70,12 @@ const desktopActionDisabled = computed(
       updateState.value.status,
     ) ||
     (updateState.value.desktopUpdateDownloaded &&
-      !updateState.value.canAutoRefresh),
+      !updateState.value.canApplyUpdate),
+);
+const pwaActionDisabled = computed(
+  () =>
+    updateState.value.status === "refreshing" ||
+    !updateState.value.canApplyUpdate,
 );
 
 function handleOpenDownloadPage(): void {
@@ -105,8 +110,13 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="notice-actions">
-        <button class="primary-button" type="button" @click="handleInstallUpdate">
-          立即刷新
+        <button
+          class="primary-button"
+          type="button"
+          :disabled="pwaActionDisabled"
+          @click="handleInstallUpdate"
+        >
+          刷新并应用
         </button>
         <button class="secondary-button" type="button" @click="handleDismiss">
           稍后
@@ -126,7 +136,7 @@ onBeforeUnmount(() => {
           v-if="isDesktop && updateState.desktopUpdateDownloaded"
           class="notice-source"
         >
-          更新已下载，安装前会检查项目写入状态。
+          {{ refreshMessage }}
         </p>
         <div
           v-if="isDesktop && updateState.status === 'downloading'"

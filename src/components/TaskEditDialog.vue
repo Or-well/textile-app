@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
+import { useAppDraft } from "../composables/useAppDraft";
 import type {
   Member,
   ProjectConfig,
@@ -68,6 +69,8 @@ const form = reactive({
 const fileEntryBounds = ref<TaskFileEntryBounds>();
 const isLoadingFileBounds = ref(false);
 const boundsErrorMessage = ref("");
+const initialFormSnapshot = ref("");
+const isInitializingForm = ref(false);
 
 const proofreadRoundOptions = computed(() => {
   const required = props.project.settings.workflow?.proofread_required ?? 1;
@@ -105,6 +108,15 @@ const canSaveTask = computed(() => {
 
   return !form.file_id || Boolean(fileEntryBounds.value?.lastIndex);
 });
+const currentFormSnapshot = computed(() => JSON.stringify(form));
+const hasUnsavedTask = computed(
+  () =>
+    props.open &&
+    Boolean(initialFormSnapshot.value) &&
+    currentFormSnapshot.value !== initialFormSnapshot.value,
+);
+
+useAppDraft("任务", hasUnsavedTask);
 
 function syncForm() {
   const task = props.task;
@@ -128,6 +140,14 @@ function syncForm() {
   form.submit_method =
     props.mode === "edit" ? (task?.submit_method ?? "change_package") : "change_package";
   form.due_at = task?.due_at ?? "";
+}
+
+async function initializeForm() {
+  isInitializingForm.value = true;
+  syncForm();
+  await refreshFileEntryBounds();
+  initialFormSnapshot.value = currentFormSnapshot.value;
+  isInitializingForm.value = false;
 }
 
 async function refreshFileEntryBounds() {
@@ -198,8 +218,7 @@ watch(
   () => [props.open, props.task?.id, props.project.project_id],
   () => {
     if (props.open) {
-      syncForm();
-      void refreshFileEntryBounds();
+      void initializeForm();
     }
   },
   { immediate: true },
@@ -208,7 +227,7 @@ watch(
 watch(
   () => form.file_id,
   () => {
-    if (props.open) {
+    if (props.open && !isInitializingForm.value) {
       void refreshFileEntryBounds();
     }
   },

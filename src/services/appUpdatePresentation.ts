@@ -31,9 +31,9 @@ export function getDesktopDownloadedMessage(state: AppUpdateState): string {
     return "";
   }
 
-  return state.canAutoRefresh
-    ? "桌面更新已下载，可以安装并重启。"
-    : state.refreshBlockedReason || "桌面更新已下载，等待当前操作完成。";
+  return state.canApplyUpdate
+    ? "更新已下载，可以安装并重启 Textile。"
+    : state.applyBlockedReason || "更新已下载，等待当前操作完成。";
 }
 
 export function getDesktopUpdateActionLabel(state: AppUpdateState): string {
@@ -50,7 +50,7 @@ export function getDesktopUpdateActionLabel(state: AppUpdateState): string {
   }
 
   if (state.desktopUpdateDownloaded) {
-    return state.canAutoRefresh ? "安装并重启" : "等待当前操作完成";
+    return state.canApplyUpdate ? "安装并重启" : "等待当前操作完成";
   }
 
   return "下载更新";
@@ -74,10 +74,10 @@ export function getAppUpdateStatusMessage(state: AppUpdateState): string {
       ? "版本号已是最新，新的构建资源已准备好。"
       : "Textile 新版本资源已准备好。";
 
-    return state.canAutoRefresh
-      ? `${readyMessage} Textile 会在安全时机自动刷新。`
+    return state.canApplyUpdate
+      ? `${readyMessage} 可以刷新应用。`
       : `${readyMessage} ${
-          state.refreshBlockedReason || "完成当前操作后刷新即可使用。"
+          state.applyBlockedReason || "完成当前操作后即可刷新应用。"
         }`;
   }
 
@@ -117,7 +117,7 @@ export function applyPendingUpdatePriority(
   if (state.desktopUpdateDownloaded) {
     const nextState: AppUpdateState = {
       ...state,
-      status: state.canAutoRefresh ? "downloaded" : "waiting-for-safe-state",
+      status: state.canApplyUpdate ? "downloaded" : "waiting-for-safe-state",
     };
 
     return {

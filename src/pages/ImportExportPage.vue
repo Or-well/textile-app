@@ -52,6 +52,7 @@ import {
 } from "../services/project";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
 import type { ProjectStorage } from "../services/projectStorage";
+import { withAppOperation } from "../services/appOperation";
 import { loadTasks, setTasksProjectStorage } from "../services/tasks";
 
 const props = defineProps<{
@@ -392,12 +393,14 @@ async function handleExportChanges() {
   message.value = "";
 
   try {
-    const result = await exportChangePackage(currentUser.value.id, {
-      mode: exportMode.value,
-      taskId: exportMode.value === "task_changes" ? selectedTaskId.value : undefined,
-      sign: exportMode.value === "project_update" ? true : canSignPackages.value,
-      actor: currentUser.value,
-    });
+    const result = await withAppOperation("导出修改包", () =>
+      exportChangePackage(currentUser.value!.id, {
+        mode: exportMode.value,
+        taskId: exportMode.value === "task_changes" ? selectedTaskId.value : undefined,
+        sign: exportMode.value === "project_update" ? true : canSignPackages.value,
+        actor: currentUser.value,
+      }),
+    );
 
     downloadBlob(result.blob, result.fileName);
     if (exportMode.value === "project_update") {
@@ -430,10 +433,12 @@ async function handleExportRelease() {
   message.value = "";
 
   try {
-    const result = await exportProject({
-      ...releaseOptionPayload.value,
-      exportedBy: currentUser.value?.id ?? "",
-    });
+    const result = await withAppOperation("导出成品", () =>
+      exportProject({
+        ...releaseOptionPayload.value,
+        exportedBy: currentUser.value?.id ?? "",
+      }),
+    );
 
     downloadBlob(result.blob, result.fileName);
     releaseSummary.value = result.summary;
@@ -468,7 +473,9 @@ async function handleSelectChangePackage(event: Event) {
   conflicts.value = [];
 
   try {
-    const nextPackage = await readChangePackage(file);
+    const nextPackage = await withAppOperation("读取修改包", () =>
+      readChangePackage(file),
+    );
     const validation = await validateChangePackage(nextPackage);
 
     changePackage.value = nextPackage;
@@ -535,14 +542,17 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
   message.value = "";
 
   try {
-    const result = await applyChangePackage(changePackage.value, resolutions, {
-      allowDangerous: needsDangerousImport.value,
-      confirmMaintenance:
-        packageValidation.value?.requiresMaintenanceConfirmation ?? false,
-      confirmOwnerCredentials:
-        packageValidation.value?.requiresOwnerCredentialConfirmation ?? false,
-      actor: currentUser.value,
-    });
+    const selectedPackage = changePackage.value;
+    const result = await withAppOperation("导入修改包", () =>
+      applyChangePackage(selectedPackage, resolutions, {
+        allowDangerous: needsDangerousImport.value,
+        confirmMaintenance:
+          packageValidation.value?.requiresMaintenanceConfirmation ?? false,
+        confirmOwnerCredentials:
+          packageValidation.value?.requiresOwnerCredentialConfirmation ?? false,
+        actor: currentUser.value,
+      }),
+    );
 
     if (projectStorageForServices.value) {
       const [project, members] = await Promise.all([
@@ -586,7 +596,10 @@ async function handleExportProjectFile() {
   message.value = "";
 
   try {
-    const result = await exportProjectPackage(projectRootForExport.value);
+    const projectRoot = projectRootForExport.value;
+    const result = await withAppOperation("导出项目备份", () =>
+      exportProjectPackage(projectRoot),
+    );
 
     downloadBlob(result.blob, result.fileName);
     message.value = `已导出 Textile 项目备份：${result.fileName}`;

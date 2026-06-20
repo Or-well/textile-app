@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import { useAppDraft } from "../composables/useAppDraft";
 import type { Term } from "../model/types";
 import type { TermInput } from "../services/terms";
 
@@ -36,6 +37,22 @@ const caseSensitive = ref(false);
 const errorMessage = ref("");
 
 const dialogTitle = ref("创建术语");
+const hasUnsavedTerm = computed(() => {
+  const term = props.term;
+
+  return (
+    source.value !== (term?.source ?? "") ||
+    target.value !== (term?.target ?? "") ||
+    partOfSpeech.value !== (term?.part_of_speech || "名词") ||
+    note.value !== (term?.note ?? "") ||
+    Boolean(variantInput.value.trim()) ||
+    caseSensitive.value !== (term?.case_sensitive === true) ||
+    variants.value.length !== (term?.variants.length ?? 0) ||
+    variants.value.some((variant, index) => variant !== term?.variants[index])
+  );
+});
+
+useAppDraft("术语", hasUnsavedTerm);
 
 watch(
   () => props.term,
