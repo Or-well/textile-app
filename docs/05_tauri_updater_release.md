@@ -975,11 +975,35 @@ $Owner = "<owner>"
 $Repo = "<repo>"
 ```
 
+必须把尖括号占位符替换成真实值。例如仓库地址是：
+
+```text
+https://github.com/Or-well/textile-app
+```
+
+则填写：
+
+```powershell
+$Owner = "Or-well"
+$Repo = "textile-app"
+```
+
 运行：
 
 ```powershell
 $Version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 $Tag = "v$Version"
+
+if (
+  [string]::IsNullOrWhiteSpace($Owner) -or
+  [string]::IsNullOrWhiteSpace($Repo) -or
+  $Owner.Contains("<") -or
+  $Owner.Contains(">") -or
+  $Repo.Contains("<") -or
+  $Repo.Contains(">")
+) {
+  throw "请先把 Owner 和 Repo 替换为真实 GitHub 仓库信息。"
+}
 
 $Installer = Get-ChildItem "src-tauri\target\release\bundle\nsis\*.exe" |
   Sort-Object LastWriteTime -Descending |
@@ -1009,8 +1033,25 @@ $AssetName = $Installer.Name
 $EncodedAssetName = [Uri]::EscapeDataString($AssetName)
 $DownloadUrl = "https://github.com/$Owner/$Repo/releases/download/$Tag/$EncodedAssetName"
 $ReleaseDirectory = Join-Path $env:TEMP "Textile-release-$Version"
+$ResolvedTempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd("\") + "\"
+$ResolvedReleaseDirectory = [System.IO.Path]::GetFullPath($ReleaseDirectory)
 
-New-Item -ItemType Directory -Path $ReleaseDirectory -Force | Out-Null
+if (
+  -not $ResolvedReleaseDirectory.StartsWith(
+    $ResolvedTempRoot,
+    [System.StringComparison]::OrdinalIgnoreCase
+  ) -or
+  [System.IO.Path]::GetFileName($ResolvedReleaseDirectory) -ne "Textile-release-$Version"
+) {
+  throw "拒绝清理预期临时目录以外的路径：$ResolvedReleaseDirectory"
+}
+
+if (Test-Path -LiteralPath $ResolvedReleaseDirectory) {
+  Remove-Item -LiteralPath $ResolvedReleaseDirectory -Recurse -Force
+}
+
+New-Item -ItemType Directory -Path $ResolvedReleaseDirectory | Out-Null
+$ReleaseDirectory = $ResolvedReleaseDirectory
 Copy-Item $Installer.FullName -Destination $ReleaseDirectory -Force
 Copy-Item $SignaturePath -Destination $ReleaseDirectory -Force
 
@@ -1037,6 +1078,14 @@ $LatestJsonPath = Join-Path $ReleaseDirectory "latest.json"
 Get-ChildItem $ReleaseDirectory
 Get-Content $LatestJsonPath
 ```
+
+脚本会在创建新目录前安全检查目标路径，然后只删除系统临时目录中同版本的旧目录：
+
+```text
+%TEMP%\Textile-release-<version>
+```
+
+这样重复生成时不会把上一次错误的 `latest.json` 或旧安装包混进本次上传。
 
 正常情况下临时目录包含：
 
@@ -1092,6 +1141,75 @@ Textile <version> 更新。详细内容见 GitHub Release。
 可以在生成前修改 `$Latest.notes`，但内容应与 `CHANGELOG.md` 一致。
 
 如果说明很长，保持 `latest.json` 简洁，把完整说明放到 GitHub Release 页面。
+
+### 9.3 临时目录什么时候删除
+
+不要在上传 GitHub Release 前删除 `$ReleaseDirectory`。
+
+完成以下事项后再清理：
+
+1. 三个文件已经上传到 GitHub Release。
+2. Release 已正式发布。
+3. 第 12 节的远程 `latest.json` 和安装包下载验证已经通过。
+
+删除前先确认目录内容：
+
+```powershell
+Get-ChildItem -LiteralPath $ReleaseDirectory
+```
+
+安全确认路径仍位于系统临时目录：
+
+```powershell
+$ResolvedTempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd("\") + "\"
+$ResolvedReleaseDirectory = [System.IO.Path]::GetFullPath($ReleaseDirectory)
+
+if (
+  -not $ResolvedReleaseDirectory.StartsWith(
+    $ResolvedTempRoot,
+    [System.StringComparison]::OrdinalIgnoreCase
+  ) -or
+  [System.IO.Path]::GetFileName($ResolvedReleaseDirectory) -ne "Textile-release-$Version"
+) {
+  throw "拒绝删除预期临时目录以外的路径：$ResolvedReleaseDirectory"
+}
+```
+
+确认无误后删除：
+
+```powershell
+Remove-Item -LiteralPath $ResolvedReleaseDirectory -Recurse -Force
+```
+
+如果 PowerShell 已关闭、变量丢失，重新构造路径后再删除：
+
+```powershell
+$Version = "0.2.0"
+$ReleaseDirectory = Join-Path $env:TEMP "Textile-release-$Version"
+$ResolvedTempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd("\") + "\"
+$ResolvedReleaseDirectory = [System.IO.Path]::GetFullPath($ReleaseDirectory)
+
+if (
+  $ResolvedReleaseDirectory.StartsWith(
+    $ResolvedTempRoot,
+    [System.StringComparison]::OrdinalIgnoreCase
+  ) -and
+  [System.IO.Path]::GetFileName($ResolvedReleaseDirectory) -eq "Textile-release-$Version"
+) {
+  Remove-Item -LiteralPath $ResolvedReleaseDirectory -Recurse -Force
+} else {
+  throw "临时目录路径校验失败，未执行删除。"
+}
+```
+
+不要删除：
+
+```text
+%USERPROFILE%\.tauri\textile.key
+%USERPROFILE%\.tauri\textile.key.pub
+```
+
+它们是长期使用的 updater 私钥和公钥，不是临时文件。
 
 ---
 
@@ -1293,6 +1411,20 @@ Get-FileHash $DownloadPath -Algorithm SHA256
 
 下载 hash 应与发布机本地安装包 hash 一致。
 
+验证完成后删除测试下载文件：
+
+```powershell
+if (
+  (Test-Path -LiteralPath $DownloadPath) -and
+  [System.IO.Path]::GetFullPath($DownloadPath).StartsWith(
+    [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd("\") + "\",
+    [System.StringComparison]::OrdinalIgnoreCase
+  )
+) {
+  Remove-Item -LiteralPath $DownloadPath -Force
+}
+```
+
 ### 12.3 检查 Release 页面
 
 确认：
@@ -1408,7 +1540,46 @@ src-tauri/target/
 
 GitHub Release 中的安装包来自本地构建目录，但不进入 Git 历史。
 
-### 15.4 保存发布记录
+### 15.4 清理发布临时文件
+
+发布和远程验证完成后：
+
+1. 按第 9.3 节删除 `%TEMP%\Textile-release-<version>`。
+2. 删除第 12 节下载的 `Textile-release-test.exe`。
+3. 清除当前 PowerShell 会话中的签名环境变量。
+4. 保留 updater 私钥及其加密备份。
+
+清除签名环境变量：
+
+```powershell
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+$SecurePassword = $null
+```
+
+以下目录是可重新生成的构建输出，并已被 Git 忽略：
+
+```text
+dist/
+src-tauri/target/
+```
+
+处理建议：
+
+- `dist/` 会在下一次 Web 构建时覆盖，可以保留。
+- `src-tauri/target/` 是 Rust/Tauri 构建缓存，保留可以显著加快下次构建。
+- 只有磁盘空间不足且当前 Release 已完成验证时，才考虑清理构建缓存。
+- 不要为了“干净”每次都删除 `src-tauri/target/`，这会让下次完整重新编译。
+
+需要释放磁盘空间时，在项目根目录运行：
+
+```powershell
+cargo clean --manifest-path src-tauri\Cargo.toml
+```
+
+该命令只清理 Tauri/Rust 构建输出，不会删除源码和 updater 私钥。
+
+### 15.5 保存发布记录
 
 建议保存：
 
@@ -1690,6 +1861,9 @@ git push origin --delete "v$Version"
 - [ ] 正式版没有误标为 prerelease。
 - [ ] `.exe`、`.sig`、`latest.json` 均已上传。
 - [ ] 下载 URL 可以匿名访问。
+- [ ] 发布临时目录和测试下载文件已清理。
+- [ ] 签名环境变量已从当前 PowerShell 会话移除。
+- [ ] updater 私钥及加密备份仍安全保留。
 
 ### 安装测试
 
