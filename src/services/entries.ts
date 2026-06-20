@@ -13,6 +13,7 @@ import {
   createProjectStorage,
   type ProjectStorage,
 } from "./projectStorage";
+import { createProjectWritePlan } from "./projectWritePlan";
 import {
   assertCan,
   canEditEntry,
@@ -50,6 +51,16 @@ export interface SaveEntryOptions {
 
 export interface WriteEntriesOptions {
   chunkSize?: number;
+}
+
+export interface PreparedEntriesWrite {
+  fileId: string;
+  entries: Entry[];
+  writes: Array<{
+    path: string;
+    rows: Entry[];
+  }>;
+  deletes: string[];
 }
 
 interface ImportEntryRow {
@@ -471,32 +482,54 @@ async function writeFileEntries(
   options: WriteEntriesOptions = {},
 ): Promise<void> {
   const storage = getProjectStorage();
+  const prepared = await prepareEntriesWrite(
+    storage,
+    fileId,
+    entries,
+    options,
+  );
+  const writePlan = createProjectWritePlan(storage);
+
+  for (const write of prepared.writes) {
+    writePlan.writeJsonl(write.path, write.rows);
+  }
+
+  for (const path of prepared.deletes) {
+    writePlan.deleteFile(path);
+  }
+
+  await writePlan.execute();
+  cacheEntriesForFile(fileId, entries);
+}
+
+export async function prepareEntriesWrite(
+  storage: ProjectStorage,
+  fileId: string,
+  entries: Entry[],
+  options: WriteEntriesOptions = {},
+): Promise<PreparedEntriesWrite> {
   const entryDirectory = `entries/${fileId}`;
   const chunkSize = normalizeChunkSize(options.chunkSize);
   const chunks = splitEntriesIntoChunks(entries, chunkSize);
   const nextChunkNames = new Set(
     chunks.map((_, index) => getEntryChunkFileName(index + 1)),
   );
-
-  await storage.ensureDirectory(entryDirectory);
-
   const existingChunkFiles = await listEntryChunkFiles(storage, fileId);
 
-  await Promise.all(
-    chunks.map((chunk, index) =>
-      storage.writeJsonl(
-        `${entryDirectory}/${getEntryChunkFileName(index + 1)}`,
-        chunk,
-      ),
-    ),
-  );
-
-  await Promise.all(
-    existingChunkFiles
+  return {
+    fileId,
+    entries,
+    writes: chunks.map((rows, index) => ({
+      path: `${entryDirectory}/${getEntryChunkFileName(index + 1)}`,
+      rows,
+    })),
+    deletes: existingChunkFiles
       .filter((fileName) => !nextChunkNames.has(fileName))
-      .map((fileName) => storage.deleteEntry(`${entryDirectory}/${fileName}`)),
-  );
+      .map((fileName) => `${entryDirectory}/${fileName}`),
+  };
+}
 
+export function cacheEntriesForFile(fileId: string, entries: Entry[]): void {
   cachedEntries = [
     ...cachedEntries.filter((entry) => entry.file_id !== fileId),
     ...entries,
@@ -646,6 +679,11 @@ async function listEntryChunkFiles(
   fileId: string,
 ): Promise<string[]> {
   const entryDirectory = `entries/${fileId}`;
+
+  if (!(await storage.fileExists(entryDirectory))) {
+    return [];
+  }
+
   const fileNames = await storage.listFiles(entryDirectory);
 
   return fileNames
@@ -659,27 +697,32 @@ async function listEntryChunkFiles(
 
 export async function loadEntries(fileId: string): Promise<Entry[]> {
   const storage = getProjectStorage();
-  const entryDirectory = `entries/${fileId}`;
 
   try {
-    const chunkFiles = await listEntryChunkFiles(storage, fileId);
-    const entryGroups = await Promise.all(
-      chunkFiles.map((fileName) =>
-        storage.readJsonl<Entry>(`${entryDirectory}/${fileName}`),
-      ),
-    );
-    const entries = normalizeEntries(entryGroups.flat())
-      .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+    const entries = await loadEntriesFromStorage(storage, fileId);
 
-    cachedEntries = [
-      ...cachedEntries.filter((entry) => entry.file_id !== fileId),
-      ...entries,
-    ];
+    cacheEntriesForFile(fileId, entries);
 
     return entries;
   } catch {
     throw new Error("词条数据无法读取。请确认项目文件夹和词条文件没有损坏。");
   }
+}
+
+async function loadEntriesFromStorage(
+  storage: ProjectStorage,
+  fileId: string,
+): Promise<Entry[]> {
+  const entryDirectory = `entries/${fileId}`;
+  const chunkFiles = await listEntryChunkFiles(storage, fileId);
+  const entryGroups = await Promise.all(
+    chunkFiles.map((fileName) =>
+      storage.readJsonl<Entry>(`${entryDirectory}/${fileName}`),
+    ),
+  );
+
+  return normalizeEntries(entryGroups.flat())
+    .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
 }
 
 export async function createEntriesFromSourceFile(
@@ -695,26 +738,18 @@ export async function createEntriesFromSourceFile(
   return entries;
 }
 
-export async function updateEntriesFromSourceFile(
+export async function prepareUpdatedEntriesFromSourceFile(
+  storage: ProjectStorage,
   fileId: string,
   fileName: string,
   text: string,
   options: WriteEntriesOptions = {},
-): Promise<Entry[]> {
+): Promise<PreparedEntriesWrite> {
   const result = parseSourceText(fileId, fileName, text);
-  let existingEntries: Entry[] = [];
-
-  try {
-    existingEntries = await loadEntries(fileId);
-  } catch {
-    existingEntries = [];
-  }
-
+  const existingEntries = await loadEntriesFromStorage(storage, fileId);
   const mergedEntries = mergeSourceEntries(result.entries, existingEntries);
 
-  await writeFileEntries(fileId, mergedEntries, options);
-
-  return mergedEntries;
+  return prepareEntriesWrite(storage, fileId, mergedEntries, options);
 }
 
 export async function importEntryTranslations(

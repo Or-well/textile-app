@@ -12,6 +12,7 @@ import type {
   Term,
 } from "../model/types";
 import { normalizeEntries, normalizeEntry } from "../model/status";
+import { cacheEntriesForFile } from "./entries";
 import { nowIso } from "../utils/time";
 import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
@@ -23,6 +24,7 @@ import {
   createProjectStorage,
   type ProjectStorage,
 } from "./projectStorage";
+import { createProjectWritePlan } from "./projectWritePlan";
 import { getSigningPrivateKeyForMember } from "./keyManager";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
@@ -1283,17 +1285,13 @@ function mergeRowsById<T extends { id: string }>(
   return { rows: nextRows, imported };
 }
 
-async function appendImportLog(
+function createImportLogEvent(
   manifest: ChangePackageManifest,
   result: ApplyChangePackageResult,
   validation: ChangePackageValidation,
   options: ApplyChangePackageOptions,
-): Promise<void> {
-  const storage = getProjectStorage();
-  const events = (await storage.fileExists("logs/events.jsonl"))
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
-  const event: ProjectEvent = {
+): ProjectEvent {
+  return {
     id: createId("event"),
     type: "change_package.applied",
     user_id: manifest.user_id,
@@ -1320,6 +1318,19 @@ async function appendImportLog(
       imported_by: options.actor?.id ?? "",
     },
   };
+}
+
+async function appendImportLog(
+  manifest: ChangePackageManifest,
+  result: ApplyChangePackageResult,
+  validation: ChangePackageValidation,
+  options: ApplyChangePackageOptions,
+): Promise<void> {
+  const storage = getProjectStorage();
+  const events = (await storage.fileExists("logs/events.jsonl"))
+    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
+    : [];
+  const event = createImportLogEvent(manifest, result, validation, options);
 
   await storage.ensureDirectory("logs");
   await storage.writeJsonl("logs/events.jsonl", [...events, event]);
@@ -2106,6 +2117,11 @@ export async function applyChangePackage(
   let importedMembers = 0;
   let importedProjectSettings = 0;
   let importedEvents = 0;
+  const writePlan = createProjectWritePlan(storage);
+  const changedEntryGroups: Array<{
+    fileId: string;
+    entries: Entry[];
+  }> = [];
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
     const currentEntries = await loadCurrentEntries(path);
@@ -2148,7 +2164,12 @@ export async function applyChangePackage(
     }
 
     if (changed) {
-      await storage.writeJsonl(path, currentEntries);
+      writePlan.writeJsonl(path, currentEntries);
+      const fileId = currentEntries[0]?.file_id;
+
+      if (fileId) {
+        changedEntryGroups.push({ fileId, entries: currentEntries });
+      }
     }
   }
 
@@ -2162,8 +2183,7 @@ export async function applyChangePackage(
     );
 
     if (newComments.length > 0) {
-      await storage.ensureDirectory(getDirectoryPath(path));
-      await storage.writeJsonl(path, [...existingComments, ...newComments]);
+      writePlan.writeJsonl(path, [...existingComments, ...newComments]);
       importedComments += newComments.length;
     }
   }
@@ -2175,8 +2195,7 @@ export async function applyChangePackage(
     const result = mergeRowsById(existingTerms, packageTerms);
 
     if (result.imported > 0) {
-      await storage.ensureDirectory(getDirectoryPath(path));
-      await storage.writeJsonl(path, result.rows);
+      writePlan.writeJsonl(path, result.rows);
       importedTerms += result.imported;
     }
   }
@@ -2188,50 +2207,39 @@ export async function applyChangePackage(
     const result = mergeRowsById(existingTasks, packageTasks);
 
     if (result.imported > 0) {
-      await storage.ensureDirectory(getDirectoryPath(path));
-      await storage.writeJsonl(path, result.rows);
+      writePlan.writeJsonl(path, result.rows);
       importedTasks += result.imported;
     }
   }
 
   for (const [path, content] of Object.entries(changePackage.contexts)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeText(path, content);
+    writePlan.writeText(path, content);
     importedContexts += 1;
   }
 
   for (const [path, content] of Object.entries(changePackage.projectFiles)) {
     if (path === "project/project.json") {
-      await storage.writeText("project.json", content);
+      writePlan.writeText("project.json", content);
       importedProjectSettings += 1;
     }
   }
 
   for (const [path, content] of Object.entries(changePackage.memberFiles)) {
     if (path === "members/members.json") {
-      await storage.writeText("members.json", content);
+      writePlan.writeText("members.json", content);
       importedMembers += 1;
     }
   }
 
-  if (changePackage.events.length > 0) {
-    const existingEvents = (await storage.fileExists("logs/events.jsonl"))
-      ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-      : [];
-    const existingIds = new Set(existingEvents.map((event) => event.id));
-    const newEvents = changePackage.events.filter(
-      (event) => !existingIds.has(event.id),
-    );
+  const existingEvents = (await storage.fileExists("logs/events.jsonl"))
+    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
+    : [];
+  const existingIds = new Set(existingEvents.map((event) => event.id));
+  const newEvents = changePackage.events.filter(
+    (event) => !existingIds.has(event.id),
+  );
 
-    if (newEvents.length > 0) {
-      await storage.ensureDirectory("logs");
-      await storage.writeJsonl("logs/events.jsonl", [
-        ...existingEvents,
-        ...newEvents,
-      ]);
-      importedEvents += newEvents.length;
-    }
-  }
+  importedEvents = newEvents.length;
 
   const result: ApplyChangePackageResult = {
     appliedEntries,
@@ -2244,8 +2252,24 @@ export async function applyChangePackage(
     importedProjectSettings,
     importedEvents,
   };
+  const importEvent = createImportLogEvent(
+    changePackage.manifest,
+    result,
+    validation,
+    options,
+  );
 
-  await appendImportLog(changePackage.manifest, result, validation, options);
+  writePlan.writeJsonl("logs/events.jsonl", [
+    ...existingEvents,
+    ...newEvents,
+    importEvent,
+  ]);
+
+  await writePlan.execute();
+
+  for (const group of changedEntryGroups) {
+    cacheEntriesForFile(group.fileId, group.entries);
+  }
 
   return result;
 }

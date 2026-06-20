@@ -15,10 +15,11 @@ import {
   validateRolePermissionChange,
 } from "./permissions";
 import {
+  cacheEntriesForFile,
   clearCachedEntriesForFile,
   importEntryTranslations,
   parseEntriesFromSourceFile,
-  updateEntriesFromSourceFile,
+  prepareUpdatedEntriesFromSourceFile,
   writeEntriesForFile,
 } from "./entries";
 import {
@@ -35,6 +36,7 @@ import {
   createProjectStorage,
   type ProjectStorage,
 } from "./projectStorage";
+import { createProjectWritePlan } from "./projectWritePlan";
 
 interface MembersFile {
   schema_version: number;
@@ -530,6 +532,22 @@ export async function updateSourceFileInProject(
 ): Promise<ProjectFileUpdateResult> {
   const storage = createProjectStorage(root);
 
+  return updateSourceFileInStorage(
+    storage,
+    config,
+    fileId,
+    sourceFile,
+    actor,
+  );
+}
+
+export async function updateSourceFileInStorage(
+  storage: ProjectStorage,
+  config: ProjectConfig,
+  fileId: string,
+  sourceFile: File,
+  actor?: Member | null,
+): Promise<ProjectFileUpdateResult> {
   assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_UPDATE, config);
   assertSupportedImportFile(sourceFile.name);
 
@@ -540,7 +558,8 @@ export async function updateSourceFileInProject(
   }
 
   const sourceText = await sourceFile.text();
-  const entries = await updateEntriesFromSourceFile(
+  const preparedEntries = await prepareUpdatedEntriesFromSourceFile(
+    storage,
     projectFile.id,
     sourceFile.name,
     sourceText,
@@ -548,14 +567,36 @@ export async function updateSourceFileInProject(
       chunkSize: config.settings.chunk_size,
     },
   );
+  const nextConfig: ProjectConfig = {
+    ...config,
+    files: config.files.map((file) =>
+      file.id === fileId
+        ? {
+            ...file,
+            updated_at: nowIso(),
+          }
+        : file,
+    ),
+  };
+  const writePlan = createProjectWritePlan(storage);
 
-  await storage.writeText(projectFile.source_path, sourceText);
+  for (const write of preparedEntries.writes) {
+    writePlan.writeJsonl(write.path, write.rows);
+  }
+
+  for (const path of preparedEntries.deletes) {
+    writePlan.deleteFile(path);
+  }
+
+  writePlan.writeText(projectFile.source_path, sourceText);
+  writePlan.writeJson("project.json", nextConfig);
+
+  await writePlan.execute();
+  cacheEntriesForFile(projectFile.id, preparedEntries.entries);
 
   return {
-    config: await updateProjectFile(root, config, fileId, {
-      updated_at: nowIso(),
-    }, actor, PERMISSION_ACTIONS.FILE_UPDATE),
-    entryCount: entries.length,
+    config: nextConfig,
+    entryCount: preparedEntries.entries.length,
   };
 }
 
@@ -658,6 +699,15 @@ export async function deleteProjectFile(
 ): Promise<ProjectConfig> {
   const storage = createProjectStorage(root);
 
+  return deleteProjectFileFromStorage(storage, config, fileId, actor);
+}
+
+export async function deleteProjectFileFromStorage(
+  storage: ProjectStorage,
+  config: ProjectConfig,
+  fileId: string,
+  actor?: Member | null,
+): Promise<ProjectConfig> {
   assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_DELETE, config);
 
   const file = config.files.find((item) => item.id === fileId);
@@ -670,22 +720,23 @@ export async function deleteProjectFile(
     ...config,
     files: config.files.filter((item) => item.id !== fileId),
   };
+  const writePlan = createProjectWritePlan(storage);
 
-  try {
-    if (await storage.fileExists(file.entries_path)) {
-      await storage.deleteEntry(file.entries_path, { recursive: true });
+  if (await storage.fileExists(file.entries_path)) {
+    const entryNames = await storage.listFiles(file.entries_path);
+
+    for (const entryName of entryNames) {
+      writePlan.deleteFile(`${file.entries_path}/${entryName}`);
     }
 
-    if (await storage.fileExists(file.source_path)) {
-      await storage.deleteEntry(file.source_path);
-    }
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "未知错误。";
-
-    throw new Error(`删除文件失败，project.json 未更新。原因：${reason}`);
+    writePlan.deleteDirectory(file.entries_path);
   }
 
-  await saveProjectToStorage(storage, nextConfig);
+  writePlan.deleteFile(file.source_path);
+  writePlan.writeJson("project.json", nextConfig);
+
+  await writePlan.execute();
+  clearCachedEntriesForFile(file.id);
 
   return nextConfig;
 }
@@ -765,9 +816,8 @@ function assertCreateProjectInput(input: CreateProjectInput): void {
 }
 
 async function assertProjectCanBeCreated(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
 ): Promise<void> {
-  const storage = createProjectStorage(root);
   const conflicts: string[] = [];
 
   for (const path of CREATION_CONFLICT_PATHS) {
@@ -821,14 +871,18 @@ export async function createProjectInDirectory(
   rawInput: CreateProjectInput,
 ): Promise<CreatedProject> {
   const storage = createProjectStorage(root);
+
+  return createProjectInStorage(storage, rawInput);
+}
+
+export async function createProjectInStorage(
+  storage: ProjectStorage,
+  rawInput: CreateProjectInput,
+): Promise<CreatedProject> {
   const input = normalizeCreateProjectInput(rawInput);
 
   assertCreateProjectInput(input);
-  await assertProjectCanBeCreated(root);
-
-  for (const path of PROJECT_DIRECTORIES) {
-    await storage.ensureDirectory(path);
-  }
+  await assertProjectCanBeCreated(storage);
 
   const now = nowIso();
   const revision = createId("rev");
@@ -877,22 +931,31 @@ export async function createProjectInDirectory(
     },
   };
   const members = [owner];
+  const writePlan = createProjectWritePlan(storage);
 
-  await Promise.all([
-    saveProjectToStorage(storage, config),
-    saveMembersToStorage(storage, members),
-    storage.writeJsonl("terms/terms.jsonl", []),
-    storage.writeJsonl("tasks/tasks.jsonl", []),
-    storage.writeJsonl("logs/events.jsonl", []),
-  ]);
+  for (const path of PROJECT_DIRECTORIES) {
+    writePlan.ensureDirectory(path);
+  }
+
+  writePlan.writeJson<MembersFile>("members.json", {
+    schema_version: 1,
+    members,
+  });
+  writePlan.writeJsonl("terms/terms.jsonl", []);
+  writePlan.writeJsonl("tasks/tasks.jsonl", []);
+  writePlan.writeJsonl("logs/events.jsonl", []);
+  writePlan.writeJson("project.json", config);
+
+  await writePlan.execute();
 
   return {
     project: {
-      root,
+      root: storage.root,
       storage,
       config,
       members,
-      storageKind: "folder",
+      storageKind: storage.kind,
+      sourceFileName: storage.sourceFileName,
     },
     owner,
   };
