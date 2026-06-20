@@ -597,7 +597,7 @@ comments/<file_id>/<6位entry index>.jsonl
 示例：
 
 ```json
-{"id":"event_xxx","type":"entry.updated","user_id":"user_a","created_at":"2026-06-19T00:00:00.000Z","entry_id":"script_001:000001","file_id":"script_001","detail":{"status":"translated"}}
+{"id":"event_xxx","type":"entry.updated","user_id":"user_a","created_at":"2026-06-19T00:00:00.000Z","entry_id":"script_001:000001","file_id":"script_001","detail":{"before_target":"旧译文","after_target":"新译文","before_status":"translated","after_status":"translated"}}
 ```
 
 字段：
@@ -606,6 +606,14 @@ comments/<file_id>/<6位entry index>.jsonl
 - `user_id`：操作者。
 - 可选 entry/task/file 关联。
 - `detail`：结构化附加信息。
+
+词条版本事件：
+
+- `entry.updated`：手工保存导致译文或主状态变化。
+- `entry.restored`：恢复某个历史译文版本。
+- `detail` 保存 `before_target`、`after_target`、`before_status`、`after_status`。
+- 恢复事件额外保存 `restored_from_event_id` 和 `restored_from_snapshot`，明确恢复的是该事件的修改前或修改后快照。
+- 旧日志缺少上述快照字段时继续作为普通审计事件读取，但不能恢复。
 
 当前日志追加实现会读取整个 JSONL、加入新事件后重写文件。日志很大时会有性能和并发风险。
 
@@ -757,6 +765,7 @@ comments/<file_id>/<6位entry index>.jsonl
 - 导入译文。
 - 保存词条和上下文。
 - 维护审计字段。
+- 记录并恢复手工编辑产生的译文版本。
 
 主要输入：
 
@@ -794,6 +803,19 @@ comments/<file_id>/<6位entry index>.jsonl
 - 首次填入译文时写 `translated_by`。
 - 校对增加 proofread user/count。
 - 审核写 `reviewed_by`。
+- 译文或状态真正变化时创建 `entry.updated` 版本事件；无变化保存不写事件。
+- entries chunk 与追加后的 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交，任一写入失败都会恢复两者。
+
+历史恢复：
+
+- `restoreEntryVersion(entryId, eventId, { actor, snapshot })` 只接受带完整快照的 `entry.updated`/`entry.restored` 事件；`snapshot` 为 `before` 或 `after`。
+- 历史面板将各事件的修改后快照与最早事件的修改前快照组合为可恢复版本，确保首次记录前的译文不会缺失。
+- 恢复权限使用 `entry.edit` 或 `entry.translate`，不复用表示流程退回的 `entry.rollback`。
+- 锁定或隐藏词条不能恢复。
+- 恢复非空译文后状态为 translated，恢复空译文后状态为 untranslated。
+- 清空 `proofread_by`、`proofread_count`、`reviewed_by`，当前成员写入 `translated_by`、`updated_by` 和 `updated_at`。
+- 保留 `disputed` 及争议说明，不静默解决争议。
+- 恢复操作追加 `entry.restored` 事件，不删除或修改后续历史。
 
 上下文：
 
@@ -1059,6 +1081,7 @@ disputed: boolean
 - reviewed 可退回 proofread。
 - proofread 可退回 translated。
 - 后续审计字段按状态函数清理或保留。
+- 该操作只处理工作流阶段，不恢复旧译文内容；译文内容恢复走历史面板和 `restoreEntryVersion()`。
 
 默认限制：
 

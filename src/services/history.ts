@@ -1,4 +1,9 @@
-import type { ProjectEvent } from "../model/types";
+import type {
+  Entry,
+  EntryStatus,
+  ProjectEvent,
+} from "../model/types";
+import { ENTRY_STATUSES } from "../model/status";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import type { ProjectDirectoryHandle } from "./projectFs";
@@ -9,6 +14,24 @@ import {
 
 type ProjectEventInput = Omit<ProjectEvent, "id" | "created_at"> &
   Partial<Pick<ProjectEvent, "id" | "created_at">>;
+
+export interface EntryVersionDetail {
+  before_target: string;
+  after_target: string;
+  before_status: EntryStatus;
+  after_status: EntryStatus;
+  restored_from_event_id?: string;
+  restored_from_snapshot?: EntryVersionSnapshot;
+}
+
+export type EntryVersionSnapshot = "before" | "after";
+
+export interface EntryVersionEvent extends ProjectEvent {
+  type: "entry.updated" | "entry.restored";
+  entry_id: string;
+  file_id: string;
+  detail: ProjectEvent["detail"] & EntryVersionDetail;
+}
 
 export interface ProjectEventFilter {
   entryId?: string;
@@ -99,4 +122,53 @@ export async function appendEventToStorage(
 
 export async function getEntryHistory(entryId: string): Promise<ProjectEvent[]> {
   return loadEvents({ entryId });
+}
+
+export function createEntryVersionEvent(
+  before: Entry,
+  after: Entry,
+  userId: string,
+  options: {
+    type?: EntryVersionEvent["type"];
+    restoredFromEventId?: string;
+    restoredFromSnapshot?: EntryVersionSnapshot;
+  } = {},
+): EntryVersionEvent {
+  return {
+    id: createId("event"),
+    type: options.type ?? "entry.updated",
+    user_id: userId,
+    entry_id: after.id,
+    file_id: after.file_id,
+    created_at: after.updated_at || nowIso(),
+    detail: {
+      before_target: before.target,
+      after_target: after.target,
+      before_status: before.status,
+      after_status: after.status,
+      ...(options.restoredFromEventId
+        ? { restored_from_event_id: options.restoredFromEventId }
+        : {}),
+      ...(options.restoredFromSnapshot
+        ? { restored_from_snapshot: options.restoredFromSnapshot }
+        : {}),
+    },
+  };
+}
+
+export function isEntryVersionEvent(
+  event: ProjectEvent,
+): event is EntryVersionEvent {
+  const detail = event.detail;
+
+  return Boolean(
+    (event.type === "entry.updated" || event.type === "entry.restored") &&
+      event.entry_id &&
+      event.file_id &&
+      detail &&
+      typeof detail.before_target === "string" &&
+      typeof detail.after_target === "string" &&
+      ENTRY_STATUSES.includes(detail.before_status as EntryStatus) &&
+      ENTRY_STATUSES.includes(detail.after_status as EntryStatus),
+  );
 }

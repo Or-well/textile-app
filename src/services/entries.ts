@@ -1,5 +1,10 @@
 import { PERMISSION_ACTIONS } from "../model/permissions";
-import type { Entry, Member, ProjectWorkflowSettings } from "../model/types";
+import type {
+  Entry,
+  Member,
+  ProjectEvent,
+  ProjectWorkflowSettings,
+} from "../model/types";
 import {
   getEntryProofreadCount,
   normalizeEntries,
@@ -8,6 +13,11 @@ import {
 } from "../model/status";
 import { parseJsonl } from "../utils/jsonl";
 import { nowIso } from "../utils/time";
+import {
+  createEntryVersionEvent,
+  isEntryVersionEvent,
+  type EntryVersionSnapshot,
+} from "./history";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import {
   createProjectStorage,
@@ -20,6 +30,7 @@ import {
   canProofreadEntry,
   canReviewEntry,
   canRollbackEntry,
+  canRestoreEntryVersion,
   canTranslateEntry,
   getCurrentUser,
 } from "./permissions";
@@ -47,6 +58,10 @@ export interface TranslationImportResult {
 export interface SaveEntryOptions {
   actor?: Member | null;
   workflow?: ProjectWorkflowSettings;
+}
+
+export interface RestoreEntryVersionOptions extends SaveEntryOptions {
+  snapshot?: EntryVersionSnapshot;
 }
 
 export interface WriteEntriesOptions {
@@ -536,6 +551,16 @@ export function cacheEntriesForFile(fileId: string, entries: Entry[]): void {
   ];
 }
 
+function cacheEntry(savedEntry: Entry): void {
+  cachedEntries = cachedEntries.map((entry) =>
+    entry.id === savedEntry.id ? savedEntry : entry,
+  );
+
+  if (!cachedEntries.some((entry) => entry.id === savedEntry.id)) {
+    cachedEntries.push(savedEntry);
+  }
+}
+
 export function parseEntriesFromSourceFile(
   fileId: string,
   fileName: string,
@@ -672,6 +697,35 @@ function applyEntryAuditFields(
   }
 
   return savedEntry;
+}
+
+function entryVersionChanged(before: Entry, after: Entry): boolean {
+  return before.target !== after.target || before.status !== after.status;
+}
+
+async function loadProjectEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
+  return (await storage.fileExists("logs/events.jsonl"))
+    ? storage.readJsonl<ProjectEvent>("logs/events.jsonl")
+    : [];
+}
+
+async function commitEntryAndVersionEvent(
+  storage: ProjectStorage,
+  chunkPath: string,
+  entries: Entry[],
+  event?: ProjectEvent,
+): Promise<void> {
+  const writePlan = createProjectWritePlan(storage);
+
+  writePlan.writeJsonl(chunkPath, entries);
+
+  if (event) {
+    const events = await loadProjectEvents(storage);
+
+    writePlan.writeJsonl("logs/events.jsonl", [...events, event]);
+  }
+
+  await writePlan.execute();
 }
 
 async function listEntryChunkFiles(
@@ -876,13 +930,7 @@ export async function updateEntryContext(
 
     await storage.writeJsonl(chunkPath, entries);
 
-    cachedEntries = cachedEntries.map((cachedEntry) =>
-      cachedEntry.id === savedEntry.id ? savedEntry : cachedEntry,
-    );
-
-    if (!cachedEntries.some((cachedEntry) => cachedEntry.id === savedEntry.id)) {
-      cachedEntries.push(savedEntry);
-    }
+    cacheEntry(savedEntry);
 
     return savedEntry;
   }
@@ -915,21 +963,103 @@ export async function saveEntry(
     assertCanWriteEntry(actor, originalEntry, mergedEntry, options.workflow);
 
     const savedEntry = applyEntryAuditFields(originalEntry, mergedEntry, actor);
+    const versionEvent = entryVersionChanged(originalEntry, savedEntry)
+      ? createEntryVersionEvent(originalEntry, savedEntry, actor.id)
+      : undefined;
 
     entries[entryIndex] = savedEntry;
 
-    await storage.writeJsonl(chunkPath, entries);
-
-    cachedEntries = cachedEntries.map((cachedEntry) =>
-      cachedEntry.id === savedEntry.id ? savedEntry : cachedEntry,
+    await commitEntryAndVersionEvent(
+      storage,
+      chunkPath,
+      entries,
+      versionEvent,
     );
 
-    if (!cachedEntries.some((cachedEntry) => cachedEntry.id === savedEntry.id)) {
-      cachedEntries.push(savedEntry);
-    }
+    cacheEntry(savedEntry);
 
     return savedEntry;
   }
 
   throw new Error("没有找到要保存的词条。请重新打开项目后再试。");
+}
+
+export async function restoreEntryVersion(
+  entryId: string,
+  versionEventId: string,
+  options: RestoreEntryVersionOptions = {},
+): Promise<Entry> {
+  const storage = getProjectStorage();
+  const actor = resolveActor(options.actor);
+  const fileId = getFileIdFromEntryId(entryId);
+  const entryDirectory = `entries/${fileId}`;
+  const events = await loadProjectEvents(storage);
+  const versionEvent = events.find((event) => event.id === versionEventId);
+
+  if (
+    !versionEvent ||
+    !isEntryVersionEvent(versionEvent) ||
+    versionEvent.entry_id !== entryId
+  ) {
+    throw new Error("没有找到可恢复的译文历史版本。");
+  }
+
+  const chunkFiles = await listEntryChunkFiles(storage, fileId);
+
+  for (const chunkFile of chunkFiles) {
+    const chunkPath = `${entryDirectory}/${chunkFile}`;
+    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
+    const entryIndex = entries.findIndex((row) => row.id === entryId);
+
+    if (entryIndex < 0) {
+      continue;
+    }
+
+    const originalEntry = normalizeEntry(entries[entryIndex]);
+
+    if (!canRestoreEntryVersion(actor, originalEntry)) {
+      throw new Error("当前成员没有恢复译文历史版本的权限。");
+    }
+
+    const snapshot = options.snapshot ?? "after";
+    const restoredTarget =
+      snapshot === "before"
+        ? versionEvent.detail.before_target
+        : versionEvent.detail.after_target;
+    const restoredEntry: Entry = normalizeEntry({
+      ...originalEntry,
+      target: restoredTarget,
+      status: restoredTarget.trim() ? "translated" : "untranslated",
+      translated_by: restoredTarget.trim() ? actor.id : "",
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
+      updated_at: nowIso(),
+      updated_by: actor.id,
+    });
+    const restoreEvent = createEntryVersionEvent(
+      originalEntry,
+      restoredEntry,
+      actor.id,
+      {
+        type: "entry.restored",
+        restoredFromEventId: versionEvent.id,
+        restoredFromSnapshot: snapshot,
+      },
+    );
+
+    entries[entryIndex] = restoredEntry;
+
+    await commitEntryAndVersionEvent(
+      storage,
+      chunkPath,
+      entries,
+      restoreEvent,
+    );
+    cacheEntry(restoredEntry);
+
+    return restoredEntry;
+  }
+
+  throw new Error("没有找到要恢复的词条。请重新打开项目后再试。");
 }

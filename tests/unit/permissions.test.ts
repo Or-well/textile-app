@@ -8,6 +8,7 @@ import {
   canEditEntry,
   canProofreadEntry,
   canReviewEntry,
+  canRestoreEntryVersion,
   canTranslateEntry,
   getDefaultRolePermissions,
   getEffectivePermissions,
@@ -88,6 +89,12 @@ describe("entry workflow permissions", () => {
         translator,
         createEntry({ target: "Done", status: "reviewed" }),
       ),
+    ).toBe(false);
+    expect(
+      canRestoreEntryVersion(translator, createEntry({ locked: true })),
+    ).toBe(false);
+    expect(
+      canRestoreEntryVersion(translator, createEntry({ hidden: true })),
     ).toBe(false);
   });
 

@@ -426,6 +426,20 @@ export function canRollbackEntry(
   );
 }
 
+export function canRestoreEntryVersion(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+): boolean {
+  if (!entry || entry.locked || entry.hidden) {
+    return false;
+  }
+
+  return Boolean(
+    can(user, PERMISSION_ACTIONS.ENTRY_EDIT) ||
+      can(user, PERMISSION_ACTIONS.ENTRY_TRANSLATE),
+  );
+}
+
 export function canMarkDisputed(
   user: Member | null | undefined,
   entry: Entry | null | undefined,

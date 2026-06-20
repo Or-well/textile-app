@@ -4,8 +4,21 @@ import CommentPanel from "./CommentPanel.vue";
 import ContextPanel from "./ContextPanel.vue";
 import TermEditDialog from "./TermEditDialog.vue";
 import TermHint from "./TermHint.vue";
-import type { Comment, Entry, ProjectEvent, Term } from "../model/types";
-import { getEntryHistory } from "../services/history";
+import { ENTRY_STATUS_LABELS } from "../model/status";
+import type {
+  Comment,
+  Entry,
+  EntryStatus,
+  ProjectEvent,
+  Term,
+} from "../model/types";
+import {
+  getEntryHistory,
+  isEntryVersionEvent,
+  type EntryVersionEvent,
+  type EntryVersionSnapshot,
+} from "../services/history";
+import { restoreEntryVersion } from "../services/entries";
 import {
   addTerm,
   checkTermUsage,
@@ -16,6 +29,7 @@ import {
 } from "../services/terms";
 import {
   canCreateTerm,
+  canRestoreEntryVersion,
   canUpdateTerm,
   getCurrentUser,
 } from "../services/permissions";
@@ -26,6 +40,21 @@ interface TermDisplayItem {
   term: Term;
   matchedText?: string;
   isRecommendedUsed?: boolean;
+}
+
+interface HistoryVersion {
+  key: string;
+  event: EntryVersionEvent;
+  snapshot: EntryVersionSnapshot;
+  target: string;
+  status: EntryStatus;
+  isInitial: boolean;
+}
+
+interface HistoryRow {
+  key: string;
+  event: ProjectEvent;
+  version?: HistoryVersion;
 }
 
 const props = defineProps<{
@@ -52,6 +81,8 @@ const historyEvents = ref<ProjectEvent[]>([]);
 const termErrorMessage = ref("");
 const termActionMessage = ref("");
 const historyErrorMessage = ref("");
+const historyActionMessage = ref("");
+const restoringEventId = ref("");
 let termRequestId = 0;
 let termSearchRequestId = 0;
 let historyRequestId = 0;
@@ -74,6 +105,64 @@ const displayedTerms = computed<TermDisplayItem[]>(() => {
 const termEmptyText = computed(() =>
   isSearchingTerms.value ? "没有找到术语" : "没有相关术语",
 );
+const historyVersions = computed<HistoryVersion[]>(() => {
+  const events = historyEvents.value.filter(isEntryVersionEvent);
+  const versions: HistoryVersion[] = events.map((event) => ({
+    key: `${event.id}:after`,
+    event,
+    snapshot: "after",
+    target: event.detail.after_target,
+    status: event.detail.after_status,
+    isInitial: false,
+  }));
+  const oldestEvent = events.at(-1);
+
+  if (oldestEvent) {
+    versions.push({
+      key: `${oldestEvent.id}:before`,
+      event: oldestEvent,
+      snapshot: "before",
+      target: oldestEvent.detail.before_target,
+      status: oldestEvent.detail.before_status,
+      isInitial: true,
+    });
+  }
+
+  return versions;
+});
+const currentVersionKey = computed(
+  () =>
+    historyVersions.value.find(
+      (version) =>
+        version.target === props.entry?.target &&
+        version.status === props.entry?.status,
+    )?.key ?? "",
+);
+const historyRows = computed<HistoryRow[]>(() => {
+  const versionByEventId = new Map(
+    historyVersions.value
+      .filter((version) => !version.isInitial)
+      .map((version) => [version.event.id, version]),
+  );
+  const rows = historyEvents.value.map((event) => ({
+    key: event.id,
+    event,
+    version: versionByEventId.get(event.id),
+  }));
+  const initialVersion = historyVersions.value.find(
+    (version) => version.isInitial,
+  );
+
+  if (initialVersion) {
+    rows.push({
+      key: initialVersion.key,
+      event: initialVersion.event,
+      version: initialVersion,
+    });
+  }
+
+  return rows;
+});
 
 const tabs: Array<{ id: AssistTab; label: string }> = [
   { id: "terms", label: "术语" },
@@ -88,8 +177,18 @@ function setActiveTab(tab: AssistTab) {
 }
 
 function describeEvent(event: ProjectEvent): string {
+  if (event.type === "entry.restored") {
+    return "恢复了历史译文";
+  }
+
   if (event.type === "entry.updated") {
-    return "词条已更新";
+    if (!isEntryVersionEvent(event)) {
+      return "词条已更新";
+    }
+
+    return event.detail.before_target === event.detail.after_target
+      ? "更新了词条状态"
+      : "更新了译文";
   }
 
   if (event.type === "entry.disputed" || event.type === "entry.mark_disputed") {
@@ -104,6 +203,88 @@ function describeEvent(event: ProjectEvent): string {
   }
 
   return "记录已更新";
+}
+
+function canRestoreVersion(version: HistoryVersion): boolean {
+  return Boolean(
+    props.entry &&
+      version.key !== currentVersionKey.value &&
+      canRestoreEntryVersion(currentUser.value, props.entry),
+  );
+}
+
+function formatEventTime(value: string): string {
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+async function handleRestoreVersion(version: HistoryVersion): Promise<void> {
+  if (!props.entry || !canRestoreVersion(version)) {
+    return;
+  }
+
+  const targetPreview = version.target || "空译文";
+
+  if (
+    !window.confirm(
+      `确认恢复此历史译文吗？恢复后需要重新校对和审核。\n\n${targetPreview}`,
+    )
+  ) {
+    return;
+  }
+
+  restoringEventId.value = version.key;
+  historyErrorMessage.value = "";
+  historyActionMessage.value = "";
+
+  try {
+    const restoredEntry = await restoreEntryVersion(
+      props.entry.id,
+      version.event.id,
+      {
+        actor: currentUser.value,
+        snapshot: version.snapshot,
+      },
+    );
+
+    emit("entryUpdated", restoredEntry);
+    historyActionMessage.value = "已恢复历史译文，需重新校对和审核。";
+    await refreshEntryHistory(restoredEntry.id);
+  } catch (error) {
+    historyErrorMessage.value =
+      error instanceof Error ? error.message : "恢复历史译文失败。";
+  } finally {
+    restoringEventId.value = "";
+  }
+}
+
+async function refreshEntryHistory(entryId?: string): Promise<void> {
+  const requestId = (historyRequestId += 1);
+
+  if (!entryId) {
+    historyEvents.value = [];
+    historyErrorMessage.value = "";
+    historyActionMessage.value = "";
+    return;
+  }
+
+  try {
+    const events = await getEntryHistory(entryId);
+
+    if (requestId === historyRequestId) {
+      historyEvents.value = events.sort((a, b) =>
+        b.created_at.localeCompare(a.created_at),
+      );
+      historyErrorMessage.value = "";
+    }
+  } catch (error) {
+    if (requestId === historyRequestId) {
+      historyEvents.value = [];
+      historyErrorMessage.value =
+        error instanceof Error ? error.message : "历史记录无法读取。";
+    }
+  }
 }
 
 async function refreshRelatedTerms() {
@@ -239,32 +420,9 @@ watch(termSearchText, () => {
 });
 
 watch(
-  () => props.entry?.id,
-  async (entryId) => {
-    const requestId = (historyRequestId += 1);
-
-    if (!entryId) {
-      historyEvents.value = [];
-      historyErrorMessage.value = "";
-      return;
-    }
-
-    try {
-      const events = await getEntryHistory(entryId);
-
-      if (requestId === historyRequestId) {
-        historyEvents.value = events.sort((a, b) =>
-          b.created_at.localeCompare(a.created_at),
-        );
-        historyErrorMessage.value = "";
-      }
-    } catch (error) {
-      if (requestId === historyRequestId) {
-        historyEvents.value = [];
-        historyErrorMessage.value =
-          error instanceof Error ? error.message : "历史记录无法读取。";
-      }
-    }
+  [() => props.entry?.id, () => props.entry?.updated_at],
+  ([entryId]) => {
+    void refreshEntryHistory(entryId);
   },
   { immediate: true },
 );
@@ -339,13 +497,56 @@ watch(
       <p v-if="historyErrorMessage" class="error-message">
         {{ historyErrorMessage }}
       </p>
+      <p v-if="historyActionMessage" class="term-action-message">
+        {{ historyActionMessage }}
+      </p>
       <p v-else-if="historyEvents.length === 0" class="empty-text">
         暂无历史记录
       </p>
       <ul v-else class="history-list">
-        <li v-for="event in historyEvents" :key="event.id">
-          <strong>{{ describeEvent(event) }}</strong>
-          <span>{{ event.user_id }} · {{ event.created_at }}</span>
+        <li
+          v-for="row in historyRows"
+          :key="row.key"
+        >
+          <div class="history-heading">
+            <strong>
+              {{
+                row.version?.isInitial
+                  ? "首次记录前版本"
+                  : describeEvent(row.event)
+              }}
+            </strong>
+            <span
+              v-if="row.version?.key === currentVersionKey"
+              class="current-version"
+            >
+              当前版本
+            </span>
+          </div>
+          <span>
+            {{ row.event.user_id }}
+            {{ row.version?.isInitial ? "修改前" : "" }} ·
+            {{ formatEventTime(row.event.created_at) }}
+          </span>
+          <template v-if="row.version">
+            <div class="history-target">
+              {{ row.version.target || "空译文" }}
+            </div>
+            <span>{{ ENTRY_STATUS_LABELS[row.version.status] }}</span>
+            <button
+              v-if="canRestoreVersion(row.version)"
+              class="restore-button"
+              type="button"
+              :disabled="Boolean(restoringEventId)"
+              @click="handleRestoreVersion(row.version)"
+            >
+              {{
+                restoringEventId === row.version.key
+                  ? "正在恢复..."
+                  : "恢复此版本"
+              }}
+            </button>
+          </template>
         </li>
       </ul>
     </section>
@@ -476,6 +677,47 @@ watch(
   border: 1px solid #eef1f5;
   border-radius: 6px;
   background: #f8fafb;
+}
+
+.history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.current-version {
+  color: #2f6f73;
+  font-weight: 700;
+}
+
+.history-target {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px;
+  border-left: 3px solid #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
+  line-height: 1.55;
+}
+
+.restore-button {
+  justify-self: start;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #2f6f73;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #2f6f73;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.restore-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .history-list strong {
