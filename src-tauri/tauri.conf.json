@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Textile",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "identifier": "io.textile.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -36,9 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../public/manual.pdf"
-    ],
+    "resources": {
+      "../public/manual.pdf": "manual.pdf"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

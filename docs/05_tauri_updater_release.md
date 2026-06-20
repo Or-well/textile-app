@@ -789,7 +789,7 @@ npm.cmd run build
 
 如果构建后 `public/version.json` 变化，应把最终版本提交进去。
 
-如果本次修改过 `docs/MANUAL.md`，发布前还要重新生成 `public/manual.pdf`。`docs/MANUAL.md` 是维护源，`public/manual.pdf` 是随程序打包给用户打开的成品文件；两者应在同一个提交中保持一致。
+如果本次修改过 `docs/MANUAL.md`，发布前还要重新生成 `public/manual.pdf`。`docs/MANUAL.md` 是维护源，`public/manual.pdf` 是随程序打包给用户打开的成品文件；两者应在同一个提交中保持一致。`src-tauri/tauri.conf.json` 的 `bundle.resources` 应把 `../public/manual.pdf` 映射为 `manual.pdf`，否则发布版可能找不到内置手册。
 
 生成 PDF 时可以使用临时目录或浏览器打印导出，但只保留最终的 `public/manual.pdf`。临时 HTML、临时图片、下载测试文件和中间脚本不要放进仓库。
 

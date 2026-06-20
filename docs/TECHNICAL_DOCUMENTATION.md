@@ -1696,7 +1696,7 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
-工作台侧边栏的“帮助”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，让系统默认 PDF 阅读器打开随包资源。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
+工作台侧边栏的“帮助”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，让系统默认 PDF 阅读器打开随包资源。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
 
 ## 46. 词条编辑页滚动布局
 
