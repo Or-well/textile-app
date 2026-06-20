@@ -190,6 +190,14 @@ const route = computed(() => parseRoute(routePath.value));
 - `tab`：`terms`、`comments`、`context`、`history`。
 - `comment`：需要定位的评论 ID。
 
+导入导出路由 query：
+
+- `panel=export`：从项目概览定位到修改包导出区域。
+- `panel=import`：从项目概览定位到修改包导入区域，并在有权限时聚焦文件选择控件。
+- 两个目标区域使用 `scroll-margin-top` 为工作台粘性顶栏预留空间，路由进入时使用即时滚动，避免标题被遮挡或定位动画被聚焦打断。
+
+当前没有持久化的待合并修改包队列，因此概览不提供“查看待合并修改”入口。
+
 未知顶层路径进入 not-found。未知项目 section 会显示通用占位页。
 
 ### 直接刷新恢复

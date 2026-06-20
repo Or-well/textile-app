@@ -69,6 +69,7 @@ type ProjectSection =
   | "file-entry";
 
 type AssistTab = "terms" | "comments" | "context" | "history";
+type ImportExportPanel = "export" | "import";
 
 interface ProjectSummary {
   id: string;
@@ -159,6 +160,10 @@ function parseRoute(path: string) {
   const assistTab = ["terms", "comments", "context", "history"].includes(tab)
     ? (tab as AssistTab)
     : undefined;
+  const panel = query.get("panel") ?? "";
+  const importExportPanel = ["export", "import"].includes(panel)
+    ? (panel as ImportExportPanel)
+    : undefined;
 
   return {
     page: "project" as const,
@@ -168,6 +173,7 @@ function parseRoute(path: string) {
     entryId: query.get("entry") ?? "",
     entryIndex,
     assistTab,
+    importExportPanel,
     commentId: query.get("comment") ?? "",
   };
 }
@@ -581,6 +587,19 @@ function handleOpenProjectSection(section: ProjectSection) {
   navigate(`/projects/${encodeURIComponent(currentProject.value.config.project_id)}/${section}`);
 }
 
+function handleOpenImportExport(panel?: ImportExportPanel) {
+  if (!currentProject.value) {
+    navigate("/projects");
+    return;
+  }
+
+  const query = panel ? `?panel=${panel}` : "";
+
+  navigate(
+    `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/import-export${query}`,
+  );
+}
+
 function handleProjectUpdated(config: ProjectConfig) {
   if (!currentProject.value) {
     return;
@@ -838,7 +857,7 @@ onBeforeUnmount(() => {
         :stats="currentStats"
         :task-count="taskCount"
         @open-files="handleOpenProjectSection('files')"
-        @open-import-export="handleOpenProjectSection('import-export')"
+        @open-import-export="handleOpenImportExport"
       />
 
       <FilesPage
@@ -892,6 +911,7 @@ onBeforeUnmount(() => {
         :project-root="currentProject.root"
         :project-storage="currentProject.storage"
         :current-user="currentUser"
+        :target-panel="route.importExportPanel"
         @project-updated="handleProjectUpdated"
         @members-updated="handleMembersUpdated"
       />

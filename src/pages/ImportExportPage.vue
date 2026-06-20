@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
 import type {
@@ -60,6 +60,7 @@ const props = defineProps<{
   projectRoot?: ProjectDirectoryHandle;
   projectStorage?: ProjectStorage;
   currentUser?: Member | null;
+  targetPanel?: "export" | "import";
 }>();
 
 const emit = defineEmits<{
@@ -92,6 +93,9 @@ const message = ref("");
 const changePackage = ref<ReadChangePackage>();
 const packagePreview = ref<ChangePackagePreview>();
 const conflicts = ref<ChangeConflict[]>([]);
+const changeExportSection = ref<HTMLElement>();
+const changeImportSection = ref<HTMLElement>();
+const changePackageInput = ref<HTMLInputElement>();
 
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const hasProjectContext = computed(() => Boolean(props.project));
@@ -297,6 +301,32 @@ async function initializeFromProjectContext() {
   applyReleaseSettings(props.project);
 
   await loadImportExportState();
+  await focusTargetPanel();
+}
+
+async function focusTargetPanel(): Promise<void> {
+  await nextTick();
+
+  if (props.targetPanel === "export") {
+    changeExportSection.value?.scrollIntoView({
+      behavior: "auto",
+      block: "start",
+    });
+    changeExportSection.value?.focus({ preventScroll: true });
+  }
+
+  if (props.targetPanel === "import") {
+    changeImportSection.value?.scrollIntoView({
+      behavior: "auto",
+      block: "start",
+    });
+
+    if (canSelectImportFile.value) {
+      changePackageInput.value?.focus({ preventScroll: true });
+    } else {
+      changeImportSection.value?.focus({ preventScroll: true });
+    }
+  }
 }
 
 async function handleOpenProject() {
@@ -582,6 +612,13 @@ watch(
 );
 
 watch(
+  () => props.targetPanel,
+  () => {
+    void focusTargetPanel();
+  },
+);
+
+watch(
   () => [
     releaseFormat.value,
     releaseOnlyReviewed.value,
@@ -633,7 +670,12 @@ watch(
         </button>
       </section>
 
-      <section v-if="projectName" class="form-grid change-export-section">
+      <section
+        v-if="projectName"
+        ref="changeExportSection"
+        class="form-grid change-export-section"
+        tabindex="-1"
+      >
         <h2>导出修改包</h2>
         <p class="section-note">
           成员把自己的译文、评论、术语或任务修改导出为签名修改包。
@@ -715,7 +757,12 @@ watch(
         </p>
       </section>
 
-      <section v-if="projectName" class="import-section">
+      <section
+        v-if="projectName"
+        ref="changeImportSection"
+        class="import-section"
+        tabindex="-1"
+      >
         <h2>导入修改包</h2>
         <p class="section-note">
           负责人合并普通修改包；所有成员可接收负责人发布的签名项目更新包。
@@ -723,6 +770,7 @@ watch(
         <label v-if="canSelectImportFile" class="file-field">
           <span>选择修改包</span>
           <input
+            ref="changePackageInput"
             type="file"
             accept=".zip,application/zip"
             :disabled="isReadingPackage || isApplyingPackage"
@@ -744,7 +792,7 @@ watch(
           "
           class="section-note"
         >
-          当前成员没有查看待合并修改的权限，只能按已有导入权限继续操作。
+          当前成员没有预览修改包内容的权限，只能按已有导入权限继续操作。
         </p>
 
         <button
@@ -950,6 +998,11 @@ button:disabled {
   display: grid;
   gap: 16px;
   margin-top: 24px;
+}
+
+.change-export-section,
+.import-section {
+  scroll-margin-top: 76px;
 }
 
 .project-file-section,

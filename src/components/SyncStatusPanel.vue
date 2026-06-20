@@ -8,7 +8,6 @@ defineProps<{
 const emit = defineEmits<{
   exportChangePackage: [];
   importChangePackage: [];
-  viewPendingChanges: [];
 }>();
 </script>
 
@@ -42,15 +41,7 @@ const emit = defineEmits<{
         :disabled="isBusy || !canImportChangePackage"
         @click="emit('importChangePackage')"
       >
-        导入协作包
-      </button>
-      <button
-        class="secondary-button"
-        type="button"
-        :disabled="isBusy"
-        @click="emit('viewPendingChanges')"
-      >
-        查看待合并修改
+        导入修改包
       </button>
     </div>
   </section>

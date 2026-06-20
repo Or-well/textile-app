@@ -20,7 +20,7 @@ defineProps<{
 
 const emit = defineEmits<{
   openFiles: [];
-  openImportExport: [];
+  openImportExport: [panel: "export" | "import"];
 }>();
 
 const canExportPackage = computed(
@@ -81,9 +81,8 @@ const canImportPackage = computed(
         <SyncStatusPanel
           :can-export-change-package="canExportPackage"
           :can-import-change-package="canImportPackage"
-          @export-change-package="emit('openImportExport')"
-          @import-change-package="emit('openImportExport')"
-          @view-pending-changes="emit('openImportExport')"
+          @export-change-package="emit('openImportExport', 'export')"
+          @import-change-package="emit('openImportExport', 'import')"
         />
       </section>
 
