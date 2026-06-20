@@ -2066,6 +2066,8 @@ npm run test:unit
 
 测试位于 `tests/unit/`。除核心业务规则外，还覆盖补偿式写入计划、`.hproj` 导入和程序更新状态展示。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
 
+发布前的真实用户链路、磁盘检查、修改包协作、`.hproj` 故障、成品过滤和程序升级测试见 `docs/MANUAL_TEST_PLAN.md`。手工测试必须使用系统临时目录中的独立项目，不得直接修改仓库 `examples/`。
+
 最低完整检查：
 
 ```bash
