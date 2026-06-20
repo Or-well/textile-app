@@ -12,6 +12,7 @@ interface ProjectSummary {
   description: string;
   totalEntries: number;
   translatedPercent: number;
+  proofreadPercent: number;
   reviewedPercent: number;
   memberCount: number;
   taskCount: number;
@@ -325,6 +326,10 @@ watch(
               <div>
                 <dt>翻译</dt>
                 <dd>{{ currentProject.translatedPercent }}%</dd>
+              </div>
+              <div>
+                <dt>校对</dt>
+                <dd>{{ currentProject.proofreadPercent }}%</dd>
               </div>
               <div>
                 <dt>审核</dt>

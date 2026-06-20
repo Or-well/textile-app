@@ -1668,7 +1668,12 @@ store: projectHandles
 
 最多 12 条。
 
-`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。只有普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。读取最近项目时还会检查 readwrite permission。
+`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。只有普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。
+
+权限恢复分两种入口：
+
+- 用户点击最近项目时，`recentProjects.ts` 会在 `queryPermission` 为 `prompt` 时调用 `requestPermission({ mode: "readwrite" })`，授权成功后直接打开项目。
+- 启动时按 URL 自动恢复项目只检查权限状态，不主动弹授权；如果不是 `granted`，回到启动页并提示用户从最近项目点击继续。
 
 ## 45. 页面与 service 调用关系
 
@@ -1691,7 +1696,24 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
-## 46. PWA 与更新机制
+## 46. 词条编辑页滚动布局
+
+`EntryPage` 桌面端使用固定视口剩余高度：标题区占自然高度，内容区使用 `minmax(0, 1fr)`。内容区内部通过 flex 将提示消息作为自然高度，将三栏工作区作为剩余高度。
+
+滚动边界：
+
+- `EntrySideList` 只有词条列表滚动，搜索、筛选和数量统计不进入滚动区。
+- `EntryEditor` 在桌面三栏中独立滚动，避免内容被工作区裁掉。
+- `EntryAssistPanel` 只有当前 tab 内容滚动，tab 按钮保持可见。
+- `1180px` 以下改为单列和页面整体滚动，不保留桌面端内部滚动约束。
+
+维护要求：
+
+- 新增词条页提示、工具栏或面板时，不能破坏 `height -> min-height: 0 -> overflow` 的高度链。
+- 搜索和筛选不引入分页；列表底部文案只表示匹配数量和总数。
+- 右侧术语、评论、上下文和历史面板与左侧列表共享同一桌面高度约束。
+
+## 47. PWA 与更新机制
 
 ### `appUpdate.ts`
 
@@ -2065,8 +2087,6 @@ npm run test:unit
 ```
 
 测试位于 `tests/unit/`。除核心业务规则外，还覆盖补偿式写入计划、`.hproj` 导入和程序更新状态展示。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
-
-发布前的真实用户链路、磁盘检查、修改包协作、`.hproj` 故障、成品过滤和程序升级测试见 `docs/MANUAL_TEST_PLAN.md`。手工测试必须使用系统临时目录中的独立项目，不得直接修改仓库 `examples/`。
 
 最低完整检查：
 

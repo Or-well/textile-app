@@ -21,6 +21,8 @@ export interface RecentProjectInput {
   lastUserId?: string;
 }
 
+export type RecentProjectAccessState = "granted" | "prompt" | "denied";
+
 const RECENT_PROJECTS_STORAGE_KEY = "textile.recentProjects.v1";
 const RECENT_PROJECTS_DB_NAME = "textile-recent-projects";
 const RECENT_PROJECTS_DB_VERSION = 1;
@@ -255,12 +257,42 @@ export async function getRecentProjectHandle(
 export async function hasRecentProjectAccess(
   root: ProjectDirectoryHandle,
 ): Promise<boolean> {
+  return (await getRecentProjectAccessState(root)) === "granted";
+}
+
+export async function getRecentProjectAccessState(
+  root: ProjectDirectoryHandle,
+): Promise<RecentProjectAccessState> {
   if (!root.queryPermission) {
-    return true;
+    return "granted";
   }
 
   try {
-    return (await root.queryPermission({ mode: "readwrite" })) === "granted";
+    const permission = await root.queryPermission({ mode: "readwrite" });
+
+    return permission === "granted" || permission === "prompt"
+      ? permission
+      : "denied";
+  } catch {
+    return "denied";
+  }
+}
+
+export async function requestRecentProjectAccess(
+  root: ProjectDirectoryHandle,
+): Promise<boolean> {
+  const currentState = await getRecentProjectAccessState(root);
+
+  if (currentState === "granted") {
+    return true;
+  }
+
+  if (currentState === "denied" || !root.requestPermission) {
+    return false;
+  }
+
+  try {
+    return (await root.requestPermission({ mode: "readwrite" })) === "granted";
   } catch {
     return false;
   }

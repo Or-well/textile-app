@@ -155,4 +155,3 @@ scripts/            版本清单和发布检查脚本
 - [技术文档](docs/TECHNICAL_DOCUMENTATION.md)
 - [代码代理开发规范](AGENTS.md)
 - [Tauri Updater 发布说明](docs/05_tauri_updater_release.md)
-- [全链路手工测试集](docs/MANUAL_TEST_PLAN.md)

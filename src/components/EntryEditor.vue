@@ -386,7 +386,9 @@ async function copyEntryId() {
   display: grid;
   align-content: start;
   gap: 12px;
+  height: 100%;
   min-height: 0;
+  overflow: auto;
   padding: 20px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
@@ -607,6 +609,14 @@ dd {
 
 .empty-editor p {
   line-height: 1.7;
+}
+
+@media (max-width: 1180px) {
+  .entry-editor,
+  .empty-editor {
+    height: auto;
+    overflow: visible;
+  }
 }
 
 @media (max-width: 780px) {

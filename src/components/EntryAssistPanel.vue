@@ -557,10 +557,12 @@ watch(
 .entry-assist-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
+  overflow: hidden;
 }
 
 .assist-tabs {
@@ -592,7 +594,9 @@ watch(
 .tab-panel {
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 14px;
+  scrollbar-gutter: stable;
 }
 
 .term-panel {
@@ -728,5 +732,16 @@ watch(
 .history-list span {
   color: #5b6472;
   font-size: 13px;
+}
+
+@media (max-width: 1180px) {
+  .entry-assist-panel {
+    height: auto;
+    overflow: visible;
+  }
+
+  .tab-panel {
+    overflow: visible;
+  }
 }
 </style>

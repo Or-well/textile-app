@@ -243,6 +243,20 @@ npm.cmd ci
 
 普通开发可以使用 `npm.cmd install`，正式发布前优先使用 `npm.cmd ci`，这样依赖版本与 `package-lock.json` 一致。
 
+如果 Windows 上 `npm.cmd ci` 报类似下面的错误：
+
+```text
+EPERM: operation not permitted, unlink ... node_modules\...\*.node
+```
+
+这通常表示 `node_modules` 里的原生模块正在被占用，例如还开着 `npm run dev`、`npm run build`、`tauri dev`、编辑器插件或杀毒扫描。处理顺序：
+
+1. 关闭正在运行的开发服务器、构建、测试和 Tauri 进程。
+2. 普通开发场景先运行 `npm.cmd install`，它不会像 `ci` 一样先删除整个 `node_modules`。
+3. 如果必须验证正式发布的锁定依赖，重启电脑或换一个干净工作区后再运行 `npm.cmd ci`。
+
+不要为了绕过一次 `EPERM` 手工删除不确定的系统目录；只处理当前仓库下的 `node_modules`，并确认没有进程正在占用。
+
 ---
 
 ## 4. 第一次把本地仓库连接到 GitHub

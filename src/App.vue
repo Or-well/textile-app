@@ -40,10 +40,11 @@ import type { ProjectPackagePreview } from "./services/projectPackage";
 import { deleteCurrentProjectSource } from "./services/projectDeletion";
 import {
   getRecentProjectHandle,
-  hasRecentProjectAccess,
+  getRecentProjectAccessState,
   listRecentProjects,
   rememberRecentProject,
   removeRecentProject,
+  requestRecentProjectAccess,
   updateRecentProjectUser,
   type RecentProjectRecord,
 } from "./services/recentProjects";
@@ -77,6 +78,7 @@ interface ProjectSummary {
   description: string;
   totalEntries: number;
   translatedPercent: number;
+  proofreadPercent: number;
   reviewedPercent: number;
   memberCount: number;
   taskCount: number;
@@ -337,6 +339,7 @@ function buildProjectSummary(
       `${config.source_language} -> ${config.target_language} 本地汉化项目`,
     totalEntries: stats.totalEntries,
     translatedPercent: stats.translationProgress,
+    proofreadPercent: stats.proofreadProgress,
     reviewedPercent: stats.reviewProgress,
     memberCount: members.filter((member) => member.active).length,
     taskCount: totalTasks,
@@ -449,9 +452,15 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
 
     const storedRoot = await getRecentProjectHandle(record.recordId);
 
-    if (!storedRoot || !(await hasRecentProjectAccess(storedRoot))) {
+    if (!storedRoot) {
       appErrorMessage.value =
-        "浏览器需要重新授权此项目文件夹，请重新选择该项目所在文件夹。";
+        "最近项目的本地授权记录已丢失，请重新选择该项目所在文件夹。";
+      return;
+    }
+
+    if (!(await requestRecentProjectAccess(storedRoot))) {
+      appErrorMessage.value =
+        "浏览器未授予此项目文件夹读写权限，请重新选择该项目所在文件夹。";
       return;
     }
 
@@ -733,9 +742,16 @@ async function restoreProjectFromRoute() {
       recentRecord?.recordId ?? currentRoute.projectId,
     );
 
-    if (!root || !(await hasRecentProjectAccess(root))) {
+    if (!root) {
       appErrorMessage.value =
-        "浏览器需要重新授权此项目文件夹，请重新选择该项目所在文件夹。";
+        "最近项目的本地授权记录已丢失，请从项目启动页重新选择该项目文件夹。";
+      replace("/projects");
+      return;
+    }
+
+    if ((await getRecentProjectAccessState(root)) !== "granted") {
+      appErrorMessage.value =
+        "浏览器需要确认项目文件夹权限，请在最近项目中点击该项目继续。";
       replace("/projects");
       return;
     }

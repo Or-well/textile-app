@@ -77,6 +77,13 @@ const canGoPrevious = computed(() => selectedIndex.value > 0);
 const canGoNext = computed(
   () => selectedIndex.value >= 0 && selectedIndex.value < filteredEntries.value.length - 1,
 );
+const entryCountLabel = computed(() => {
+  const isFiltered = statusFilter.value !== "all" || Boolean(searchText.value.trim());
+
+  return isFiltered
+    ? `匹配 ${filteredEntries.value.length} 条 / 共 ${entries.value.length} 条`
+    : `共 ${entries.value.length} 条`;
+});
 const currentUser = computed(() => getCurrentUser());
 
 function getSaveEntryOptions() {
@@ -312,64 +319,67 @@ onMounted(loadFileEntries);
         <p class="eyebrow">文件词条</p>
         <h1>{{ currentFile?.name || fileId }}</h1>
       </div>
-      <p class="entry-count">{{ filteredEntries.length }} / {{ entries.length }} 条</p>
+      <p class="entry-count">{{ entryCountLabel }}</p>
     </header>
 
-    <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
-    <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
-    <p v-if="isLoading" class="empty-state">正在加载词条...</p>
+    <div class="entry-page-body">
+      <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+      <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
+      <p v-if="isLoading" class="empty-state">正在加载词条...</p>
 
-    <section v-else-if="entries.length > 0" class="entry-workspace">
-      <EntrySideList
-        :entries="filteredEntries"
-        :selected-entry-id="selectedEntry?.id"
-        :search-text="searchText"
-        :status-filter="statusFilter"
-        :total-count="entries.length"
-        :workflow="project.settings.workflow"
-        @select="handleSelectEntry"
-        @update-search-text="searchText = $event"
-        @update-status-filter="statusFilter = $event"
-      />
+      <section v-else-if="entries.length > 0" class="entry-workspace">
+        <EntrySideList
+          :entries="filteredEntries"
+          :selected-entry-id="selectedEntry?.id"
+          :search-text="searchText"
+          :status-filter="statusFilter"
+          :total-count="entries.length"
+          :workflow="project.settings.workflow"
+          @select="handleSelectEntry"
+          @update-search-text="searchText = $event"
+          @update-status-filter="statusFilter = $event"
+        />
 
-      <EntryEditor
-        :entry="selectedEntry"
-        :file-name="currentFile?.name || fileId"
-        :is-saving="isSaving"
-        :can-go-previous="canGoPrevious"
-        :can-go-next="canGoNext"
-        :workflow="project.settings.workflow"
-        @save="handleSaveEntry"
-        @save-next="handleSaveAndNext"
-        @previous="selectEntryByOffset(-1)"
-        @next="selectEntryByOffset(1)"
-        @draft-target-changed="draftTarget = $event"
-        @workflow-status="handleWorkflowStatus"
-        @mark-disputed="handleMarkDisputed"
-        @resolve-dispute="handleResolveDispute"
-        @open-context="handleOpenContext"
-      />
+        <EntryEditor
+          :entry="selectedEntry"
+          :file-name="currentFile?.name || fileId"
+          :is-saving="isSaving"
+          :can-go-previous="canGoPrevious"
+          :can-go-next="canGoNext"
+          :workflow="project.settings.workflow"
+          @save="handleSaveEntry"
+          @save-next="handleSaveAndNext"
+          @previous="selectEntryByOffset(-1)"
+          @next="selectEntryByOffset(1)"
+          @draft-target-changed="draftTarget = $event"
+          @workflow-status="handleWorkflowStatus"
+          @mark-disputed="handleMarkDisputed"
+          @resolve-dispute="handleResolveDispute"
+          @open-context="handleOpenContext"
+        />
 
-      <EntryAssistPanel
-        :entry="selectedEntry"
-        :draft-target="draftTarget"
-        :active-tab="assistTab"
-        :highlight-comment-id="targetCommentId"
-        @entry-updated="handleEntryUpdated"
-        @update-active-tab="assistTab = $event"
-        @view-entry-comment="emit('openCommentTarget', $event)"
-      />
-    </section>
+        <EntryAssistPanel
+          :entry="selectedEntry"
+          :draft-target="draftTarget"
+          :active-tab="assistTab"
+          :highlight-comment-id="targetCommentId"
+          @entry-updated="handleEntryUpdated"
+          @update-active-tab="assistTab = $event"
+          @view-entry-comment="emit('openCommentTarget', $event)"
+        />
+      </section>
 
-    <p v-else-if="!errorMessage" class="empty-state">
-      这个文件还没有可编辑的词条。
-    </p>
+      <p v-else-if="!errorMessage" class="empty-state">
+        这个文件还没有可编辑的词条。
+      </p>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .entry-page {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   height: calc(100vh - 108px);
   min-height: 640px;
@@ -430,20 +440,36 @@ h1 {
   color: #4b5563;
 }
 
-.entry-workspace {
-  display: grid;
-  grid-template-columns: minmax(240px, 0.75fr) minmax(360px, 1.35fr) minmax(280px, 0.9fr);
+.entry-page-body {
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   min-height: 0;
 }
 
+.entry-workspace {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.75fr) minmax(360px, 1.35fr) minmax(280px, 0.9fr);
+  flex: 1 1 auto;
+  gap: 14px;
+  min-height: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 1180px) {
   .entry-page {
+    grid-template-rows: auto;
     height: auto;
+    min-height: 0;
+  }
+
+  .entry-page-body {
+    min-height: 0;
   }
 
   .entry-workspace {
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 }
 </style>

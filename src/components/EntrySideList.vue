@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import type { Entry, EntryStatus, ProjectWorkflowSettings } from "../model/types";
 import { getEntryWorkflowLabel } from "../model/status";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
 
-defineProps<{
+const props = defineProps<{
   entries: Entry[];
   selectedEntryId?: string;
   searchText: string;
@@ -22,6 +23,14 @@ const emit = defineEmits<{
 function summarize(text: string): string {
   return text.length > 54 ? `${text.slice(0, 54)}...` : text;
 }
+
+const countLabel = computed(() => {
+  const isFiltered = props.statusFilter !== "all" || Boolean(props.searchText.trim());
+
+  return isFiltered
+    ? `匹配 ${props.entries.length} 条 / 共 ${props.totalCount} 条`
+    : `共 ${props.totalCount} 条`;
+});
 </script>
 
 <template>
@@ -71,7 +80,7 @@ function summarize(text: string): string {
       </button>
     </div>
 
-    <p class="list-count">显示 {{ entries.length }} / {{ totalCount }} 条</p>
+    <p class="list-count">{{ countLabel }}</p>
   </aside>
 </template>
 
@@ -79,6 +88,7 @@ function summarize(text: string): string {
 .entry-side-list {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100%;
   min-height: 0;
   border: 1px solid #d7dde5;
   border-radius: 8px;
@@ -120,7 +130,9 @@ select {
   gap: 6px;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 10px;
+  scrollbar-gutter: stable;
 }
 
 .entry-row {
@@ -174,5 +186,15 @@ select {
   border-top: 1px solid #e5e7eb;
   color: #5b6472;
   font-size: 13px;
+}
+
+@media (max-width: 1180px) {
+  .entry-side-list {
+    height: auto;
+  }
+
+  .entry-list {
+    overflow: visible;
+  }
 }
 </style>
