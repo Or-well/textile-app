@@ -49,7 +49,6 @@ Textile 是本地优先、无业务服务器依赖的汉化项目管理工具。
 - Pinia/Vuex
 - 后端 API
 - 数据库
-- 自动化测试框架
 - 项目 Git 同步 service
 
 ## 3. 运行与构建
@@ -1991,9 +1990,18 @@ Tauri：
 
 ## 54. 如何测试
 
-当前仓库没有自动化测试套件，也没有 `test` script。最低检查：
+纯函数单元测试使用 Vitest，覆盖 status、stats、permissions 和 change-package content hash：
 
 ```bash
+npm run test:unit
+```
+
+测试位于 `tests/unit/`。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
+
+最低完整检查：
+
+```bash
+npm run test:unit
 npm run build
 ```
 
@@ -2026,7 +2034,7 @@ npm run build
 - service storage 是单项目全局状态，不支持同时打开多个项目。
 - 没有完整事务和回滚。
 - 没有多标签页并发锁。
-- 没有自动化测试套件。
+- 尚无集成测试和端到端自动化测试。
 - `enable_tasks` 未控制任务页显示。
 - Web 下载地址未配置。
 - Tauri updater 公钥和 endpoint 未配置。
@@ -2040,10 +2048,9 @@ npm run build
 
 建议按风险顺序推进：
 
-1. 为 status、stats、permissions 和 change-package hash 增加纯函数单元测试。
-2. 为项目创建、源文件更新、删除和普通修改包导入增加可回滚写入计划。
-3. 为 `.hproj` 导入失败增加更完整的写入计划和残留目录检查。
-4. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
-5. 增加端到端手动测试清单或 Playwright 流程。
+1. 为项目创建、源文件更新、删除和普通修改包导入增加可回滚写入计划。
+2. 为 `.hproj` 导入失败增加更完整的写入计划和残留目录检查。
+3. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
+4. 增加端到端手动测试清单或 Playwright 流程。
 
 任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。

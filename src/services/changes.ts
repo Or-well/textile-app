@@ -26,12 +26,15 @@ import {
 import { getSigningPrivateKeyForMember } from "./keyManager";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
-  sha256Hex,
   shortHash,
   signTextWithPrivateKey,
   stableStringify,
   verifyTextSignature,
 } from "./crypto";
+import {
+  calculateChangePackageContentHash,
+  type ChangePackagePayload,
+} from "./changePackageHash";
 import {
   PERMISSION_ACTIONS,
 } from "../model/permissions";
@@ -188,18 +191,6 @@ const EMPTY_SUMMARY: ChangePackageSummary = {
   log_events: 0,
 };
 
-interface ChangePackagePayload {
-  entries: Record<string, Entry[]>;
-  comments: Record<string, Comment[]>;
-  terms: Record<string, Term[]>;
-  contexts: Record<string, string>;
-  sourceFiles: Record<string, string>;
-  tasks: Record<string, Task[]>;
-  projectFiles: Record<string, string>;
-  memberFiles: Record<string, string>;
-  events: ProjectEvent[];
-}
-
 let currentProjectStorage: ProjectStorage | null = null;
 const MEMBER_CHANGE_MARKER_PREFIX = "textile.memberChangeExport";
 
@@ -217,10 +208,6 @@ function getProjectStorage(): ProjectStorage {
   }
 
   return currentProjectStorage;
-}
-
-function compareText(left: string, right: string): number {
-  return left.localeCompare(right);
 }
 
 function createEmptySummary(): ChangePackageSummary {
@@ -317,66 +304,6 @@ function getPackageSummary(payload: ChangePackagePayload): ChangePackageSummary 
 
 function hasPackageContent(summary: ChangePackageSummary): boolean {
   return Object.values(summary).some((count) => count > 0);
-}
-
-function getStableRowKey(row: {
-  id?: string;
-  entry_id?: string;
-  created_at?: string;
-  index?: number;
-}): string {
-  return [
-    row.id ?? "",
-    row.entry_id ?? "",
-    typeof row.index === "number" ? String(row.index).padStart(8, "0") : "",
-    row.created_at ?? "",
-  ].join("|");
-}
-
-function sortRows<T extends { id?: string; entry_id?: string; created_at?: string; index?: number }>(
-  rows: T[],
-): T[] {
-  return [...rows].sort((left, right) =>
-    compareText(getStableRowKey(left), getStableRowKey(right)),
-  );
-}
-
-function normalizeRecordRows<T extends {
-  id?: string;
-  entry_id?: string;
-  created_at?: string;
-  index?: number;
-}>(rowsByPath: Record<string, T[]>): { path: string; rows: T[] }[] {
-  return Object.entries(rowsByPath)
-    .sort(([leftPath], [rightPath]) => compareText(leftPath, rightPath))
-    .map(([path, rows]) => ({
-      path,
-      rows: sortRows(rows),
-    }));
-}
-
-function normalizeTextRecord(rowsByPath: Record<string, string>) {
-  return Object.entries(rowsByPath)
-    .sort(([leftPath], [rightPath]) => compareText(leftPath, rightPath))
-    .map(([path, content]) => ({ path, content }));
-}
-
-function buildContentHashPayload(payload: ChangePackagePayload) {
-  return {
-    entries: normalizeRecordRows(payload.entries),
-    comments: normalizeRecordRows(payload.comments),
-    terms: normalizeRecordRows(payload.terms),
-    contexts: normalizeTextRecord(payload.contexts),
-    source: normalizeTextRecord(payload.sourceFiles),
-    tasks: normalizeRecordRows(payload.tasks),
-    project: normalizeTextRecord(payload.projectFiles),
-    members: normalizeTextRecord(payload.memberFiles),
-    logs: sortRows(payload.events),
-  };
-}
-
-async function calculateContentHash(payload: ChangePackagePayload): Promise<string> {
-  return sha256Hex(stableStringify(buildContentHashPayload(payload)));
 }
 
 function buildSignaturePayload(
@@ -1504,7 +1431,7 @@ export async function exportChangePackage(
     throw new Error("当前范围内没有可导出的修改。");
   }
 
-  const contentHash = await calculateContentHash(payload);
+  const contentHash = await calculateChangePackageContentHash(payload);
   const manifest: ChangePackageManifest = {
     schema_version: 1,
     project_id: project.project_id,
@@ -1705,7 +1632,7 @@ export async function validateChangePackage(
     memberFiles: changePackage.memberFiles,
     events: changePackage.events,
   };
-  const calculatedContentHash = await calculateContentHash(payload);
+  const calculatedContentHash = await calculateChangePackageContentHash(payload);
   const contentIntegrity: ContentIntegrityStatus = changePackage.manifest.content_hash
     ? changePackage.manifest.content_hash === calculatedContentHash
       ? "passed"
@@ -1902,7 +1829,7 @@ async function assertNoUnexportedMemberChanges(
     return;
   }
 
-  const currentHash = await calculateContentHash(payload);
+  const currentHash = await calculateChangePackageContentHash(payload);
   const exportedHash = readExportedMemberChangeHash(
     project.project_id,
     actor.id,
@@ -2091,7 +2018,7 @@ async function applyProjectUpdatePackage(
       nextProject.project_id,
       options.actor.id,
       getProjectRevision(nextProject),
-      await calculateContentHash(postUpdatePayload),
+      await calculateChangePackageContentHash(postUpdatePayload),
     );
   }
 
