@@ -1,13 +1,11 @@
 import type { ProjectEvent } from "../model/types";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  ensureDirectory,
-  fileExists,
-  readJsonl,
-  writeJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 
 type ProjectEventInput = Omit<ProjectEvent, "id" | "created_at"> &
   Partial<Pick<ProjectEvent, "id" | "created_at">>;
@@ -19,30 +17,34 @@ export interface ProjectEventFilter {
   type?: string;
 }
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 
 export function setHistoryProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setHistoryProjectStorage(createProjectStorage(root));
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+export function setHistoryProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
+}
+
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 export async function loadEvents(
   filter: ProjectEventFilter = {},
 ): Promise<ProjectEvent[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
 
-  if (!(await fileExists(root, "logs/events.jsonl"))) {
+  if (!(await storage.fileExists("logs/events.jsonl"))) {
     return [];
   }
 
-  const events = await readJsonl<ProjectEvent>(root, "logs/events.jsonl");
+  const events = await storage.readJsonl<ProjectEvent>("logs/events.jsonl");
 
   return events.filter((event) => {
     if (filter.entryId && event.entry_id !== filter.entryId) {
@@ -66,17 +68,22 @@ export async function loadEvents(
 }
 
 export async function appendEvent(event: ProjectEventInput): Promise<ProjectEvent> {
-  const root = getProjectRoot();
-
-  return appendEventToRoot(root, event);
+  return appendEventToStorage(getProjectStorage(), event);
 }
 
 export async function appendEventToRoot(
   root: ProjectDirectoryHandle,
   event: ProjectEventInput,
 ): Promise<ProjectEvent> {
-  const events = (await fileExists(root, "logs/events.jsonl"))
-    ? await readJsonl<ProjectEvent>(root, "logs/events.jsonl")
+  return appendEventToStorage(createProjectStorage(root), event);
+}
+
+export async function appendEventToStorage(
+  storage: ProjectStorage,
+  event: ProjectEventInput,
+): Promise<ProjectEvent> {
+  const events = (await storage.fileExists("logs/events.jsonl"))
+    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
     : [];
   const nextEvent: ProjectEvent = {
     ...event,
@@ -84,8 +91,8 @@ export async function appendEventToRoot(
     created_at: event.created_at ?? nowIso(),
   };
 
-  await ensureDirectory(root, "logs");
-  await writeJsonl(root, "logs/events.jsonl", [...events, nextEvent]);
+  await storage.ensureDirectory("logs");
+  await storage.writeJsonl("logs/events.jsonl", [...events, nextEvent]);
 
   return nextEvent;
 }

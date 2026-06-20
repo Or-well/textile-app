@@ -14,12 +14,11 @@ import { exportCsvFile } from "./exporters/csvExporter";
 import { exportJsonFile } from "./exporters/jsonExporter";
 import { exportKsFile } from "./exporters/ksExporter";
 import { exportTxtFile } from "./exporters/txtExporter";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  listFiles,
-  readJson,
-  readJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 import { calculateEntryProgress, type BasicProjectStats } from "./stats";
 import { checkTermUsageWithTerms } from "./terms";
 
@@ -114,18 +113,22 @@ export const DEFAULT_RELEASE_EXPORT_SETTINGS: Required<ReleaseExportSettings> = 
   include_manifest: true,
 };
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 
 export function setExporterProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setExporterProjectStorage(createProjectStorage(root));
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+export function setExporterProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
+}
+
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 function isReleaseExportFormat(
@@ -170,18 +173,18 @@ export function normalizeReleaseExportOptions(
 }
 
 async function loadProjectConfig(): Promise<ProjectConfig> {
-  return readJson<ProjectConfig>(getProjectRoot(), "project.json");
+  return getProjectStorage().readJson<ProjectConfig>("project.json");
 }
 
 async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
-  const root = getProjectRoot();
-  const fileNames = await listFiles(root, projectFile.entries_path);
+  const storage = getProjectStorage();
+  const fileNames = await storage.listFiles(projectFile.entries_path);
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
   const groups = await Promise.all(
     chunkFiles.map((fileName) =>
-      readJsonl<Entry>(root, `${projectFile.entries_path}/${fileName}`),
+      storage.readJsonl<Entry>(`${projectFile.entries_path}/${fileName}`),
     ),
   );
 
@@ -192,7 +195,7 @@ async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
 
 async function loadTermsForReport(): Promise<Term[]> {
   try {
-    return readJsonl<Term>(getProjectRoot(), "terms/terms.jsonl");
+    return getProjectStorage().readJsonl<Term>("terms/terms.jsonl");
   } catch {
     return [];
   }

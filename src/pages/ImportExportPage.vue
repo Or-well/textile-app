@@ -15,7 +15,7 @@ import {
   exportChangePackage,
   previewChangePackage,
   readChangePackage,
-  setChangesProjectRoot,
+  setChangesProjectStorage,
   validateChangePackage,
   type ChangeConflict,
   type ChangePackagePreview,
@@ -27,7 +27,7 @@ import {
   exportProject,
   getReleaseExportSummary,
   normalizeReleaseExportOptions,
-  setExporterProjectRoot,
+  setExporterProjectStorage,
   type ReleaseExportSummary,
 } from "../services/exporter";
 import {
@@ -45,14 +45,20 @@ import {
   canVerifyChangePackage,
   getCurrentUser,
 } from "../services/permissions";
-import { loadMembers, loadProject, openProject } from "../services/project";
+import {
+  loadMembersFromStorage,
+  loadProjectFromStorage,
+  openProject,
+} from "../services/project";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
-import { loadTasks, setTasksProjectRoot } from "../services/tasks";
+import type { ProjectStorage } from "../services/projectStorage";
+import { loadTasks, setTasksProjectStorage } from "../services/tasks";
 
 const props = defineProps<{
   project?: ProjectConfig;
   members?: Member[];
   projectRoot?: ProjectDirectoryHandle;
+  projectStorage?: ProjectStorage;
   currentUser?: Member | null;
 }>();
 
@@ -63,6 +69,7 @@ const emit = defineEmits<{
 
 const projectName = ref("");
 const localRoot = ref<ProjectDirectoryHandle | null>(null);
+const localProjectStorage = ref<ProjectStorage | null>(null);
 const tasks = ref<Task[]>([]);
 const selectedTaskId = ref("");
 const exportMode = ref<ExportChangePackageMode>("member_changes");
@@ -111,6 +118,9 @@ const canDangerousImport = computed(() =>
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
 const canExportProjectBackup = computed(() => canProjectBackup(currentUser.value));
 const projectRootForExport = computed(() => props.projectRoot ?? localRoot.value);
+const projectStorageForServices = computed(
+  () => props.projectStorage ?? localProjectStorage.value,
+);
 const canSelectImportFile = computed(
   () =>
     canVerifyPackages.value &&
@@ -283,6 +293,7 @@ async function initializeFromProjectContext() {
 
   projectName.value = props.project.name;
   localRoot.value = props.projectRoot ?? null;
+  localProjectStorage.value = props.projectStorage ?? null;
   applyReleaseSettings(props.project);
 
   await loadImportExportState();
@@ -298,15 +309,17 @@ async function handleOpenProject() {
 
     projectName.value = project.config.name;
     localRoot.value = project.root;
+    localProjectStorage.value = project.storage;
     applyReleaseSettings(project.config);
 
-    setChangesProjectRoot(project.root);
-    setExporterProjectRoot(project.root);
-    setTasksProjectRoot(project.root);
+    setChangesProjectStorage(project.storage);
+    setExporterProjectStorage(project.storage);
+    setTasksProjectStorage(project.storage);
     await loadImportExportState();
   } catch (error) {
     projectName.value = "";
     localRoot.value = null;
+    localProjectStorage.value = null;
     tasks.value = [];
     selectedTaskId.value = "";
     changePackage.value = undefined;
@@ -358,8 +371,8 @@ async function handleExportChanges() {
 
     downloadBlob(result.blob, result.fileName);
     if (exportMode.value === "project_update") {
-      if (projectRootForExport.value) {
-        emit("projectUpdated", await loadProject(projectRootForExport.value));
+      if (projectStorageForServices.value) {
+        emit("projectUpdated", await loadProjectFromStorage(projectStorageForServices.value));
       }
 
       message.value = `已发布签名项目更新包：${result.fileName}`;
@@ -501,10 +514,10 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
       actor: currentUser.value,
     });
 
-    if (projectRootForExport.value) {
+    if (projectStorageForServices.value) {
       const [project, members] = await Promise.all([
-        loadProject(projectRootForExport.value),
-        loadMembers(projectRootForExport.value),
+        loadProjectFromStorage(projectStorageForServices.value),
+        loadMembersFromStorage(projectStorageForServices.value),
       ]);
 
       emit("projectUpdated", project);

@@ -24,14 +24,11 @@ import {
   canUpdateTask,
   getCurrentUser,
 } from "./permissions";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  ensureDirectory,
-  listFiles,
-  readJson,
-  readJsonl,
-  writeJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 
 export interface TaskProgress {
   taskId: string;
@@ -97,20 +94,24 @@ const SUBMIT_METHODS: readonly TaskSubmitMethod[] = [
   "owner_manual",
 ];
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 let cachedTasks: Task[] | null = null;
 
 export function setTasksProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setTasksProjectStorage(createProjectStorage(root));
+}
+
+export function setTasksProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
   cachedTasks = null;
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 function getTaskActor(): NonNullable<ReturnType<typeof getCurrentUser>> {
@@ -249,23 +250,25 @@ function sortTasks(tasks: Task[]): Task[] {
 async function saveTasks(tasks: Task[]): Promise<Task[]> {
   const nextTasks = sortTasks(tasks.map(normalizeTask));
 
-  await ensureDirectory(getProjectRoot(), "tasks");
-  await writeJsonl(getProjectRoot(), TASKS_PATH, nextTasks);
+  const storage = getProjectStorage();
+
+  await storage.ensureDirectory("tasks");
+  await storage.writeJsonl(TASKS_PATH, nextTasks);
   cachedTasks = nextTasks;
 
   return nextTasks;
 }
 
 async function loadEntriesForFile(fileId: string): Promise<Entry[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const entryDirectory = `entries/${fileId}`;
-  const fileNames = await listFiles(root, entryDirectory);
+  const fileNames = await storage.listFiles(entryDirectory);
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
   const chunks = await Promise.all(
     chunkFiles.map((fileName) =>
-      readJsonl<Entry>(root, `${entryDirectory}/${fileName}`),
+      storage.readJsonl<Entry>(`${entryDirectory}/${fileName}`),
     ),
   );
 
@@ -281,7 +284,7 @@ export async function loadTasks(): Promise<Task[]> {
 
   try {
     cachedTasks = sortTasks(
-      (await readJsonl<Partial<Task>>(getProjectRoot(), TASKS_PATH)).map(
+      (await getProjectStorage().readJsonl<Partial<Task>>(TASKS_PATH)).map(
         normalizeTask,
       ),
     );
@@ -361,7 +364,7 @@ export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
     throw new Error("没有找到这个任务。请重新打开项目后再试。");
   }
 
-  const project = await readJson<ProjectConfig>(getProjectRoot(), "project.json");
+  const project = await getProjectStorage().readJson<ProjectConfig>("project.json");
   const entries = task.file_id
     ? (await loadEntriesForFile(task.file_id)).filter((entry) =>
         isEntryInTask(entry, task),

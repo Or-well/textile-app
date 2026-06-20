@@ -10,12 +10,11 @@ import {
   canUpdateTerm,
   getCurrentUser,
 } from "./permissions";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  ensureDirectory,
-  readJsonl,
-  writeJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 
 export interface TermUsageResult {
   term: Term;
@@ -61,20 +60,24 @@ interface ImportTermRow {
 
 const TERMS_PATH = "terms/terms.jsonl";
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 let cachedTerms: Term[] | null = null;
 
 export function setTermsProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setTermsProjectStorage(createProjectStorage(root));
+}
+
+export function setTermsProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
   cachedTerms = null;
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 function getWriteUserId(fallbackUserId = ""): string {
@@ -577,7 +580,7 @@ export async function loadTerms(): Promise<Term[]> {
 
   try {
     cachedTerms = sortTerms(
-      (await readJsonl<Partial<Term>>(getProjectRoot(), TERMS_PATH)).map(
+      (await getProjectStorage().readJsonl<Partial<Term>>(TERMS_PATH)).map(
         (term) => normalizeTerm(term, "unknown_user"),
       ),
     );
@@ -590,8 +593,10 @@ export async function loadTerms(): Promise<Term[]> {
 export async function saveTerms(terms: Term[]): Promise<Term[]> {
   const sortedTerms = sortTerms(terms);
 
-  await ensureDirectory(getProjectRoot(), "terms");
-  await writeJsonl(getProjectRoot(), TERMS_PATH, sortedTerms);
+  const storage = getProjectStorage();
+
+  await storage.ensureDirectory("terms");
+  await storage.writeJsonl(TERMS_PATH, sortedTerms);
   cachedTerms = sortedTerms;
 
   return sortedTerms;

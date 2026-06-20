@@ -669,9 +669,19 @@ comments/<file_id>/<6位entry index>.jsonl
 
 ### `projectStorage.ts`
 
-提供 `FolderProjectStorage` 和 `PackedProjectStorage` 包装类，但当前 service 仍主要直接调用 `projectFs.ts`。文件注释明确把它作为未来迁移目标。
+提供业务 service 使用的 `ProjectStorage` 门面，并通过 `createProjectStorage(root)` 从底层 `ProjectDirectoryHandle` 创建存储实例。
 
-不要误认为当前代码已经全面使用 `ProjectStorage` 接口，也不要为了小功能强行迁移全部 service。
+职责：
+
+- 统一普通文件夹和 `.hproj` 内存项目的读写入口。
+- 暴露文本、二进制、JSON、JSONL、目录、存在性和删除操作。
+- 保留 `root` 作为底层 adapter 兼容出口，供项目包打包、最近项目句柄等低层能力使用。
+
+维护原则：
+
+- 新增业务 service 应优先接收或读取 `ProjectStorage`。
+- 不要在页面中直接调用 storage 写项目文件，页面仍应调用 service。
+- `projectFs.ts` 只作为底层文件系统 adapter；业务规则、权限和写入顺序仍放在 service。
 
 ## 21. `project.ts`
 
@@ -1908,11 +1918,11 @@ GitHub Release 应上传：
 
 1. 先确认现有 service 是否已经覆盖该业务。
 2. 明确输入、输出、读写文件和权限 action。
-3. 文件读写统一调用 `projectFs.ts`。
+3. 文件读写优先通过 `ProjectStorage`；只有底层 adapter、项目包打包或浏览器句柄能力才直接使用 `projectFs.ts`。
 4. 关键写函数接受 actor/project 或从受控当前用户读取。
 5. 在 service 内 `assertCan()`。
 6. 失败信息使用用户可理解的中文。
-7. 如果使用模块级 root，增加 `set*ProjectRoot()` 并接入 App。
+7. 如果使用模块级项目状态，增加 `set*ProjectStorage()` 并接入 App；`set*ProjectRoot()` 仅作为兼容包装。
 8. 避免让 service import Vue 页面或组件。
 
 ## 50. 如何新增权限 action
@@ -2010,7 +2020,7 @@ npm run build
 - 不使用服务器，多设备同步依赖人工传递修改包。
 - 权限不能阻止用户直接修改磁盘文件。
 - `.hproj` 不能原地保存，默认导入为本地项目文件夹；再次分发需要重新导出。
-- service root 是单项目全局状态，不支持同时打开多个项目。
+- service storage 是单项目全局状态，不支持同时打开多个项目。
 - 没有完整事务和回滚。
 - 没有多标签页并发锁。
 - 没有自动化测试套件。
@@ -2032,11 +2042,10 @@ npm run build
 1. 为 status、stats、permissions 和 change-package hash 增加纯函数单元测试。
 2. 为项目创建、源文件更新、删除和普通修改包导入增加可回滚写入计划。
 3. 为 `.hproj` 导入失败增加更完整的写入计划和残留目录检查。
-4. 统一 `ProjectStorage` 抽象，但应分模块迁移，不一次性重写。
-5. 让 `chunk_size` 真正控制分块，并提供旧 chunk 兼容测试。
-6. 明确审核关闭时成品过滤语义。
-7. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
-8. 增加端到端手动测试清单或 Playwright 流程。
-9. 更新或标记早期设计文档的历史状态，避免误导维护者。
+4. 让 `chunk_size` 真正控制分块，并提供旧 chunk 兼容测试。
+5. 明确审核关闭时成品过滤语义。
+6. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
+7. 增加端到端手动测试清单或 Playwright 流程。
+8. 更新或标记早期设计文档的历史状态，避免误导维护者。
 
 任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。

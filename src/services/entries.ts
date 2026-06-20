@@ -8,14 +8,11 @@ import {
 } from "../model/status";
 import { parseJsonl } from "../utils/jsonl";
 import { nowIso } from "../utils/time";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  ensureDirectory,
-  listFiles,
-  readJsonl,
-  writeTextFile,
-  writeJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 import {
   assertCan,
   canEditEntry,
@@ -26,7 +23,7 @@ import {
   getCurrentUser,
 } from "./permissions";
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 let cachedEntries: Entry[] = [];
 
 export interface SourceImportResult {
@@ -58,16 +55,20 @@ interface ImportEntryRow {
 }
 
 export function setEntriesProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setEntriesProjectStorage(createProjectStorage(root));
+}
+
+export function setEntriesProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
   cachedEntries = [];
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 function getFileIdFromEntryId(entryId: string): string {
@@ -416,10 +417,10 @@ function parseTranslationRows(text: string, fileName: string): Array<{
 }
 
 async function writeFileEntries(fileId: string, entries: Entry[]): Promise<void> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
 
-  await ensureDirectory(root, `entries/${fileId}`);
-  await writeJsonl(root, `entries/${fileId}/chunk_0001.jsonl`, entries);
+  await storage.ensureDirectory(`entries/${fileId}`);
+  await storage.writeJsonl(`entries/${fileId}/chunk_0001.jsonl`, entries);
 
   cachedEntries = [
     ...cachedEntries.filter((entry) => entry.file_id !== fileId),
@@ -565,11 +566,11 @@ function applyEntryAuditFields(
 }
 
 async function listEntryChunkFiles(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   fileId: string,
 ): Promise<string[]> {
   const entryDirectory = `entries/${fileId}`;
-  const fileNames = await listFiles(root, entryDirectory);
+  const fileNames = await storage.listFiles(entryDirectory);
 
   return fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
@@ -577,14 +578,14 @@ async function listEntryChunkFiles(
 }
 
 export async function loadEntries(fileId: string): Promise<Entry[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const entryDirectory = `entries/${fileId}`;
 
   try {
-    const chunkFiles = await listEntryChunkFiles(root, fileId);
+    const chunkFiles = await listEntryChunkFiles(storage, fileId);
     const entryGroups = await Promise.all(
       chunkFiles.map((fileName) =>
-        readJsonl<Entry>(root, `${entryDirectory}/${fileName}`),
+        storage.readJsonl<Entry>(`${entryDirectory}/${fileName}`),
       ),
     );
     const entries = normalizeEntries(entryGroups.flat())
@@ -681,14 +682,14 @@ export async function importEntryTranslations(
 }
 
 export async function saveSourceText(path: string, text: string): Promise<void> {
-  await writeTextFile(getProjectRoot(), path, text);
+  await getProjectStorage().writeText(path, text);
 }
 
 export async function loadAllEntries(): Promise<Entry[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
 
   try {
-    const fileIds = await listFiles(root, "entries");
+    const fileIds = await storage.listFiles("entries");
     const entryGroups = await Promise.all(
       fileIds.map((fileId) => loadEntries(fileId)),
     );
@@ -721,15 +722,15 @@ export async function updateEntryContext(
   context: string,
   userId: string,
 ): Promise<Entry> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const fileId = getFileIdFromEntryId(entryId);
   const entryDirectory = `entries/${fileId}`;
-  const chunkFiles = await listEntryChunkFiles(root, fileId);
+  const chunkFiles = await listEntryChunkFiles(storage, fileId);
   const nextContext = context.trim();
 
   for (const chunkFile of chunkFiles) {
     const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await readJsonl<Entry>(root, chunkPath));
+    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
     const entryIndex = entries.findIndex((row) => row.id === entryId);
 
     if (entryIndex < 0) {
@@ -755,7 +756,7 @@ export async function updateEntryContext(
 
     entries[entryIndex] = savedEntry;
 
-    await writeJsonl(root, chunkPath, entries);
+    await storage.writeJsonl(chunkPath, entries);
 
     cachedEntries = cachedEntries.map((cachedEntry) =>
       cachedEntry.id === savedEntry.id ? savedEntry : cachedEntry,
@@ -775,15 +776,15 @@ export async function saveEntry(
   entry: Entry,
   options: SaveEntryOptions = {},
 ): Promise<Entry> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const actor = resolveActor(options.actor);
   const fileId = getFileIdFromEntryId(entry.id);
   const entryDirectory = `entries/${fileId}`;
-  const chunkFiles = await listEntryChunkFiles(root, fileId);
+  const chunkFiles = await listEntryChunkFiles(storage, fileId);
 
   for (const chunkFile of chunkFiles) {
     const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await readJsonl<Entry>(root, chunkPath));
+    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
     const entryIndex = entries.findIndex((row) => row.id === entry.id);
 
     if (entryIndex < 0) {
@@ -799,7 +800,7 @@ export async function saveEntry(
 
     entries[entryIndex] = savedEntry;
 
-    await writeJsonl(root, chunkPath, entries);
+    await storage.writeJsonl(chunkPath, entries);
 
     cachedEntries = cachedEntries.map((cachedEntry) =>
       cachedEntry.id === savedEntry.id ? savedEntry : cachedEntry,

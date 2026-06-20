@@ -18,18 +18,11 @@ import { createZip, readZip } from "../utils/zip";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { APP_VERSION } from "../utils/appVersion";
 import type { ZipContent } from "../utils/zip";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  ensureDirectory,
-  fileExists,
-  listFiles,
-  readJson,
-  readJsonl,
-  readTextFile,
-  writeJson,
-  writeTextFile,
-  writeJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 import { getSigningPrivateKeyForMember } from "./keyManager";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
@@ -207,19 +200,23 @@ interface ChangePackagePayload {
   events: ProjectEvent[];
 }
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 const MEMBER_CHANGE_MARKER_PREFIX = "textile.memberChangeExport";
 
 export function setChangesProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setChangesProjectStorage(createProjectStorage(root));
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+export function setChangesProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
+}
+
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 function compareText(left: string, right: string): number {
@@ -411,8 +408,8 @@ function readSignature(files: Record<string, string>): ChangePackageSignature | 
   return JSON.parse(text) as ChangePackageSignature;
 }
 
-async function loadProjectMembers(root: ProjectDirectoryHandle): Promise<Member[]> {
-  const file = await readJson<{ members: Member[] }>(root, "members.json");
+async function loadProjectMembers(storage: ProjectStorage): Promise<Member[]> {
+  const file = await storage.readJson<{ members: Member[] }>("members.json");
 
   return file.members;
 }
@@ -701,8 +698,8 @@ function commentPathForEntry(entry: Entry): string {
   return `comments/${entry.file_id}/${String(entry.index).padStart(6, "0")}.jsonl`;
 }
 
-async function loadTask(root: ProjectDirectoryHandle, taskId: string): Promise<Task> {
-  const tasks = await readJsonl<Task>(root, "tasks/tasks.jsonl");
+async function loadTask(storage: ProjectStorage, taskId: string): Promise<Task> {
+  const tasks = await storage.readJsonl<Task>("tasks/tasks.jsonl");
   const task = tasks.find((row) => row.id === taskId);
 
   if (!task) {
@@ -713,18 +710,18 @@ async function loadTask(root: ProjectDirectoryHandle, taskId: string): Promise<T
 }
 
 async function loadTaskEntries(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   task: Task,
 ): Promise<Entry[]> {
   const entryDirectory = `entries/${task.file_id}`;
-  const fileNames = await listFiles(root, entryDirectory);
+  const fileNames = await storage.listFiles(entryDirectory);
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
   const groups = await Promise.all(
     chunkFiles.map(async (fileName) => {
       const path = `${entryDirectory}/${fileName}`;
-      const entries = await readJsonl<Entry>(root, path);
+      const entries = await storage.readJsonl<Entry>(path);
 
       return {
         path,
@@ -737,17 +734,17 @@ async function loadTaskEntries(
 }
 
 async function collectProjectEntryGroups(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   project: ProjectConfig,
 ): Promise<{ path: string; entries: Entry[] }[]> {
   const groups: { path: string; entries: Entry[] }[] = [];
 
   for (const file of project.files) {
-    if (!(await fileExists(root, file.entries_path))) {
+    if (!(await storage.fileExists(file.entries_path))) {
       continue;
     }
 
-    const fileNames = await listFiles(root, file.entries_path);
+    const fileNames = await storage.listFiles(file.entries_path);
     const chunkFiles = fileNames
       .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
       .sort((a, b) => a.localeCompare(b));
@@ -757,7 +754,7 @@ async function collectProjectEntryGroups(
 
       groups.push({
         path,
-        entries: normalizeEntries(await readJsonl<Entry>(root, path)),
+        entries: normalizeEntries(await storage.readJsonl<Entry>(path)),
       });
     }
   }
@@ -766,12 +763,12 @@ async function collectProjectEntryGroups(
 }
 
 async function collectUserChangedEntries(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   project: ProjectConfig,
   userId: string,
 ): Promise<Record<string, Entry[]>> {
   const changedEntries: Record<string, Entry[]> = {};
-  const groups = await collectProjectEntryGroups(root, project);
+  const groups = await collectProjectEntryGroups(storage, project);
 
   for (const group of groups) {
     const rows = group.entries.filter((entry) => entry.updated_by === userId);
@@ -785,11 +782,11 @@ async function collectUserChangedEntries(
 }
 
 async function collectAllEntries(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   project: ProjectConfig,
 ): Promise<Record<string, Entry[]>> {
   const entries: Record<string, Entry[]> = {};
-  const groups = await collectProjectEntryGroups(root, project);
+  const groups = await collectProjectEntryGroups(storage, project);
 
   for (const group of groups) {
     entries[group.path] = group.entries;
@@ -799,12 +796,12 @@ async function collectAllEntries(
 }
 
 async function collectTaskChangedEntries(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   task: Task,
   userId: string,
 ): Promise<Record<string, Entry[]>> {
   const entryDirectory = `entries/${task.file_id}`;
-  const fileNames = await listFiles(root, entryDirectory);
+  const fileNames = await storage.listFiles(entryDirectory);
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
@@ -812,7 +809,7 @@ async function collectTaskChangedEntries(
 
   for (const chunkFile of chunkFiles) {
     const path = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await readJsonl<Entry>(root, path));
+    const entries = normalizeEntries(await storage.readJsonl<Entry>(path));
     const rows = entries.filter(
       (entry) => isEntryInTask(entry, task) && entry.updated_by === userId,
     );
@@ -830,7 +827,7 @@ function getPackageEntries(payloadEntries: Record<string, Entry[]>): Entry[] {
 }
 
 async function collectComments(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   entries: Entry[],
   userId: string,
 ): Promise<Record<string, Comment[]>> {
@@ -839,11 +836,11 @@ async function collectComments(
   for (const entry of entries) {
     const path = commentPathForEntry(entry);
 
-    if (!(await fileExists(root, path))) {
+    if (!(await storage.fileExists(path))) {
       continue;
     }
 
-    const rows = (await readJsonl<Comment>(root, path)).filter(
+    const rows = (await storage.readJsonl<Comment>(path)).filter(
       (comment) => comment.user_id === userId,
     );
 
@@ -856,24 +853,24 @@ async function collectComments(
 }
 
 async function collectUserComments(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   userId: string,
 ): Promise<Record<string, Comment[]>> {
   const comments: Record<string, Comment[]> = {};
 
-  if (!(await fileExists(root, "comments"))) {
+  if (!(await storage.fileExists("comments"))) {
     return comments;
   }
 
-  const fileIds = await listFiles(root, "comments");
+  const fileIds = await storage.listFiles("comments");
 
   for (const fileId of fileIds) {
     const directory = `comments/${fileId}`;
-    const fileNames = await listFiles(root, directory);
+    const fileNames = await storage.listFiles(directory);
 
     for (const fileName of fileNames.filter((name) => name.endsWith(".jsonl"))) {
       const path = `${directory}/${fileName}`;
-      const rows = (await readJsonl<Comment>(root, path)).filter(
+      const rows = (await storage.readJsonl<Comment>(path)).filter(
         (comment) => comment.user_id === userId,
       );
 
@@ -886,22 +883,22 @@ async function collectUserComments(
   return comments;
 }
 
-async function collectAllComments(root: ProjectDirectoryHandle): Promise<Record<string, Comment[]>> {
+async function collectAllComments(storage: ProjectStorage): Promise<Record<string, Comment[]>> {
   const comments: Record<string, Comment[]> = {};
 
-  if (!(await fileExists(root, "comments"))) {
+  if (!(await storage.fileExists("comments"))) {
     return comments;
   }
 
-  const fileIds = await listFiles(root, "comments");
+  const fileIds = await storage.listFiles("comments");
 
   for (const fileId of fileIds) {
     const directory = `comments/${fileId}`;
-    const fileNames = await listFiles(root, directory);
+    const fileNames = await storage.listFiles(directory);
 
     for (const fileName of fileNames.filter((name) => name.endsWith(".jsonl"))) {
       const path = `${directory}/${fileName}`;
-      comments[path] = await readJsonl<Comment>(root, path);
+      comments[path] = await storage.readJsonl<Comment>(path);
     }
   }
 
@@ -909,37 +906,37 @@ async function collectAllComments(root: ProjectDirectoryHandle): Promise<Record<
 }
 
 async function collectUserTerms(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   userId: string,
 ): Promise<Record<string, Term[]>> {
-  if (!(await fileExists(root, "terms/terms.jsonl"))) {
+  if (!(await storage.fileExists("terms/terms.jsonl"))) {
     return {};
   }
 
-  const rows = (await readJsonl<Term>(root, "terms/terms.jsonl")).filter(
+  const rows = (await storage.readJsonl<Term>("terms/terms.jsonl")).filter(
     (term) => term.created_by === userId,
   );
 
   return rows.length > 0 ? { "terms/terms.jsonl": rows } : {};
 }
 
-async function collectAllTerms(root: ProjectDirectoryHandle): Promise<Record<string, Term[]>> {
-  if (!(await fileExists(root, "terms/terms.jsonl"))) {
+async function collectAllTerms(storage: ProjectStorage): Promise<Record<string, Term[]>> {
+  if (!(await storage.fileExists("terms/terms.jsonl"))) {
     return {};
   }
 
-  return { "terms/terms.jsonl": await readJsonl<Term>(root, "terms/terms.jsonl") };
+  return { "terms/terms.jsonl": await storage.readJsonl<Term>("terms/terms.jsonl") };
 }
 
 async function collectUserTasks(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   userId: string,
 ): Promise<Record<string, Task[]>> {
-  if (!(await fileExists(root, "tasks/tasks.jsonl"))) {
+  if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
     return {};
   }
 
-  const rows = (await readJsonl<Task>(root, "tasks/tasks.jsonl")).filter(
+  const rows = (await storage.readJsonl<Task>("tasks/tasks.jsonl")).filter(
     (task) => task.created_by === userId || task.assignee === userId,
   );
 
@@ -947,46 +944,46 @@ async function collectUserTasks(
 }
 
 async function collectUserCreatedTasks(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   userId: string,
 ): Promise<Record<string, Task[]>> {
-  if (!(await fileExists(root, "tasks/tasks.jsonl"))) {
+  if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
     return {};
   }
 
-  const rows = (await readJsonl<Task>(root, "tasks/tasks.jsonl")).filter(
+  const rows = (await storage.readJsonl<Task>("tasks/tasks.jsonl")).filter(
     (task) => task.created_by === userId,
   );
 
   return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
 }
 
-async function collectAllTasks(root: ProjectDirectoryHandle): Promise<Record<string, Task[]>> {
-  if (!(await fileExists(root, "tasks/tasks.jsonl"))) {
+async function collectAllTasks(storage: ProjectStorage): Promise<Record<string, Task[]>> {
+  if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
     return {};
   }
 
-  return { "tasks/tasks.jsonl": await readJsonl<Task>(root, "tasks/tasks.jsonl") };
+  return { "tasks/tasks.jsonl": await storage.readJsonl<Task>("tasks/tasks.jsonl") };
 }
 
-async function collectTaskRows(root: ProjectDirectoryHandle, task: Task): Promise<Record<string, Task[]>> {
-  return (await fileExists(root, "tasks/tasks.jsonl"))
+async function collectTaskRows(storage: ProjectStorage, task: Task): Promise<Record<string, Task[]>> {
+  return (await storage.fileExists("tasks/tasks.jsonl"))
     ? { "tasks/tasks.jsonl": [task] }
     : {};
 }
 
 async function collectEvents(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   taskEntries: Entry[],
   userId: string,
 ): Promise<ProjectEvent[]> {
-  if (!(await fileExists(root, "logs/events.jsonl"))) {
+  if (!(await storage.fileExists("logs/events.jsonl"))) {
     return [];
   }
 
   const taskEntryIds = new Set(taskEntries.map((entry) => entry.id));
 
-  return (await readJsonl<ProjectEvent>(root, "logs/events.jsonl")).filter(
+  return (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
     (event) =>
       event.user_id === userId &&
       (!event.entry_id || taskEntryIds.has(event.entry_id)),
@@ -994,53 +991,53 @@ async function collectEvents(
 }
 
 async function collectUserEvents(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   userId: string,
 ): Promise<ProjectEvent[]> {
-  if (!(await fileExists(root, "logs/events.jsonl"))) {
+  if (!(await storage.fileExists("logs/events.jsonl"))) {
     return [];
   }
 
-  return (await readJsonl<ProjectEvent>(root, "logs/events.jsonl")).filter(
+  return (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
     (event) => event.user_id === userId,
   );
 }
 
-async function collectAllEvents(root: ProjectDirectoryHandle): Promise<ProjectEvent[]> {
-  if (!(await fileExists(root, "logs/events.jsonl"))) {
+async function collectAllEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
+  if (!(await storage.fileExists("logs/events.jsonl"))) {
     return [];
   }
 
-  return readJsonl<ProjectEvent>(root, "logs/events.jsonl");
+  return storage.readJsonl<ProjectEvent>("logs/events.jsonl");
 }
 
 async function collectTextFiles(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   directoryPath: string,
 ): Promise<Record<string, string>> {
-  if (!(await fileExists(root, directoryPath))) {
+  if (!(await storage.fileExists(directoryPath))) {
     return {};
   }
 
   const files: Record<string, string> = {};
-  const names = await listFiles(root, directoryPath);
+  const names = await storage.listFiles(directoryPath);
 
   for (const name of names) {
     const path = `${directoryPath}/${name}`;
 
     try {
-      Object.assign(files, await collectTextFiles(root, path));
+      Object.assign(files, await collectTextFiles(storage, path));
     } catch {
-      files[path] = await readTextFile(root, path);
+      files[path] = await storage.readText(path);
     }
   }
 
   return files;
 }
 
-async function collectProjectFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
+async function collectProjectFiles(storage: ProjectStorage): Promise<Record<string, string>> {
   return {
-    "project/project.json": await readTextFile(root, "project.json"),
+    "project/project.json": await storage.readText("project.json"),
   };
 }
 
@@ -1063,17 +1060,17 @@ function collectProjectUpdateProjectFile(
   };
 }
 
-async function collectMemberFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
+async function collectMemberFiles(storage: ProjectStorage): Promise<Record<string, string>> {
   return {
-    "members/members.json": await readTextFile(root, "members.json"),
+    "members/members.json": await storage.readText("members.json"),
   };
 }
 
-async function collectPublicMemberFiles(root: ProjectDirectoryHandle): Promise<Record<string, string>> {
-  const membersFile = await readJson<{ schema_version?: number; members?: Member[] }>(
-    root,
-    "members.json",
-  );
+async function collectPublicMemberFiles(storage: ProjectStorage): Promise<Record<string, string>> {
+  const membersFile = await storage.readJson<{
+    schema_version?: number;
+    members?: Member[];
+  }>("members.json");
 
   return {
     "members/members.json": `${JSON.stringify(
@@ -1146,7 +1143,7 @@ function findResolution(
 }
 
 async function loadCurrentEntries(path: string): Promise<Entry[]> {
-  return normalizeEntries(await readJsonl<Entry>(getProjectRoot(), path));
+  return normalizeEntries(await getProjectStorage().readJsonl<Entry>(path));
 }
 
 function getSupportedManifestSchemaVersion(
@@ -1202,24 +1199,24 @@ function assertPackagePath(
 }
 
 async function assertJsonlTargetReadable<T>(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   path: string,
   label: string,
   options: { mustExist?: boolean } = {},
 ): Promise<void> {
   try {
-    const exists = await fileExists(root, path);
+    const exists = await storage.fileExists(path);
 
     if (!exists) {
       if (options.mustExist) {
         throw new Error("目标文件不存在。");
       }
 
-      await fileExists(root, getDirectoryPath(path));
+      await storage.fileExists(getDirectoryPath(path));
       return;
     }
 
-    await readJsonl<T>(root, path);
+    await storage.readJsonl<T>(path);
   } catch (error) {
     const reason = error instanceof Error ? error.message : "无法读取。";
 
@@ -1228,17 +1225,17 @@ async function assertJsonlTargetReadable<T>(
 }
 
 async function assertTextTargetReadable(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   path: string,
   label: string,
 ): Promise<void> {
   try {
-    const exists = await fileExists(root, path);
+    const exists = await storage.fileExists(path);
 
     if (exists) {
-      await readTextFile(root, path);
+      await storage.readText(path);
     } else {
-      await fileExists(root, getDirectoryPath(path));
+      await storage.fileExists(getDirectoryPath(path));
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "无法读取。";
@@ -1273,39 +1270,39 @@ async function precheckChangePackageImport(
     throw new Error("修改包冲突列表尚未生成，无法导入。");
   }
 
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const isProjectUpdate = isProjectUpdatePackage(validation.packageType);
 
   for (const path of Object.keys(changePackage.entries)) {
     assertPackagePath(path, "entries/", "词条", ".jsonl");
-    await assertJsonlTargetReadable<Entry>(root, path, "词条", {
+    await assertJsonlTargetReadable<Entry>(storage, path, "词条", {
       mustExist: !isProjectUpdate,
     });
   }
 
   for (const path of Object.keys(changePackage.comments)) {
     assertPackagePath(path, "comments/", "评论", ".jsonl");
-    await assertJsonlTargetReadable<Comment>(root, path, "评论");
+    await assertJsonlTargetReadable<Comment>(storage, path, "评论");
   }
 
   for (const path of Object.keys(changePackage.terms)) {
     assertPackagePath(path, "terms/", "术语", ".jsonl");
-    await assertJsonlTargetReadable<Term>(root, path, "术语");
+    await assertJsonlTargetReadable<Term>(storage, path, "术语");
   }
 
   for (const path of Object.keys(changePackage.tasks)) {
     assertPackagePath(path, "tasks/", "任务", ".jsonl");
-    await assertJsonlTargetReadable<Task>(root, path, "任务");
+    await assertJsonlTargetReadable<Task>(storage, path, "任务");
   }
 
   for (const path of Object.keys(changePackage.contexts)) {
     assertPackagePath(path, "contexts/", "上下文");
-    await assertTextTargetReadable(root, path, "上下文");
+    await assertTextTargetReadable(storage, path, "上下文");
   }
 
   for (const path of Object.keys(changePackage.sourceFiles)) {
     assertPackagePath(path, "source/", "source");
-    await assertTextTargetReadable(root, path, "source");
+    await assertTextTargetReadable(storage, path, "source");
   }
 
   for (const path of Object.keys(changePackage.projectFiles)) {
@@ -1314,7 +1311,7 @@ async function precheckChangePackageImport(
     }
 
     JSON.parse(changePackage.projectFiles[path]);
-    await assertTextTargetReadable(root, "project.json", "项目设置");
+    await assertTextTargetReadable(storage, "project.json", "项目设置");
   }
 
   for (const path of Object.keys(changePackage.memberFiles)) {
@@ -1323,12 +1320,12 @@ async function precheckChangePackageImport(
     }
 
     JSON.parse(changePackage.memberFiles[path]);
-    await assertTextTargetReadable(root, "members.json", "成员");
+    await assertTextTargetReadable(storage, "members.json", "成员");
   }
 
   if (changePackage.events.length > 0) {
     await assertJsonlTargetReadable<ProjectEvent>(
-      root,
+      storage,
       "logs/events.jsonl",
       "日志",
     );
@@ -1365,9 +1362,9 @@ async function appendImportLog(
   validation: ChangePackageValidation,
   options: ApplyChangePackageOptions,
 ): Promise<void> {
-  const root = getProjectRoot();
-  const events = (await fileExists(root, "logs/events.jsonl"))
-    ? await readJsonl<ProjectEvent>(root, "logs/events.jsonl")
+  const storage = getProjectStorage();
+  const events = (await storage.fileExists("logs/events.jsonl"))
+    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
     : [];
   const event: ProjectEvent = {
     id: createId("event"),
@@ -1397,16 +1394,16 @@ async function appendImportLog(
     },
   };
 
-  await ensureDirectory(root, "logs");
-  await writeJsonl(root, "logs/events.jsonl", [...events, event]);
+  await storage.ensureDirectory("logs");
+  await storage.writeJsonl("logs/events.jsonl", [...events, event]);
 }
 
 export async function exportChangePackage(
   userId: string,
   options: ExportChangePackageOptions,
 ): Promise<ExportedChangePackage> {
-  const root = getProjectRoot();
-  const project = await readJson<ProjectConfig>(root, "project.json");
+  const storage = getProjectStorage();
+  const project = await storage.readJson<ProjectConfig>("project.json");
   const actor = options.actor;
   const createdAt = nowIso();
   const baseRevision = getProjectRevision(project);
@@ -1441,12 +1438,12 @@ export async function exportChangePackage(
       throw new Error("请选择要导出的任务。");
     }
 
-    const task = await loadTask(root, options.taskId);
+    const task = await loadTask(storage, options.taskId);
 
-    payload.entries = await collectTaskChangedEntries(root, task, userId);
-    payload.comments = await collectComments(root, await loadTaskEntries(root, task), userId);
-    payload.tasks = await collectTaskRows(root, task);
-    payload.events = await collectEvents(root, getPackageEntries(payload.entries), userId);
+    payload.entries = await collectTaskChangedEntries(storage, task, userId);
+    payload.comments = await collectComments(storage, await loadTaskEntries(storage, task), userId);
+    payload.tasks = await collectTaskRows(storage, task);
+    payload.events = await collectEvents(storage, getPackageEntries(payload.entries), userId);
   }
 
   if (options.mode === "member_changes") {
@@ -1454,11 +1451,11 @@ export async function exportChangePackage(
       throw new Error("当前成员没有导出普通修改包的权限。");
     }
 
-    payload.entries = await collectUserChangedEntries(root, project, userId);
-    payload.comments = await collectUserComments(root, userId);
-    payload.terms = await collectUserTerms(root, userId);
-    payload.tasks = await collectUserTasks(root, userId);
-    payload.events = await collectUserEvents(root, userId);
+    payload.entries = await collectUserChangedEntries(storage, project, userId);
+    payload.comments = await collectUserComments(storage, userId);
+    payload.terms = await collectUserTerms(storage, userId);
+    payload.tasks = await collectUserTasks(storage, userId);
+    payload.events = await collectUserEvents(storage, userId);
   }
 
   if (options.mode === "maintenance_changes") {
@@ -1469,12 +1466,12 @@ export async function exportChangePackage(
       "当前成员没有导出维护修改包的权限。",
     );
 
-    payload.terms = await collectAllTerms(root);
-    payload.contexts = await collectTextFiles(root, "contexts");
-    payload.tasks = await collectAllTasks(root);
-    payload.projectFiles = await collectProjectFiles(root);
-    payload.memberFiles = await collectMemberFiles(root);
-    payload.events = await collectAllEvents(root);
+    payload.terms = await collectAllTerms(storage);
+    payload.contexts = await collectTextFiles(storage, "contexts");
+    payload.tasks = await collectAllTasks(storage);
+    payload.projectFiles = await collectProjectFiles(storage);
+    payload.memberFiles = await collectMemberFiles(storage);
+    payload.events = await collectAllEvents(storage);
   }
 
   if (options.mode === "project_update") {
@@ -1486,19 +1483,19 @@ export async function exportChangePackage(
       throw new Error("项目更新包必须使用负责人签名后才能导出。");
     }
 
-    payload.entries = await collectAllEntries(root, project);
-    payload.comments = await collectAllComments(root);
-    payload.terms = await collectAllTerms(root);
-    payload.contexts = await collectTextFiles(root, "contexts");
-    payload.sourceFiles = await collectTextFiles(root, "source");
-    payload.tasks = await collectAllTasks(root);
+    payload.entries = await collectAllEntries(storage, project);
+    payload.comments = await collectAllComments(storage);
+    payload.terms = await collectAllTerms(storage);
+    payload.contexts = await collectTextFiles(storage, "contexts");
+    payload.sourceFiles = await collectTextFiles(storage, "source");
+    payload.tasks = await collectAllTasks(storage);
     payload.projectFiles = collectProjectUpdateProjectFile(
       project,
       targetRevision ?? baseRevision,
       createdAt,
     );
-    payload.memberFiles = await collectPublicMemberFiles(root);
-    payload.events = await collectAllEvents(root);
+    payload.memberFiles = await collectPublicMemberFiles(storage);
+    payload.events = await collectAllEvents(storage);
   }
 
   const summary = getPackageSummary(payload);
@@ -1532,7 +1529,7 @@ export async function exportChangePackage(
         : [options.mode],
     summary,
   };
-  const members = options.sign ? await loadProjectMembers(root) : [];
+  const members = options.sign ? await loadProjectMembers(storage) : [];
   const signer = members.find((member) => member.id === userId);
   const signature = options.sign ? await createSignature(manifest, signer) : undefined;
 
@@ -1609,7 +1606,7 @@ export async function exportChangePackage(
       payload.projectFiles["project/project.json"],
     ) as ProjectConfig;
 
-    await writeTextFile(root, "project.json", payload.projectFiles["project/project.json"]);
+    await storage.writeText("project.json", payload.projectFiles["project/project.json"]);
     setPermissionProject(nextProject);
   }
 
@@ -1692,9 +1689,9 @@ export async function validateChangePackage(
 ): Promise<ChangePackageValidation> {
   assertChangePackageManifestForImport(changePackage);
 
-  const root = getProjectRoot();
-  const project = await readJson<ProjectConfig>(root, "project.json");
-  const members = await loadProjectMembers(root);
+  const storage = getProjectStorage();
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const members = await loadProjectMembers(storage);
   const packageProjectId = changePackage.manifest.project_id;
   const packageType = getPackageType(changePackage.manifest);
   const payload: ChangePackagePayload = {
@@ -1871,25 +1868,25 @@ export async function detectConflicts(
 }
 
 async function buildMemberChangePayload(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   project: ProjectConfig,
   userId: string,
 ): Promise<ChangePackagePayload> {
   return {
-    entries: await collectUserChangedEntries(root, project, userId),
-    comments: await collectUserComments(root, userId),
-    terms: await collectUserTerms(root, userId),
+    entries: await collectUserChangedEntries(storage, project, userId),
+    comments: await collectUserComments(storage, userId),
+    terms: await collectUserTerms(storage, userId),
     contexts: {},
     sourceFiles: {},
-    tasks: await collectUserCreatedTasks(root, userId),
+    tasks: await collectUserCreatedTasks(storage, userId),
     projectFiles: {},
     memberFiles: {},
-    events: await collectUserEvents(root, userId),
+    events: await collectUserEvents(storage, userId),
   };
 }
 
 async function assertNoUnexportedMemberChanges(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   project: ProjectConfig,
   actor: Member | null | undefined,
 ): Promise<void> {
@@ -1898,7 +1895,7 @@ async function assertNoUnexportedMemberChanges(
   }
 
   const revision = getProjectRevision(project);
-  const payload = await buildMemberChangePayload(root, project, actor.id);
+  const payload = await buildMemberChangePayload(storage, project, actor.id);
   const summary = getPackageSummary(payload);
 
   if (!hasPackageContent(summary)) {
@@ -1985,9 +1982,9 @@ async function applyProjectUpdatePackage(
   validation: ChangePackageValidation,
   options: ApplyChangePackageOptions,
 ): Promise<ApplyChangePackageResult> {
-  const root = getProjectRoot();
-  const currentProject = await readJson<ProjectConfig>(root, "project.json");
-  const currentMembers = await loadProjectMembers(root);
+  const storage = getProjectStorage();
+  const currentProject = await storage.readJson<ProjectConfig>("project.json");
+  const currentMembers = await loadProjectMembers(storage);
   const nextProject = assertProjectUpdateCanApply(
     changePackage,
     validation,
@@ -1996,7 +1993,7 @@ async function applyProjectUpdatePackage(
     options.actor,
   );
 
-  await assertNoUnexportedMemberChanges(root, currentProject, options.actor);
+  await assertNoUnexportedMemberChanges(storage, currentProject, options.actor);
   await precheckChangePackageImport(changePackage, validation, []);
 
   let appliedEntries = 0;
@@ -2010,38 +2007,38 @@ async function applyProjectUpdatePackage(
   let importedEvents = 0;
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeJsonl(root, path, packageEntries.map(normalizeEntry));
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeJsonl(path, packageEntries.map(normalizeEntry));
     appliedEntries += packageEntries.length;
   }
 
   for (const [path, packageComments] of Object.entries(changePackage.comments)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeJsonl(root, path, packageComments);
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeJsonl(path, packageComments);
     importedComments += packageComments.length;
   }
 
   for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeJsonl(root, path, packageTerms);
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeJsonl(path, packageTerms);
     importedTerms += packageTerms.length;
   }
 
   for (const [path, content] of Object.entries(changePackage.contexts)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeTextFile(root, path, content);
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeText(path, content);
     importedContexts += 1;
   }
 
   for (const [path, content] of Object.entries(changePackage.sourceFiles)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeTextFile(root, path, content);
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeText(path, content);
     importedSourceFiles += 1;
   }
 
   for (const [path, packageTasks] of Object.entries(changePackage.tasks)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeJsonl(root, path, packageTasks);
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeJsonl(path, packageTasks);
     importedTasks += packageTasks.length;
   }
 
@@ -2050,7 +2047,7 @@ async function applyProjectUpdatePackage(
   const packageMembers = parseMembersFromPackage(changePackage.memberFiles);
 
   if (packageMembers.length > 0) {
-    await writeJson(root, "members.json", {
+    await storage.writeJson("members.json", {
       schema_version: 1,
       members: mergePublicMembersWithLocalCredentials(currentMembers, packageMembers),
     });
@@ -2058,8 +2055,8 @@ async function applyProjectUpdatePackage(
   }
 
   if (changePackage.events.length > 0) {
-    await ensureDirectory(root, "logs");
-    await writeJsonl(root, "logs/events.jsonl", changePackage.events);
+    await storage.ensureDirectory("logs");
+    await storage.writeJsonl("logs/events.jsonl", changePackage.events);
     importedEvents = changePackage.events.length;
   }
 
@@ -2077,8 +2074,7 @@ async function applyProjectUpdatePackage(
 
   await appendImportLog(changePackage.manifest, result, validation, options);
 
-  await writeTextFile(
-    root,
+  await storage.writeText(
     "project.json",
     changePackage.projectFiles["project/project.json"],
   );
@@ -2086,7 +2082,7 @@ async function applyProjectUpdatePackage(
 
   if (options.actor?.id) {
     const postUpdatePayload = await buildMemberChangePayload(
-      root,
+      storage,
       nextProject,
       options.actor.id,
     );
@@ -2161,7 +2157,7 @@ export async function applyChangePackage(
     }
   }
 
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const conflicts = await detectConflicts(changePackage);
 
   await precheckChangePackageImport(changePackage, validation, conflicts);
@@ -2225,13 +2221,13 @@ export async function applyChangePackage(
     }
 
     if (changed) {
-      await writeJsonl(root, path, currentEntries);
+      await storage.writeJsonl(path, currentEntries);
     }
   }
 
   for (const [path, packageComments] of Object.entries(changePackage.comments)) {
-    const existingComments = (await fileExists(root, path))
-      ? await readJsonl<Comment>(root, path)
+    const existingComments = (await storage.fileExists(path))
+      ? await storage.readJsonl<Comment>(path)
       : [];
     const existingIds = new Set(existingComments.map((comment) => comment.id));
     const newComments = packageComments.filter(
@@ -2239,61 +2235,61 @@ export async function applyChangePackage(
     );
 
     if (newComments.length > 0) {
-      await ensureDirectory(root, getDirectoryPath(path));
-      await writeJsonl(root, path, [...existingComments, ...newComments]);
+      await storage.ensureDirectory(getDirectoryPath(path));
+      await storage.writeJsonl(path, [...existingComments, ...newComments]);
       importedComments += newComments.length;
     }
   }
 
   for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
-    const existingTerms = (await fileExists(root, path))
-      ? await readJsonl<Term>(root, path)
+    const existingTerms = (await storage.fileExists(path))
+      ? await storage.readJsonl<Term>(path)
       : [];
     const result = mergeRowsById(existingTerms, packageTerms);
 
     if (result.imported > 0) {
-      await ensureDirectory(root, getDirectoryPath(path));
-      await writeJsonl(root, path, result.rows);
+      await storage.ensureDirectory(getDirectoryPath(path));
+      await storage.writeJsonl(path, result.rows);
       importedTerms += result.imported;
     }
   }
 
   for (const [path, packageTasks] of Object.entries(changePackage.tasks)) {
-    const existingTasks = (await fileExists(root, path))
-      ? await readJsonl<Task>(root, path)
+    const existingTasks = (await storage.fileExists(path))
+      ? await storage.readJsonl<Task>(path)
       : [];
     const result = mergeRowsById(existingTasks, packageTasks);
 
     if (result.imported > 0) {
-      await ensureDirectory(root, getDirectoryPath(path));
-      await writeJsonl(root, path, result.rows);
+      await storage.ensureDirectory(getDirectoryPath(path));
+      await storage.writeJsonl(path, result.rows);
       importedTasks += result.imported;
     }
   }
 
   for (const [path, content] of Object.entries(changePackage.contexts)) {
-    await ensureDirectory(root, getDirectoryPath(path));
-    await writeTextFile(root, path, content);
+    await storage.ensureDirectory(getDirectoryPath(path));
+    await storage.writeText(path, content);
     importedContexts += 1;
   }
 
   for (const [path, content] of Object.entries(changePackage.projectFiles)) {
     if (path === "project/project.json") {
-      await writeTextFile(root, "project.json", content);
+      await storage.writeText("project.json", content);
       importedProjectSettings += 1;
     }
   }
 
   for (const [path, content] of Object.entries(changePackage.memberFiles)) {
     if (path === "members/members.json") {
-      await writeTextFile(root, "members.json", content);
+      await storage.writeText("members.json", content);
       importedMembers += 1;
     }
   }
 
   if (changePackage.events.length > 0) {
-    const existingEvents = (await fileExists(root, "logs/events.jsonl"))
-      ? await readJsonl<ProjectEvent>(root, "logs/events.jsonl")
+    const existingEvents = (await storage.fileExists("logs/events.jsonl"))
+      ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
       : [];
     const existingIds = new Set(existingEvents.map((event) => event.id));
     const newEvents = changePackage.events.filter(
@@ -2301,8 +2297,8 @@ export async function applyChangePackage(
     );
 
     if (newEvents.length > 0) {
-      await ensureDirectory(root, "logs");
-      await writeJsonl(root, "logs/events.jsonl", [
+      await storage.ensureDirectory("logs");
+      await storage.writeJsonl("logs/events.jsonl", [
         ...existingEvents,
         ...newEvents,
       ]);

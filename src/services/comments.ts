@@ -12,17 +12,14 @@ import {
   canResolveDispute,
   getCurrentUser,
 } from "./permissions";
+import type { ProjectDirectoryHandle } from "./projectFs";
 import {
-  ensureDirectory,
-  fileExists,
-  listFiles,
-  readJsonl,
-  writeJsonl,
-  type ProjectDirectoryHandle,
-} from "./projectFs";
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 import { appendEvent } from "./history";
 
-let currentProjectRoot: ProjectDirectoryHandle | null = null;
+let currentProjectStorage: ProjectStorage | null = null;
 
 type CommentStatus = NonNullable<Comment["status"]>;
 
@@ -38,15 +35,19 @@ interface AddCommentOptions {
 }
 
 export function setCommentsProjectRoot(root: ProjectDirectoryHandle): void {
-  currentProjectRoot = root;
+  setCommentsProjectStorage(createProjectStorage(root));
 }
 
-function getProjectRoot(): ProjectDirectoryHandle {
-  if (!currentProjectRoot) {
+export function setCommentsProjectStorage(storage: ProjectStorage): void {
+  currentProjectStorage = storage;
+}
+
+function getProjectStorage(): ProjectStorage {
+  if (!currentProjectStorage) {
     throw new Error("请先打开项目文件夹。");
   }
 
-  return currentProjectRoot;
+  return currentProjectStorage;
 }
 
 function getCurrentUserId(): string {
@@ -90,9 +91,9 @@ async function loadEntryChunk(fileId: string): Promise<{
   path: string;
   entries: Entry[];
 }[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const entryDirectory = `entries/${fileId}`;
-  const fileNames = await listFiles(root, entryDirectory);
+  const fileNames = await storage.listFiles(entryDirectory);
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
@@ -103,7 +104,7 @@ async function loadEntryChunk(fileId: string): Promise<{
 
       return {
         path,
-        entries: normalizeEntries(await readJsonl<Entry>(root, path)),
+        entries: normalizeEntries(await storage.readJsonl<Entry>(path)),
       };
     }),
   );
@@ -114,7 +115,7 @@ async function updateEntry(
   patch: Partial<Entry>,
   userId: string,
 ): Promise<Entry> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const chunks = await loadEntryChunk(entry.file_id);
 
   for (const chunk of chunks) {
@@ -132,7 +133,7 @@ async function updateEntry(
     };
 
     chunk.entries[entryIndex] = updatedEntry;
-    await writeJsonl(root, chunk.path, chunk.entries);
+    await storage.writeJsonl(chunk.path, chunk.entries);
 
     return updatedEntry;
   }
@@ -141,8 +142,7 @@ async function updateEntry(
 }
 
 async function loadEntriesForAllFiles(): Promise<Entry[]> {
-  const root = getProjectRoot();
-  const fileIds = await listFiles(root, "entries");
+  const fileIds = await getProjectStorage().listFiles("entries");
   const groups = await Promise.all(
     fileIds.map(async (fileId) => {
       const chunks = await loadEntryChunk(fileId);
@@ -157,14 +157,14 @@ async function loadEntriesForAllFiles(): Promise<Entry[]> {
 }
 
 export async function loadComments(entry: Entry): Promise<Comment[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const path = getEntryCommentPath(entry);
 
-  if (!(await fileExists(root, path))) {
+  if (!(await storage.fileExists(path))) {
     return [];
   }
 
-  return (await readJsonl<Comment>(root, path))
+  return (await storage.readJsonl<Comment>(path))
     .map((comment) => normalizeComment(comment, { entry }))
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
@@ -174,7 +174,7 @@ export async function addComment(
   body: string,
   options: AddCommentOptions = {},
 ): Promise<Comment> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const text = body.trim();
 
   if (!text) {
@@ -203,8 +203,8 @@ export async function addComment(
     updated_at: createdAt,
   };
 
-  await ensureDirectory(root, `comments/${entry.file_id}`);
-  await writeJsonl(root, path, [...comments, comment]);
+  await storage.ensureDirectory(`comments/${entry.file_id}`);
+  await storage.writeJsonl(path, [...comments, comment]);
   await appendEvent({
     type: comment.reply_to ? "comment.replied" : "comment.added",
     user_id: userId,
@@ -235,7 +235,7 @@ async function updateCommentStatus(
   commentId: string,
   status: CommentStatus,
 ): Promise<Comment> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const path = getEntryCommentPath(entry);
   const actor = getCurrentUser();
   assertCommentWritePermission(
@@ -261,7 +261,7 @@ async function updateCommentStatus(
   const nextComments = [...comments];
 
   nextComments[commentIndex] = nextComment;
-  await writeJsonl(root, path, nextComments);
+  await storage.writeJsonl(path, nextComments);
   await appendEvent({
     type: status === "resolved" ? "comment.resolved" : "comment.reopened",
     user_id: userId,
@@ -291,7 +291,7 @@ export async function deleteComment(
   entry: Entry,
   commentId: string,
 ): Promise<void> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
   const path = getEntryCommentPath(entry);
   const actor = getCurrentUser();
   const userId = getCurrentUserId();
@@ -314,7 +314,7 @@ export async function deleteComment(
 
   const nextComments = comments.filter((comment) => !deleteIds.has(comment.id));
 
-  await writeJsonl(root, path, nextComments);
+  await storage.writeJsonl(path, nextComments);
   await appendEvent({
     type: "comment.deleted",
     user_id: userId,
@@ -398,21 +398,21 @@ export async function loadRecentComments(): Promise<Comment[]> {
 }
 
 export async function loadAllComments(): Promise<Comment[]> {
-  const root = getProjectRoot();
+  const storage = getProjectStorage();
 
-  if (!(await fileExists(root, "comments"))) {
+  if (!(await storage.fileExists("comments"))) {
     return [];
   }
 
-  const fileIds = await listFiles(root, "comments");
+  const fileIds = await storage.listFiles("comments");
   const groups = await Promise.all(
     fileIds.map(async (fileId) => {
-      const commentFiles = await listFiles(root, `comments/${fileId}`);
+      const commentFiles = await storage.listFiles(`comments/${fileId}`);
       const comments = await Promise.all(
         commentFiles
           .filter((name) => name.endsWith(".jsonl"))
           .map(async (name) =>
-            (await readJsonl<Comment>(root, `comments/${fileId}/${name}`)).map(
+            (await storage.readJsonl<Comment>(`comments/${fileId}/${name}`)).map(
               (comment) => normalizeComment(comment, { fileId }),
             ),
           ),

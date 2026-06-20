@@ -4,7 +4,7 @@ import { PERMISSION_ACTIONS, type PermissionAction } from "../model/permissions"
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { createPasswordFields } from "./auth";
-import { appendEventToRoot } from "./history";
+import { appendEventToStorage } from "./history";
 import {
   assertCan,
   can,
@@ -28,16 +28,13 @@ import {
   type ProjectPackagePreview,
 } from "./projectPackage";
 import {
-  deleteEntry,
-  ensureDirectory,
-  fileExists,
   openProjectDirectory,
-  readJson,
-  writeTextFile,
-  writeJsonl,
-  writeJson,
   type ProjectDirectoryHandle,
 } from "./projectFs";
+import {
+  createProjectStorage,
+  type ProjectStorage,
+} from "./projectStorage";
 
 interface MembersFile {
   schema_version: number;
@@ -46,6 +43,7 @@ interface MembersFile {
 
 export interface OpenedProject {
   root: ProjectDirectoryHandle;
+  storage: ProjectStorage;
   config: ProjectConfig;
   members: Member[];
   storageKind: "folder" | "packed";
@@ -207,21 +205,40 @@ function resolveProjectActor(actor?: Member | null): Member {
 export async function loadProject(
   root: ProjectDirectoryHandle,
 ): Promise<ProjectConfig> {
-  return readJson<ProjectConfig>(root, "project.json");
+  return loadProjectFromStorage(createProjectStorage(root));
+}
+
+export async function loadProjectFromStorage(
+  storage: ProjectStorage,
+): Promise<ProjectConfig> {
+  return storage.readJson<ProjectConfig>("project.json");
 }
 
 export async function saveProject(
   root: ProjectDirectoryHandle,
   config: ProjectConfig,
 ): Promise<void> {
-  await writeJson(root, "project.json", config);
+  await saveProjectToStorage(createProjectStorage(root), config);
+}
+
+export async function saveProjectToStorage(
+  storage: ProjectStorage,
+  config: ProjectConfig,
+): Promise<void> {
+  await storage.writeJson("project.json", config);
   setPermissionProject(config);
 }
 
 export async function loadMembers(
   root: ProjectDirectoryHandle,
 ): Promise<Member[]> {
-  const file = await readJson<MembersFile>(root, "members.json");
+  return loadMembersFromStorage(createProjectStorage(root));
+}
+
+export async function loadMembersFromStorage(
+  storage: ProjectStorage,
+): Promise<Member[]> {
+  const file = await storage.readJson<MembersFile>("members.json");
 
   return file.members;
 }
@@ -230,7 +247,14 @@ export async function saveMembers(
   root: ProjectDirectoryHandle,
   members: Member[],
 ): Promise<void> {
-  await writeJson<MembersFile>(root, "members.json", {
+  await saveMembersToStorage(createProjectStorage(root), members);
+}
+
+export async function saveMembersToStorage(
+  storage: ProjectStorage,
+  members: Member[],
+): Promise<void> {
+  await storage.writeJson<MembersFile>("members.json", {
     schema_version: 1,
     members,
   });
@@ -257,6 +281,8 @@ export async function saveRolePermissions(
   nextRolePermissions: RolePermissions,
   options: { resetToDefault?: boolean } = {},
 ): Promise<ProjectConfig> {
+  const storage = createProjectStorage(root);
+
   if (!can(actor, PERMISSION_ACTIONS.ROLE_MANAGE, project)) {
     throw new Error("当前成员没有管理角色权限的权限。");
   }
@@ -289,8 +315,8 @@ export async function saveRolePermissions(
     }),
   );
 
-  await saveProject(root, nextProject);
-  await appendEventToRoot(root, {
+  await saveProjectToStorage(storage, nextProject);
+  await appendEventToStorage(storage, {
     type: options.resetToDefault
       ? "role_permissions.reset"
       : "role_permissions.updated",
@@ -313,6 +339,7 @@ export async function saveMemberPermissionOverrides(
   allowPermissions: string[],
   denyPermissions: string[],
 ): Promise<Member[]> {
+  const storage = createProjectStorage(root);
   const target = members.find((member) => member.id === targetId);
 
   if (!target) {
@@ -355,8 +382,8 @@ export async function saveMemberPermissionOverrides(
     throw new Error("不能保存会让当前成员失去项目、成员或权限管理能力的配置。");
   }
 
-  await saveMembers(root, nextMembers);
-  await appendEventToRoot(root, {
+  await saveMembersToStorage(storage, nextMembers);
+  await appendEventToStorage(storage, {
     type: "member.permission_overrides.updated",
     user_id: actor.id,
     detail: {
@@ -379,6 +406,7 @@ export async function createProjectFile(
   config: ProjectConfig,
   input: CreateProjectFileInput,
 ): Promise<ProjectConfig> {
+  const storage = createProjectStorage(root);
   const name = normalizeProjectFileName(input.name);
   const fileId = uniqueFileId(config, name);
   const now = nowIso();
@@ -398,10 +426,10 @@ export async function createProjectFile(
     files: [...config.files, projectFile],
   };
 
-  await ensureDirectory(root, "source");
-  await ensureDirectory(root, projectFile.entries_path);
-  await writeTextFile(root, projectFile.source_path, input.sourceText);
-  await saveProject(root, nextConfig);
+  await storage.ensureDirectory("source");
+  await storage.ensureDirectory(projectFile.entries_path);
+  await storage.writeText(projectFile.source_path, input.sourceText);
+  await saveProjectToStorage(storage, nextConfig);
 
   return nextConfig;
 }
@@ -413,6 +441,8 @@ export async function addSourceFileToProject(
   folder?: string,
   actor?: Member | null,
 ): Promise<ProjectFileImportResult> {
+  const storage = createProjectStorage(root);
+
   assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_CREATE, config);
   assertSupportedImportFile(file.name);
 
@@ -442,12 +472,12 @@ export async function addSourceFileToProject(
   };
 
   try {
-    await ensureDirectory(root, "source");
-    await writeTextFile(root, addedFile.source_path, sourceText);
+    await storage.ensureDirectory("source");
+    await storage.writeText(addedFile.source_path, sourceText);
     await writeEntriesForFile(addedFile.id, entries);
-    await saveProject(root, nextConfig);
+    await saveProjectToStorage(storage, nextConfig);
   } catch (error) {
-    const residualPaths = await cleanupFailedSourceImport(root, addedFile);
+    const residualPaths = await cleanupFailedSourceImport(storage, addedFile);
     clearCachedEntriesForFile(addedFile.id);
     const reason = error instanceof Error ? error.message : "未知错误。";
     const residualMessage =
@@ -468,7 +498,7 @@ export async function addSourceFileToProject(
 }
 
 async function cleanupFailedSourceImport(
-  root: ProjectDirectoryHandle,
+  storage: ProjectStorage,
   file: ProjectFile,
 ): Promise<string[]> {
   const residualPaths: string[] = [];
@@ -478,8 +508,8 @@ async function cleanupFailedSourceImport(
     { path: file.source_path, recursive: false },
   ]) {
     try {
-      if (await fileExists(root, target.path)) {
-        await deleteEntry(root, target.path, { recursive: target.recursive });
+      if (await storage.fileExists(target.path)) {
+        await storage.deleteEntry(target.path, { recursive: target.recursive });
       }
     } catch {
       residualPaths.push(target.path);
@@ -496,6 +526,8 @@ export async function updateSourceFileInProject(
   sourceFile: File,
   actor?: Member | null,
 ): Promise<ProjectFileUpdateResult> {
+  const storage = createProjectStorage(root);
+
   assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_UPDATE, config);
   assertSupportedImportFile(sourceFile.name);
 
@@ -512,7 +544,7 @@ export async function updateSourceFileInProject(
     sourceText,
   );
 
-  await writeTextFile(root, projectFile.source_path, sourceText);
+  await storage.writeText(projectFile.source_path, sourceText);
 
   return {
     config: await updateProjectFile(root, config, fileId, {
@@ -567,6 +599,7 @@ export async function updateProjectFile(
   actor?: Member | null,
   requiredAction?: PermissionAction,
 ): Promise<ProjectConfig> {
+  const storage = createProjectStorage(root);
   const action = requiredAction ?? (patch.name
     ? PERMISSION_ACTIONS.FILE_RENAME
     : patch.locked !== undefined
@@ -604,7 +637,7 @@ export async function updateProjectFile(
     throw new Error("没有找到要更新的文件。");
   }
 
-  await saveProject(root, nextConfig);
+  await saveProjectToStorage(storage, nextConfig);
 
   return nextConfig;
 }
@@ -615,6 +648,8 @@ export async function deleteProjectFile(
   fileId: string,
   actor?: Member | null,
 ): Promise<ProjectConfig> {
+  const storage = createProjectStorage(root);
+
   assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_DELETE, config);
 
   const file = config.files.find((item) => item.id === fileId);
@@ -629,12 +664,12 @@ export async function deleteProjectFile(
   };
 
   try {
-    if (await fileExists(root, file.entries_path)) {
-      await deleteEntry(root, file.entries_path, { recursive: true });
+    if (await storage.fileExists(file.entries_path)) {
+      await storage.deleteEntry(file.entries_path, { recursive: true });
     }
 
-    if (await fileExists(root, file.source_path)) {
-      await deleteEntry(root, file.source_path);
+    if (await storage.fileExists(file.source_path)) {
+      await storage.deleteEntry(file.source_path);
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : "未知错误。";
@@ -642,7 +677,7 @@ export async function deleteProjectFile(
     throw new Error(`删除文件失败，project.json 未更新。原因：${reason}`);
   }
 
-  await saveProject(root, nextConfig);
+  await saveProjectToStorage(storage, nextConfig);
 
   return nextConfig;
 }
@@ -650,10 +685,11 @@ export async function deleteProjectFile(
 export async function validateProjectStructure(
   root: ProjectDirectoryHandle,
 ): Promise<ProjectStructureResult> {
+  const storage = createProjectStorage(root);
   const missing: string[] = [];
 
   for (const path of REQUIRED_PROJECT_PATHS) {
-    if (!(await fileExists(root, path))) {
+    if (!(await storage.fileExists(path))) {
       missing.push(path);
     }
   }
@@ -662,10 +698,10 @@ export async function validateProjectStructure(
     return { valid: false, missing };
   }
 
-  const config = await loadProject(root);
+  const config = await loadProjectFromStorage(storage);
 
   for (const file of config.files) {
-    if (!(await fileExists(root, file.entries_path))) {
+    if (!(await storage.fileExists(file.entries_path))) {
       missing.push(file.entries_path);
     }
   }
@@ -723,10 +759,11 @@ function assertCreateProjectInput(input: CreateProjectInput): void {
 async function assertProjectCanBeCreated(
   root: ProjectDirectoryHandle,
 ): Promise<void> {
+  const storage = createProjectStorage(root);
   const conflicts: string[] = [];
 
   for (const path of CREATION_CONFLICT_PATHS) {
-    if (await fileExists(root, path)) {
+    if (await storage.fileExists(path)) {
       conflicts.push(path);
     }
   }
@@ -745,6 +782,7 @@ export async function selectProjectCreationDirectory(): Promise<ProjectDirectory
 export async function openProjectRoot(
   root: ProjectDirectoryHandle,
 ): Promise<OpenedProject> {
+  const storage = createProjectStorage(root);
   const result = await validateProjectStructure(root);
 
   if (!result.valid) {
@@ -754,26 +792,34 @@ export async function openProjectRoot(
   }
 
   const [config, members] = await Promise.all([
-    loadProject(root),
-    loadMembers(root),
+    loadProjectFromStorage(storage),
+    loadMembersFromStorage(storage),
   ]);
 
   setPermissionProject(config);
 
-  return { root, config, members, storageKind: root.storageKind ?? "folder" };
+  return {
+    root,
+    storage,
+    config,
+    members,
+    storageKind: storage.kind,
+    sourceFileName: storage.sourceFileName,
+  };
 }
 
 export async function createProjectInDirectory(
   root: ProjectDirectoryHandle,
   rawInput: CreateProjectInput,
 ): Promise<CreatedProject> {
+  const storage = createProjectStorage(root);
   const input = normalizeCreateProjectInput(rawInput);
 
   assertCreateProjectInput(input);
   await assertProjectCanBeCreated(root);
 
   for (const path of PROJECT_DIRECTORIES) {
-    await ensureDirectory(root, path);
+    await storage.ensureDirectory(path);
   }
 
   const now = nowIso();
@@ -825,15 +871,21 @@ export async function createProjectInDirectory(
   const members = [owner];
 
   await Promise.all([
-    saveProject(root, config),
-    saveMembers(root, members),
-    writeJsonl(root, "terms/terms.jsonl", []),
-    writeJsonl(root, "tasks/tasks.jsonl", []),
-    writeJsonl(root, "logs/events.jsonl", []),
+    saveProjectToStorage(storage, config),
+    saveMembersToStorage(storage, members),
+    storage.writeJsonl("terms/terms.jsonl", []),
+    storage.writeJsonl("tasks/tasks.jsonl", []),
+    storage.writeJsonl("logs/events.jsonl", []),
   ]);
 
   return {
-    project: { root, config, members, storageKind: "folder" },
+    project: {
+      root,
+      storage,
+      config,
+      members,
+      storageKind: "folder",
+    },
     owner,
   };
 }
@@ -845,15 +897,17 @@ export async function openProject(): Promise<OpenedProject> {
 
 export async function openProjectFile(file: File): Promise<OpenedProject> {
   const root = await createProjectRootFromPackage(file);
-  const config = await loadProject(root);
-  const members = (await fileExists(root, "members.json"))
-    ? await loadMembers(root)
+  const storage = createProjectStorage(root);
+  const config = await loadProjectFromStorage(storage);
+  const members = (await storage.fileExists("members.json"))
+    ? await loadMembersFromStorage(storage)
     : [];
 
   setPermissionProject(config);
 
   return {
     root,
+    storage,
     config,
     members,
     storageKind: "packed",

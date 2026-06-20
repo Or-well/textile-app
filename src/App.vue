@@ -16,11 +16,11 @@ import StatsPage from "./pages/StatsPage.vue";
 import TasksPage from "./pages/TasksPage.vue";
 import TermsPage from "./pages/TermsPage.vue";
 import type { Comment, Member, ProjectConfig } from "./model/types";
-import { setChangesProjectRoot } from "./services/changes";
-import { setCommentsProjectRoot } from "./services/comments";
-import { setEntriesProjectRoot } from "./services/entries";
-import { setExporterProjectRoot } from "./services/exporter";
-import { setHistoryProjectRoot } from "./services/history";
+import { setChangesProjectStorage } from "./services/changes";
+import { setCommentsProjectStorage } from "./services/comments";
+import { setEntriesProjectStorage } from "./services/entries";
+import { setExporterProjectStorage } from "./services/exporter";
+import { setHistoryProjectStorage } from "./services/history";
 import { loginMember } from "./services/auth";
 import { getCurrentUser, setCurrentUser } from "./services/permissions";
 import {
@@ -53,8 +53,8 @@ import {
   saveProjectSession,
 } from "./services/session";
 import { getProjectStats, type BasicProjectStats } from "./services/stats";
-import { loadTasks, setTasksProjectRoot } from "./services/tasks";
-import { setTermsProjectRoot } from "./services/terms";
+import { loadTasks, setTasksProjectStorage } from "./services/tasks";
+import { setTermsProjectStorage } from "./services/terms";
 import { setAppUpdateSafety } from "./services/updateSafety";
 
 type ProjectSection =
@@ -223,13 +223,13 @@ function updatePackedProjectNotice(project: OpenedProject | null) {
 }
 
 function configureProjectServices(project: OpenedProject) {
-  setEntriesProjectRoot(project.root);
-  setTermsProjectRoot(project.root);
-  setTasksProjectRoot(project.root);
-  setCommentsProjectRoot(project.root);
-  setHistoryProjectRoot(project.root);
-  setChangesProjectRoot(project.root);
-  setExporterProjectRoot(project.root);
+  setEntriesProjectStorage(project.storage);
+  setTermsProjectStorage(project.storage);
+  setTasksProjectStorage(project.storage);
+  setCommentsProjectStorage(project.storage);
+  setHistoryProjectStorage(project.storage);
+  setChangesProjectStorage(project.storage);
+  setExporterProjectStorage(project.storage);
   setCurrentUser(null);
   currentUser.value = null;
   loginErrorMessage.value = "";
@@ -845,6 +845,7 @@ onBeforeUnmount(() => {
         v-else-if="route.section === 'files'"
         :project="currentProject.config"
         :project-root="currentProject.root"
+        :project-storage="currentProject.storage"
         :current-user="currentUser"
         @open-file="handleOpenFile"
         @project-updated="handleProjectUpdated"
@@ -889,6 +890,7 @@ onBeforeUnmount(() => {
         :project="currentProject.config"
         :members="currentProject.members"
         :project-root="currentProject.root"
+        :project-storage="currentProject.storage"
         :current-user="currentUser"
         @project-updated="handleProjectUpdated"
         @members-updated="handleMembersUpdated"
@@ -899,6 +901,7 @@ onBeforeUnmount(() => {
         :project="currentProject.config"
         :members="currentProject.members"
         :project-root="currentProject.root"
+        :project-storage="currentProject.storage"
         :current-user="currentUser"
         @project-updated="handleProjectUpdated"
         @members-updated="handleMembersUpdated"
