@@ -128,7 +128,8 @@ src-tauri/target/release/bundle/msi/
 1. 维护者提高版本号并发布新的 GitHub Release。
 2. 新 release 上传新的安装包、`.sig` 和 `latest.json`。
 3. 已安装用户启动 Textile 后，Tauri Updater 读取 endpoint 的 `latest.json`。
-4. 如果发现更高版本，应用下载并安装更新。
+4. 如果发现更高版本，应用下载并验签更新。
+5. 下载完成且当前没有项目写入或编辑阻止时，界面显示“可以安装并重启”；否则显示等待原因，安全后再安装。
 
 ## 常见问题
 

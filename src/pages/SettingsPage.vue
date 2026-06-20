@@ -52,6 +52,12 @@ import {
 } from "../services/appUpdate";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
 import { normalizeProgressWeights } from "../services/stats";
+import {
+  getAppUpdateStatusMessage,
+  getDesktopDownloadedMessage,
+  getDesktopUpdateActionLabel,
+  hasPendingAppUpdate,
+} from "../services/appUpdatePresentation";
 
 type SettingsSection =
   | "project"
@@ -204,25 +210,19 @@ const lastUpdateCheckText = computed(() => {
 
   return new Date(updateState.value.checkedAt).toLocaleString();
 });
-const updateStatusText = computed(() => {
-  if (updateState.value.pwaRefreshReady) {
-    return updateState.value.canAutoRefresh
-      ? "新版本已准备好，Textile 会在安全时机自动刷新。"
-      : updateState.value.refreshBlockedReason || "新版本已准备好，刷新后即可使用。";
-  }
-
-  return updateState.value.message;
-});
+const updateStatusText = computed(() =>
+  getAppUpdateStatusMessage(updateState.value),
+);
 const latestBuildText = computed(() =>
   updateState.value.latest?.build_id ? updateState.value.latest.build_id : "尚未获取",
 );
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
 const isDesktopUpdate = computed(() => updateState.value.platform === "desktop");
-const hasPendingProgramRefresh = computed(
-  () =>
-    updateState.value.pwaRefreshReady ||
-    updateState.value.desktopUpdateDownloaded ||
-    updateState.value.status === "waiting-for-safe-state",
+const hasPendingProgramRefresh = computed(() =>
+  hasPendingAppUpdate(updateState.value),
+);
+const desktopDownloadedText = computed(() =>
+  getDesktopDownloadedMessage(updateState.value),
 );
 const downloadUrlConfigured = computed(() =>
   hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
@@ -234,27 +234,9 @@ const downloadUrlText = computed(() =>
     ? updateState.value.latest?.download_url
     : "未配置发布地址",
 );
-const desktopUpdateActionLabel = computed(() => {
-  if (updateState.value.status === "downloading") {
-    return `下载中 ${updateState.value.downloadProgress}%`;
-  }
-
-  if (updateState.value.status === "installing") {
-    return "正在安装...";
-  }
-
-  if (updateState.value.status === "restarting") {
-    return "正在重启...";
-  }
-
-  if (updateState.value.desktopUpdateDownloaded) {
-    return updateState.value.canAutoRefresh
-      ? "安装并重启"
-      : "等待当前操作完成";
-  }
-
-  return "下载更新";
-});
+const desktopUpdateActionLabel = computed(() =>
+  getDesktopUpdateActionLabel(updateState.value),
+);
 const desktopUpdateActionDisabled = computed(
   () =>
     !updateState.value.latest ||
@@ -1392,7 +1374,7 @@ onBeforeUnmount(() => {
                   下载进度：{{ updateState.downloadProgress }}%
                 </span>
                 <span v-if="isDesktopUpdate && updateState.desktopUpdateDownloaded">
-                  桌面更新已下载，等待安全时机安装。
+                  {{ desktopDownloadedText }}
                 </span>
                 <span v-if="updateState.latest">
                   发布日期：{{ updateState.latest.release_date }} ·

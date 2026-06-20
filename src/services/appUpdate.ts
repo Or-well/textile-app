@@ -9,6 +9,9 @@ import type {
   VersionManifest,
 } from "./appUpdateTypes";
 import {
+  applyPendingUpdatePriority,
+} from "./appUpdatePresentation";
+import {
   applyPwaUpdate,
   canApplyPwaUpdate,
   isPwaRuntime,
@@ -177,7 +180,6 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
     status: "checking",
     platform: detectPlatform(),
     sourceUrl: getSourceUrl(detectPlatform()),
-    desktopUpdateDownloaded: false,
     downloadProgress: 0,
     downloadedBytes: 0,
     totalBytes: 0,
@@ -324,8 +326,14 @@ function commitCheckResult(
         : "",
     errorMessage: "",
   };
+  state = applyPendingUpdatePriority(state);
   notifyListeners();
-  return result;
+  return buildResult(
+    state.status,
+    state.latest,
+    state.checkedAt,
+    state.message,
+  );
 }
 
 function commitFailure(message: string, checkedAt = new Date().toISOString()): UpdateCheckResult {
@@ -336,8 +344,14 @@ function commitFailure(message: string, checkedAt = new Date().toISOString()): U
     ...result,
     errorMessage: message,
   };
+  state = applyPendingUpdatePriority(state);
   notifyListeners();
-  return result;
+  return buildResult(
+    state.status,
+    state.latest,
+    state.checkedAt,
+    state.message,
+  );
 }
 
 async function handleDesktopUpdateAction(): Promise<UpdateCheckResult> {
@@ -440,18 +454,15 @@ async function handleDesktopUpdateAction(): Promise<UpdateCheckResult> {
 }
 
 function markPwaRefreshReady(): void {
-  syncSafetyState();
   state = {
     ...state,
     status: "ready-to-refresh",
     pwaRefreshReady: true,
     latestDownloadedAt: new Date().toISOString(),
     dismissedVersion: "",
-    message: state.canAutoRefresh
-      ? "Textile 新版本已准备好，刷新后即可使用。"
-      : state.refreshBlockedReason,
     errorMessage: "",
   };
+  syncSafetyState();
   writeStorage(DISMISSED_VERSION_STORAGE_KEY, "");
   notifyListeners();
   void applyReadyPwaUpdateWhenSafe();
@@ -510,6 +521,7 @@ function syncSafetyState(): void {
         ? safety.reason
         : state.message,
   };
+  state = applyPendingUpdatePriority(state);
 }
 
 function setupBroadcastChannel(): void {

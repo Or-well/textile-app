@@ -9,6 +9,11 @@ import {
   subscribeAppUpdate,
   type AppUpdateState,
 } from "../services/appUpdate";
+import {
+  getAppUpdateStatusMessage,
+  getDesktopUpdateActionLabel,
+  getPwaRefreshTitle,
+} from "../services/appUpdatePresentation";
 
 const updateState = ref<AppUpdateState>(getAppUpdateState());
 let unsubscribe: (() => void) | null = null;
@@ -52,32 +57,13 @@ const currentVersionText = computed(() => `v${updateState.value.currentVersion}`
 const downloadUrlConfigured = computed(() =>
   hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
 );
-const refreshMessage = computed(
-  () =>
-    updateState.value.refreshBlockedReason ||
-    "刷新后即可使用新版 Textile。",
+const refreshMessage = computed(() =>
+  getAppUpdateStatusMessage(updateState.value),
 );
-const desktopActionLabel = computed(() => {
-  if (updateState.value.status === "downloading") {
-    return `下载中 ${updateState.value.downloadProgress}%`;
-  }
-
-  if (updateState.value.status === "installing") {
-    return "正在安装...";
-  }
-
-  if (updateState.value.status === "restarting") {
-    return "正在重启...";
-  }
-
-  if (updateState.value.desktopUpdateDownloaded) {
-    return updateState.value.canAutoRefresh
-      ? "安装并重启"
-      : "等待当前操作完成";
-  }
-
-  return "下载更新";
-});
+const pwaRefreshTitle = computed(() => getPwaRefreshTitle(updateState.value));
+const desktopActionLabel = computed(() =>
+  getDesktopUpdateActionLabel(updateState.value),
+);
 const desktopActionDisabled = computed(
   () =>
     ["downloading", "installing", "restarting"].includes(
@@ -114,7 +100,7 @@ onBeforeUnmount(() => {
   <aside v-if="shouldShow" class="update-notice" aria-live="polite">
     <template v-if="updateState.pwaRefreshReady">
       <div class="notice-content">
-        <p class="notice-title">Textile 新版本已准备好</p>
+        <p class="notice-title">{{ pwaRefreshTitle }}</p>
         <p class="notice-text">{{ refreshMessage }}</p>
       </div>
 

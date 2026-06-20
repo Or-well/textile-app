@@ -214,6 +214,7 @@ changes/
 ### 修改程序更新
 
 区分 Web/PWA `public/version.json` 和 Tauri Updater。Tauri 发布前必须通过 `npm run tauri:release:check`，私钥不得进入仓库。
+更新状态优先级和用户可见文案统一通过 `services/appUpdatePresentation.ts` 计算；待刷新或待安装状态不得被后续“已是最新版”检查结果覆盖，页面和组件不要分别复制判断。
 
 ## 禁止事项
 

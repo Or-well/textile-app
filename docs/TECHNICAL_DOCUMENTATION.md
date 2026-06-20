@@ -1671,6 +1671,13 @@ store: projectHandles
 - 在安全时机应用已经准备好的更新。
 - 通过 BroadcastChannel 在 Web/PWA 标签页之间同步更新状态。
 
+`appUpdatePresentation.ts` 提供更新状态的纯函数展示语义：
+
+- 待安装、待刷新和正在安装/刷新状态优先于普通检查结果。
+- 同一 `latest_version` 下已有 PWA 新资源时显示“新构建”，与版本号升级区分。
+- 桌面更新下载完成后，根据安全状态区分“可以安装并重启”和“等待当前操作完成”。
+- `SettingsPage.vue` 与 `UpdateNotice.vue` 共用同一组状态文案和动作标签，不在页面中复制判断。
+
 主要输入：
 
 - 当前 `package.json` 版本。
@@ -1710,6 +1717,22 @@ failed
 - `UpdateNotice.vue` 显示全局更新提示。
 - `SettingsPage.vue` 显示版本、通道、发布说明和手动动作。
 
+状态优先级：
+
+```text
+installing / refreshing / restarting
+> ready-to-refresh / downloaded / waiting-for-safe-state
+> update-available
+> up-to-date
+> failed / idle
+```
+
+`checkForUpdates()` 和检查失败处理都会在提交结果后重新应用该优先级。因此：
+
+- PWA 已有待刷新资源时，后续 `up-to-date` 或 `failed` 不会清除 `ready-to-refresh`。
+- 同版本的新 `build_id`/`assets_hash` 可以作为新构建资源处理，不等同于版本号升级。
+- `refreshBlockedReason` 只在确实存在待刷新或待安装更新且当前状态不安全时保留。
+
 风险点：
 
 - Web/PWA 清单与 Tauri `latest.json` 不是同一种格式，不能混用。
@@ -1730,6 +1753,7 @@ failed
 
 - 接收 service worker 更新准备事件。
 - 提供应用新版资源入口。
+- service worker 已准备的新资源独立于版本号检查结果；同版本新构建仍可能需要刷新。
 
 ### Web 版本检查
 
@@ -1749,6 +1773,8 @@ failed
 - critical
 - download URL
 - notes
+
+`latest_version` 表示程序版本号，`build_id` 和 `assets_hash` 表示同一版本下的构建资源。设置页会分别显示版本和构建编号。
 
 当前 `download_url` 为空，Web 下载按钮禁用。
 
@@ -2005,7 +2031,7 @@ Tauri：
 npm run test:unit
 ```
 
-测试位于 `tests/unit/`。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
+测试位于 `tests/unit/`。除核心业务规则外，还覆盖补偿式写入计划、`.hproj` 导入和程序更新状态展示。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
 
 最低完整检查：
 
