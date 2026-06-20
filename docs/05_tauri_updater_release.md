@@ -552,6 +552,46 @@ git status --short
 git ls-files | Select-String -Pattern "\.key$|target/|node_modules/|dist/"
 ```
 
+### 6.5 只把细碎修改推送到 GitHub，不发布新版本
+
+文档修正、测试补充、小范围代码整理或尚未准备发布的功能，可以正常提交并推送到 GitHub，不需要提高应用版本号。
+
+操作：
+
+```powershell
+git status --short
+git diff
+
+git add -p
+git diff --cached
+
+git commit -m "docs: update project documentation"
+git push origin HEAD
+```
+
+提交信息应按实际内容选择，例如：
+
+```text
+docs: update release guide
+test: add manual regression cases
+fix: correct change package shortcut
+refactor: simplify update presentation logic
+```
+
+这类普通 push：
+
+- 不运行 `npm.cmd version`。
+- 不手工修改 `package.json` 版本号。
+- 不运行只为发布准备的版本同步流程。
+- 不创建 `v<version>` tag。
+- 不创建 GitHub Release。
+- 不构建或上传正式安装包。
+- 不生成或上传新的 Tauri `latest.json`。
+
+如果修改包含用户可见功能、行为、兼容性、数据语义或重要修复，应把说明写入 `CHANGELOG.md` 的 `[Unreleased]`。纯文档排版、内部重构或测试补充不需要制造 Changelog 噪声。
+
+普通 push 不会触发第 19 节的发布 workflow，因为该 workflow 只监听 `v*` tag。只有明确准备正式发布时，才进入第 7 节的版本发布流程。
+
 ---
 
 ## 7. 准备一个正式版本
