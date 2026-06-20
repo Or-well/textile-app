@@ -2144,7 +2144,7 @@ jobs:
         run: npm run tauri:release:check
 
       - name: Build signed installers and create draft release
-        uses: tauri-apps/tauri-action@v1
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -2155,7 +2155,7 @@ jobs:
           releaseBody: "See CHANGELOG.md for the complete release notes."
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
 ```
 
@@ -2168,10 +2168,10 @@ jobs:
 - 测试和 Web 构建失败时不会执行发布。
 - 构建若修改了未提交的版本清单，`git diff --exit-code` 会阻止发布。
 - `releaseDraft: true` 只创建草稿，避免未检查的版本立即公开。
-- `uploadUpdaterJson: true` 让 action 自动上传 `latest.json`。
+- `includeUpdaterJson: true` 让 action 自动上传 `latest.json`；这是 `tauri-action@v0.6.2` 支持的参数名。
 - `updaterJsonPreferNsis: true` 在 NSIS 和 MSI 同时存在时，让 `latest.json` 优先使用 NSIS `.exe`。
 
-`tauri-apps/tauri-action@v1` 是当前 action 主版本。以后升级主版本前应先阅读官方迁移说明，不要无检查改成不存在或行为不同的版本。
+`tauri-apps/tauri-action@v0.6.2` 是当前确认存在的 action tag。以后升级前应先到 `tauri-apps/tauri-action` 的 tags 页面确认目标 tag 存在，不要只根据 README 示例改成不存在的版本。
 
 ### 19.6 为什么让 Release 保持草稿
 
