@@ -156,4 +156,3 @@ scripts/            版本清单和发布检查脚本
 - [代码代理开发规范](AGENTS.md)
 - [Tauri Updater 发布说明](docs/05_tauri_updater_release.md)
 
-`docs/01_*` 到 `docs/04_*` 包含项目早期设计资料，可能保留已经废弃的设计路线。维护和使用时以当前代码、本文档和 `AGENTS.md` 为准。
