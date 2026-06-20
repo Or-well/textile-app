@@ -52,13 +52,15 @@ export function normalizeProgressWeights(
   workflow?: WorkflowInput,
 ): ProgressWeights {
   const workflowSettings = normalizeWorkflowSettings(workflow);
+  const proofreadEnabled = workflowSettings.proofread_required > 0;
   const reviewEnabled = workflowSettings.review_required;
   const source = (weights ?? DEFAULT_PROGRESS_WEIGHTS) as NormalizableProgressWeights;
 
   const translationWeight =
     source.translation ?? source.translationWeight ?? DEFAULT_PROGRESS_WEIGHTS.translationWeight;
-  const proofreadWeight =
-    source.proofread ?? source.proofreadWeight ?? DEFAULT_PROGRESS_WEIGHTS.proofreadWeight;
+  const proofreadWeight = proofreadEnabled
+    ? source.proofread ?? source.proofreadWeight ?? DEFAULT_PROGRESS_WEIGHTS.proofreadWeight
+    : 0;
   const reviewWeight = reviewEnabled
     ? source.review ?? source.reviewWeight ?? DEFAULT_PROGRESS_WEIGHTS.reviewWeight
     : 0;
@@ -103,20 +105,23 @@ export function calculateEntryProgress(
   const totalEntries = rows.length;
   const untranslatedEntries = countByStatus(rows, "untranslated");
   const translatedEntries = countByStatus(rows, "translated");
-  const proofreadEntries = rows.filter((entry) =>
-    isEntryProofreadComplete(entry, workflowSettings),
-  ).length;
+  const proofreadEntries = workflowSettings.proofread_required > 0
+    ? rows.filter((entry) =>
+        isEntryProofreadComplete(entry, workflowSettings),
+      ).length
+    : 0;
   const reviewedEntries = workflowSettings.review_required
     ? countByStatus(rows, "reviewed")
     : 0;
   const disputedEntries = rows.filter((entry) => entry.disputed === true).length;
-  const translatedStageEntries =
-    translatedEntries + countByStatus(rows, "proofread") + countByStatus(rows, "reviewed");
+  const entriesWithTarget = rows.filter((entry) => entry.target.trim()).length;
 
   const translationRatio =
-    totalEntries === 0 ? 0 : translatedStageEntries / totalEntries;
+    totalEntries === 0 ? 0 : entriesWithTarget / totalEntries;
   const proofreadRatio =
-    totalEntries === 0 ? 0 : proofreadEntries / totalEntries;
+    totalEntries === 0 || workflowSettings.proofread_required === 0
+      ? 0
+      : proofreadEntries / totalEntries;
   const reviewRatio =
     totalEntries === 0 || !workflowSettings.review_required
       ? 0
@@ -133,7 +138,11 @@ export function calculateEntryProgress(
     proofreadEntries,
     reviewedEntries,
     disputedEntries,
-    completedEntries: workflowSettings.review_required ? reviewedEntries : proofreadEntries,
+    completedEntries: workflowSettings.review_required
+      ? reviewedEntries
+      : workflowSettings.proofread_required > 0
+        ? proofreadEntries
+        : entriesWithTarget,
     translationProgress: toPercent(translationRatio),
     proofreadProgress: toPercent(proofreadRatio),
     reviewProgress: toPercent(reviewRatio),

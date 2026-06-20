@@ -69,6 +69,73 @@ describe("entry version history", () => {
     });
   });
 
+  it("resets proofread and review audit fields when target changes", async () => {
+    const { storage, entry } = await createEntryStorage({
+      status: "proofread",
+      proofread_by: ["proofreader-1"],
+      proofread_count: 1,
+      reviewed_by: "",
+    });
+    const actor = createMember(["owner"], { id: "owner-1" });
+
+    setEntriesProjectStorage(storage);
+
+    await expect(
+      saveEntry({ ...entry, target: "Changed" }, { actor }),
+    ).resolves.toMatchObject({
+      target: "Changed",
+      status: "translated",
+      translated_by: actor.id,
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
+    });
+  });
+
+  it("requires reviewed entries to be rolled back before editing target", async () => {
+    const { storage, entry } = await createEntryStorage({
+      status: "reviewed",
+      proofread_by: ["proofreader-1"],
+      proofread_count: 1,
+      reviewed_by: "reviewer-1",
+    });
+    const actor = createMember(["owner"], { id: "owner-1" });
+
+    setEntriesProjectStorage(storage);
+
+    await expect(
+      saveEntry({ ...entry, target: "Changed" }, { actor }),
+    ).rejects.toThrow("必须先退回校对");
+    await expect(
+      storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([{ target: "Original", status: "reviewed" }]);
+  });
+
+  it("ignores protected fields supplied through ordinary target save", async () => {
+    const { storage, entry } = await createEntryStorage();
+    const actor = createMember(["owner"], { id: "owner-1" });
+
+    setEntriesProjectStorage(storage);
+
+    await expect(
+      saveEntry(
+        {
+          ...entry,
+          target: "Changed",
+          locked: true,
+          hidden: true,
+          assignee: "other-member",
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      target: "Changed",
+      locked: false,
+      hidden: false,
+      assignee: "",
+    });
+  });
+
   it("does not create a history event for an unchanged save", async () => {
     const { storage, entry } = await createEntryStorage();
     const actor = createMember(["owner"], { id: "owner-1" });
@@ -162,7 +229,7 @@ describe("entry version history", () => {
     expect(restored).toMatchObject({
       target: "First version",
       status: "translated",
-      translated_by: "translator-1",
+      translated_by: actor.id,
       proofread_by: [],
       proofread_count: 0,
       reviewed_by: "",
@@ -174,8 +241,8 @@ describe("entry version history", () => {
       detail: {
         before_target: "Reviewed version",
         after_target: "First version",
-        before_translated_by: "translator-1",
-        after_translated_by: "translator-1",
+        before_translated_by: actor.id,
+        after_translated_by: actor.id,
         restored_from_event_id: firstVersionEvent!.id,
         restored_from_snapshot: "after",
       },

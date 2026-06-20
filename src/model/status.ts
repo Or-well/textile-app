@@ -139,6 +139,7 @@ export function getEntryProofreadCount(entry: {
 
 export function isEntryProofreadComplete(
   entry: {
+    target?: string;
     proofread_by?: string[] | string;
     proofread_count?: number;
   },
@@ -146,7 +147,11 @@ export function isEntryProofreadComplete(
 ): boolean {
   const settings = normalizeWorkflowSettings(workflow);
 
-  return getEntryProofreadCount(entry) >= settings.proofread_required;
+  if (settings.proofread_required === 0) {
+    return hasText(entry.target);
+  }
+
+  return hasText(entry.target) && getEntryProofreadCount(entry) >= settings.proofread_required;
 }
 
 export function isEntryReviewComplete(
@@ -228,6 +233,35 @@ export function normalizeEntries(entries: LegacyEntry[]): Entry[] {
   return entries.map(normalizeEntry);
 }
 
+export interface EntryTargetChangeOptions {
+  userId: string;
+  updatedAt: string;
+}
+
+export function applyEntryTargetChange(
+  entry: Entry,
+  target: string,
+  options: EntryTargetChangeOptions,
+): Entry {
+  if (target === entry.target) {
+    return entry;
+  }
+
+  const hasTarget = hasText(target);
+
+  return normalizeEntry({
+    ...entry,
+    target,
+    status: hasTarget ? "translated" : "untranslated",
+    translated_by: hasTarget ? options.userId : "",
+    proofread_by: [],
+    proofread_count: 0,
+    reviewed_by: "",
+    updated_at: options.updatedAt,
+    updated_by: options.userId,
+  });
+}
+
 export function applyEntryWorkflowStatus(
   entry: Entry,
   status: EntryStatus,
@@ -297,7 +331,11 @@ export function getEntryWorkflowLabel(
   }
 
   if (entry.status === "reviewed") {
-    return settings.review_required ? "已审核" : "已校对";
+    return settings.review_required
+      ? "已审核"
+      : settings.proofread_required > 0
+        ? "已校对"
+        : "已翻译";
   }
 
   if (settings.proofread_required > 0 && proofreadCount > 0 && proofreadCount < settings.proofread_required) {
@@ -312,7 +350,7 @@ export function getEntryWorkflowLabel(
     return "待审核";
   }
 
-  return "已校对";
+  return settings.proofread_required > 0 ? "已校对" : "已翻译";
 }
 
 export function getNextProofreadLabel(

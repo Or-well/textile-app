@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyEntryTargetChange,
   applyEntryWorkflowStatus,
   getEntryProofreadCount,
   inferEntryStatus,
+  isEntryProofreadComplete,
   isEntryReleaseComplete,
   normalizeEntry,
   normalizeProofreadUsers,
@@ -63,6 +65,27 @@ describe("proofread normalization", () => {
         proofread_count: 1,
       }),
     ).toBe(2);
+  });
+});
+
+describe("proofread completion", () => {
+  it("requires translated text even when proofread count is enough", () => {
+    expect(
+      isEntryProofreadComplete(
+        createEntry({
+          target: "",
+          proofread_count: 1,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isEntryProofreadComplete(
+        createEntry({
+          target: "Translated",
+          proofread_count: 1,
+        }),
+      ),
+    ).toBe(true);
   });
 });
 
@@ -134,6 +157,64 @@ describe("applyEntryWorkflowStatus", () => {
       status: "proofread",
       proofread_count: 2,
       proofread_by: ["proofreader-1", "proofreader-2"],
+    });
+  });
+});
+
+describe("applyEntryTargetChange", () => {
+  it("resets downstream workflow when translated text changes", () => {
+    const result = applyEntryTargetChange(
+      createEntry({
+        target: "Reviewed",
+        status: "reviewed",
+        translated_by: "translator-1",
+        proofread_by: ["proofreader-1"],
+        proofread_count: 1,
+        reviewed_by: "reviewer-1",
+        disputed: true,
+      }),
+      "Changed",
+      {
+        userId: "editor-1",
+        updatedAt: "2026-06-21T00:00:00.000Z",
+      },
+    );
+
+    expect(result).toMatchObject({
+      target: "Changed",
+      status: "translated",
+      translated_by: "editor-1",
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
+      disputed: true,
+      updated_by: "editor-1",
+      updated_at: "2026-06-21T00:00:00.000Z",
+    });
+  });
+
+  it("returns an empty translation to untranslated", () => {
+    expect(
+      applyEntryTargetChange(
+        createEntry({
+          target: "Translated",
+          status: "proofread",
+          translated_by: "translator-1",
+          proofread_by: ["proofreader-1"],
+          proofread_count: 1,
+        }),
+        " ",
+        {
+          userId: "editor-1",
+          updatedAt: "2026-06-21T00:00:00.000Z",
+        },
+      ),
+    ).toMatchObject({
+      status: "untranslated",
+      translated_by: "",
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
     });
   });
 });

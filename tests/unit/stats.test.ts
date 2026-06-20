@@ -36,6 +36,26 @@ describe("normalizeProgressWeights", () => {
     expect(weights.reviewWeight).toBe(0);
   });
 
+  it("removes proofread and review weights when both stages are disabled", () => {
+    expect(
+      normalizeProgressWeights(
+        {
+          translation: 0.4,
+          proofread: 0.3,
+          review: 0.3,
+        },
+        {
+          proofread_required: 0,
+          review_required: false,
+        },
+      ),
+    ).toEqual({
+      translationWeight: 1,
+      proofreadWeight: 0,
+      reviewWeight: 0,
+    });
+  });
+
   it("falls back to defaults for invalid or empty weights", () => {
     expect(
       normalizeProgressWeights({
@@ -138,6 +158,40 @@ describe("calculateEntryProgress", () => {
       progressPercent: 79,
       proofreadRequired: 2,
       reviewRequired: false,
+    });
+  });
+
+  it("uses translated text as completion when proofread and review are disabled", () => {
+    const stats = calculateEntryProgress(
+      [
+        createEntry({ id: "empty" }),
+        createEntry({
+          id: "translated",
+          target: "Translated",
+          status: "translated",
+        }),
+      ],
+      undefined,
+      {
+        proofread_required: 0,
+        review_required: false,
+      },
+    );
+
+    expect(stats).toMatchObject({
+      totalEntries: 2,
+      proofreadEntries: 0,
+      reviewedEntries: 0,
+      completedEntries: 1,
+      translationProgress: 50,
+      proofreadProgress: 0,
+      reviewProgress: 0,
+      progressPercent: 50,
+      progressWeights: {
+        translationWeight: 1,
+        proofreadWeight: 0,
+        reviewWeight: 0,
+      },
     });
   });
 });

@@ -6,6 +6,7 @@ import type {
   ProjectWorkflowSettings,
 } from "../model/types";
 import {
+  applyEntryTargetChange,
   getEntryProofreadCount,
   normalizeEntries,
   normalizeEntry,
@@ -625,6 +626,17 @@ function assertCanWriteEntry(
     targetChanged ||
     (nextEntry.status === "translated" && originalEntry.status === "untranslated");
 
+  if (targetChanged) {
+    if (!canTranslateEntry(actor, originalEntry)) {
+      throw new Error(
+        originalEntry.status === "reviewed"
+          ? "已审核词条必须先退回校对，才能修改译文。"
+          : "当前成员没有修改译文的权限。",
+      );
+    }
+    return;
+  }
+
   if (isRollbackAction) {
     if (!canRollbackEntry(actor, originalEntry)) {
       throw new Error("Permission denied.");
@@ -647,14 +659,14 @@ function assertCanWriteEntry(
   }
 
   if (isTranslateAction) {
-    if (!canTranslateEntry(actor, originalEntry) && !canEditEntry(actor, originalEntry)) {
+    if (!canTranslateEntry(actor, originalEntry)) {
       throw new Error("Permission denied.");
     }
     return;
   }
 
   if (contextChanged) {
-    return;
+    throw new Error("上下文必须通过上下文编辑入口修改。");
   }
 
   if (!canEditEntry(actor, originalEntry)) {
@@ -668,13 +680,17 @@ function applyEntryAuditFields(
   actor: Member,
 ): Entry {
   const now = nowIso();
-  const target = entry.target;
-  const targetBecameFilled =
-    !originalEntry.target.trim() && target.trim().length > 0;
+  const targetChanged = entry.target !== originalEntry.target;
+
+  if (targetChanged) {
+    return applyEntryTargetChange(originalEntry, entry.target, {
+      userId: actor.id,
+      updatedAt: now,
+    });
+  }
+
   const statusBecameTranslated =
     entry.status === "translated" && originalEntry.status === "untranslated";
-  const shouldMarkTranslated =
-    target.trim().length > 0 && originalEntry.status === "untranslated";
   const originalProofreadCount = getEntryProofreadCount(originalEntry);
   const nextProofreadCount = getEntryProofreadCount(entry);
   const proofreadAction = nextProofreadCount > originalProofreadCount;
@@ -682,12 +698,12 @@ function applyEntryAuditFields(
   const savedEntry: Entry = normalizeEntry({
     ...originalEntry,
     ...entry,
-    status: shouldMarkTranslated ? "translated" : entry.status,
+    target: originalEntry.target,
     updated_at: now,
     updated_by: actor.id,
   });
 
-  if (targetBecameFilled || statusBecameTranslated || shouldMarkTranslated) {
+  if (statusBecameTranslated) {
     savedEntry.translated_by = actor.id;
   }
 
@@ -832,7 +848,7 @@ export async function importEntryTranslations(
   const entriesByIndex = new Map(entries.map((entry) => [entry.index, entry]));
   let matched = 0;
   let skipped = 0;
-  const now = nowIso();
+  const updatedAt = nowIso();
 
   for (const row of rows) {
     const entry =
@@ -844,20 +860,17 @@ export async function importEntryTranslations(
       continue;
     }
 
-    const targetWasEmpty = !entry.target.trim();
-
-    entry.target = row.target;
-    entry.updated_at = now;
-    entry.updated_by = userId || entry.updated_by;
-
-    if (row.target.trim() && entry.status === "untranslated") {
-      entry.status = "translated";
+    if (entry.locked || entry.hidden) {
+      skipped += 1;
+      continue;
     }
 
-    if (row.target.trim() && (targetWasEmpty || entry.status === "translated") && userId) {
-      entry.translated_by = userId;
-    }
+    const changedEntry = applyEntryTargetChange(entry, row.target, {
+      userId: userId || entry.updated_by,
+      updatedAt,
+    });
 
+    Object.assign(entry, changedEntry);
     matched += 1;
   }
 
@@ -971,7 +984,19 @@ export async function saveEntry(
     }
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
-    const mergedEntry = normalizeEntry({ ...originalEntry, ...entry });
+
+    if (entry.context !== originalEntry.context) {
+      throw new Error("上下文必须通过上下文编辑入口修改。");
+    }
+
+    const mergedEntry = normalizeEntry({
+      ...originalEntry,
+      target: entry.target,
+      status: entry.status,
+      proofread_by: entry.proofread_by,
+      proofread_count: entry.proofread_count,
+      reviewed_by: entry.reviewed_by,
+    });
 
     assertCanWriteEntry(actor, originalEntry, mergedEntry, options.workflow);
 

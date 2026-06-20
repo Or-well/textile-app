@@ -44,6 +44,9 @@ const target = ref("");
 const copyMessage = ref("");
 
 const currentUser = computed(() => getCurrentUser());
+const hasUnsavedTarget = computed(
+  () => Boolean(props.entry) && target.value !== props.entry?.target,
+);
 const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
 const canSaveAsTranslated = computed(
   () =>
@@ -52,6 +55,7 @@ const canSaveAsTranslated = computed(
     canTranslateEntry(currentUser.value, props.entry),
 );
 const canProofread = computed(() =>
+  !hasUnsavedTarget.value &&
   canProofreadEntry(currentUser.value, props.entry, props.workflow),
 );
 const proofreadBlockMessage = computed(() => {
@@ -72,9 +76,11 @@ const proofreadBlockMessage = computed(() => {
   );
 });
 const canReview = computed(() =>
+  !hasUnsavedTarget.value &&
   canReviewEntry(currentUser.value, props.entry, props.workflow),
 );
 const canRollback = computed(() =>
+  !hasUnsavedTarget.value &&
   canRollbackEntry(currentUser.value, props.entry),
 );
 const canRollbackToTranslated = computed(
@@ -102,6 +108,17 @@ const hasWorkflowActions = computed(
 const permissionMessage = computed(() =>
   props.entry && !canSaveEntry.value && !hasWorkflowActions.value
     ? "当前用户没有此操作权限。"
+    : "",
+);
+const workflowDraftMessage = computed(() =>
+  hasUnsavedTarget.value &&
+  props.entry &&
+  (
+    canProofreadEntry(currentUser.value, props.entry, props.workflow) ||
+    canReviewEntry(currentUser.value, props.entry, props.workflow) ||
+    canRollbackEntry(currentUser.value, props.entry)
+  )
+    ? "译文已修改，请先保存；保存后词条会退回已翻译状态，再重新校对或审核。"
     : "",
 );
 const workflowStatusLabel = computed(() =>
@@ -258,6 +275,9 @@ async function copyEntryId() {
     </p>
     <p v-if="proofreadBlockMessage" class="permission-message">
       {{ proofreadBlockMessage }}
+    </p>
+    <p v-if="workflowDraftMessage" class="permission-message">
+      {{ workflowDraftMessage }}
     </p>
 
     <footer class="actions">

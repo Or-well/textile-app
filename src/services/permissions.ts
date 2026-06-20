@@ -311,7 +311,7 @@ export function canEditEntry(
   user: Member | null | undefined,
   entry: Entry | null | undefined,
 ): boolean {
-  if (!entry || entry.locked || entry.hidden) {
+  if (!entry || entry.locked || entry.hidden || entry.status === "reviewed") {
     return false;
   }
 

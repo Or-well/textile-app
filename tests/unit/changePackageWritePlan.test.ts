@@ -19,7 +19,9 @@ import { createProjectStorage } from "../../src/services/projectStorage";
 import { createEntry, createMember, createProject } from "./factories";
 import { FailingProjectStorage } from "./failingProjectStorage";
 
-async function createChangePackageFixture(): Promise<{
+async function createChangePackageFixture(options: {
+  packageEntry?: Partial<Entry>;
+} = {}): Promise<{
   storage: ReturnType<typeof createProjectStorage>;
   actor: Member;
   originalEntry: Entry;
@@ -42,6 +44,7 @@ async function createChangePackageFixture(): Promise<{
   });
   const packageEntry = {
     ...originalEntry,
+    ...options.packageEntry,
     updated_at: "2026-02-01T00:00:00.000Z",
     updated_by: contributor.id,
   };
@@ -170,5 +173,49 @@ describe("ordinary change-package write plan", () => {
     await expect(
       fixture.storage.readJsonl("logs/events.jsonl"),
     ).resolves.toEqual([]);
+  });
+
+  it("resets downstream workflow when a package changes target", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        target: "Package changed",
+        status: "reviewed",
+        translated_by: "member-2",
+        proofread_by: ["proofreader-1"],
+        proofread_count: 1,
+        reviewed_by: "reviewer-1",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            entryId: fixture.originalEntry.id,
+            action: "use_package",
+          },
+        ],
+        {
+          actor: fixture.actor,
+        },
+      ),
+    ).resolves.toMatchObject({
+      appliedEntries: 1,
+    });
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        target: "Package changed",
+        status: "translated",
+        translated_by: "member-2",
+        proofread_by: [],
+        proofread_count: 0,
+        reviewed_by: "",
+      },
+    ]);
   });
 });

@@ -11,7 +11,11 @@ import type {
   Task,
   Term,
 } from "../model/types";
-import { normalizeEntries, normalizeEntry } from "../model/status";
+import {
+  applyEntryTargetChange,
+  normalizeEntries,
+  normalizeEntry,
+} from "../model/status";
 import { cacheEntriesForFile } from "./entries";
 import { nowIso } from "../utils/time";
 import { createId } from "../utils/id";
@@ -2212,15 +2216,31 @@ export async function applyChangePackage(
       }
 
       if (resolution?.action === "manual_merge") {
-        currentEntries[entryIndex] = {
-          ...currentEntries[entryIndex],
-          target: resolution.target ?? currentEntries[entryIndex].target,
-          status: resolution.status ?? currentEntries[entryIndex].status,
-          updated_at: nowIso(),
-          updated_by: changePackage.manifest.user_id,
-        };
+        const currentEntry = currentEntries[entryIndex];
+        const target = resolution.target ?? currentEntry.target;
+        const updatedAt = nowIso();
+
+        currentEntries[entryIndex] = target !== currentEntry.target
+          ? applyEntryTargetChange(currentEntry, target, {
+              userId: changePackage.manifest.user_id,
+              updatedAt,
+            })
+          : normalizeEntry({
+              ...currentEntry,
+              status: resolution.status ?? currentEntry.status,
+              updated_at: updatedAt,
+              updated_by: changePackage.manifest.user_id,
+            });
       } else {
-        currentEntries[entryIndex] = normalizeEntry(packageEntry);
+        const currentEntry = currentEntries[entryIndex];
+
+        currentEntries[entryIndex] =
+          packageEntry.target !== currentEntry.target
+            ? applyEntryTargetChange(currentEntry, packageEntry.target, {
+                userId: changePackage.manifest.user_id,
+                updatedAt: nowIso(),
+              })
+            : normalizeEntry(packageEntry);
       }
 
       changed = true;

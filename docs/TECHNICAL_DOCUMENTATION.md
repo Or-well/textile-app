@@ -811,11 +811,13 @@ comments/<file_id>/<6位entry index>.jsonl
 保存规则：
 
 - `saveEntry(entry, { actor, workflow })` 需要当前成员。
-- 从磁盘找到原词条，再合并传入值。
+- 从磁盘找到原词条，再只合并普通保存允许控制的 `target`、`status`、`proofread_by`、`proofread_count`、`reviewed_by` 字段。
 - 根据原值和新值判断翻译、校对、审核、回退或普通编辑。
 - service 内再次检查权限。
+- 普通保存不能顺带修改 `locked`、`hidden`、`assignee` 等管理字段；上下文必须走 `updateEntryContext()`。
 - 保存者写入 `updated_by` 和 `updated_at`。
-- 首次填入译文时写 `translated_by`。
+- 译文变化统一走 `applyEntryTargetChange()`：非空译文回到 `translated`，空译文回到 `untranslated`，清空校对和审核审计字段，保留争议标记。
+- 已审核词条不能直接普通编辑译文，必须先退回到校对阶段。
 - 校对增加 proofread user/count。
 - 审核写 `reviewed_by`。
 - 译文或状态真正变化时创建 `entry.updated` 版本事件；无变化保存不写事件。
@@ -1134,8 +1136,8 @@ review 0.3
 统计公式：
 
 ```text
-translationRatio = 已进入 translated/proofread/reviewed 的词条 / 总词条
-proofreadRatio = 达到所需校对次数的词条 / 总词条
+translationRatio = 有非空译文的词条 / 总词条
+proofreadRatio = proofread_required > 0 时达到所需校对次数的词条 / 总词条，否则 0
 reviewRatio = review_required 时 reviewed / 总词条，否则 0
 overall = 三个比例乘归一化权重后相加
 ```
@@ -1144,8 +1146,14 @@ overall = 三个比例乘归一化权重后相加
 
 - review weight 强制为 0。
 - translation/proofread 重新归一化。
-- `completedEntries` 使用校对完成数。
+- `completedEntries` 在校对开启时使用校对完成数；校对和审核都关闭时使用有译文词条数。
 - UI 应显示“未启用审核”。
+
+校对次数为 0 时：
+
+- proofread weight 强制为 0。
+- translation/review 按审核是否开启重新归一化。
+- 校对进度为 0，不把禁用阶段计为已完成。
 
 调用：
 
@@ -1356,7 +1364,7 @@ manifest 示例：
 4. 检查危险导入权限。
 5. 检测冲突。
 6. 要求每个冲突有 resolution。
-7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容。
+7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；包内译文改变时同样走 `applyEntryTargetChange()`，清空后续校对和审核状态。
 8. 维护包在内存中准备 project/members 最终内容。
 9. 去重合并包内 events，并生成导入日志事件。
 10. 将所有目标文件加入同一个补偿式写入计划。
