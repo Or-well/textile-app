@@ -74,10 +74,11 @@ npm run build
 
 `build` 的实际顺序：
 
-1. `prebuild` 执行 `scripts/generate-version-manifest.mjs`。
-2. 更新 `public/version.json`。
-3. `vue-tsc -b` 做 TypeScript 检查。
-4. Vite 构建。
+1. `prebuild` 执行 `scripts/sync-app-version.mjs`，把 `package.json` 版本同步到 Tauri 配置。
+2. `prebuild` 执行 `scripts/generate-version-manifest.mjs`。
+3. 更新 `public/version.json`。
+4. `vue-tsc -b` 做 TypeScript 检查。
+5. Vite 构建。
 
 预览：
 
@@ -1217,7 +1218,7 @@ manifest 示例：
   "user_name": "翻译A",
   "created_at": "2026-06-19T00:00:00.000Z",
   "content_hash": "sha256...",
-  "app_version": "0.2.0",
+  "app_version": "<package.json version>",
   "source_project_version": "1",
   "base_revision": "rev_xxx",
   "exported_by": "user_a",
@@ -1482,7 +1483,6 @@ const privateKeys = new Map<string, string>();
 风险和限制：
 
 - 审核关闭时 `only_reviewed` 仍按 reviewed 严格过滤，可能导出空内容。
-- `EXPORT_APP_VERSION` 当前硬编码为 `0.3.0`，与 `package.json` 的 `0.1.0` 不一致。
 - 结果只下载，不自动写项目 `exports/`。
 
 ## 41. `projectPackage.ts`
@@ -1785,12 +1785,10 @@ npm.cmd run tauri signer generate -- -w "$env:USERPROFILE\.tauri\textile.key"
 
 每次发布：
 
-1. 同步版本号：
-   - `package.json`
-   - `src-tauri/tauri.conf.json`
-   - `src-tauri/Cargo.toml`
-2. 提交代码并推送到 GitHub。
-3. 设置签名私钥环境变量：
+1. 修改 `package.json` 的版本号。
+2. 运行 `npm.cmd run version:sync`，同步 `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`。
+3. 提交代码并推送到 GitHub。
+4. 设置签名私钥环境变量：
 
 ```powershell
 $env:TAURI_SIGNING_PRIVATE_KEY="$env:USERPROFILE\.tauri\textile.key"
@@ -1802,13 +1800,13 @@ $env:TAURI_SIGNING_PRIVATE_KEY="$env:USERPROFILE\.tauri\textile.key"
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD="<password>"
 ```
 
-4. 运行发布检查：
+5. 运行发布检查：
 
 ```powershell
 npm.cmd run tauri:release:check
 ```
 
-5. 构建安装包和更新产物：
+6. 构建安装包和更新产物：
 
 ```powershell
 npm.cmd run tauri:build
@@ -2019,8 +2017,6 @@ npm run build
 - `chunk_size` 未用于真实分块。
 - `enable_tasks` 未控制任务页显示。
 - `only_reviewed` 在审核关闭时可能导出空内容。
-- 修改包 manifest 的应用版本硬编码为 0.2.0，与包版本不一致。
-- exporter manifest 应用版本硬编码为 0.3.0，与包版本不一致。
 - Web 下载地址未配置。
 - Tauri updater 公钥和 endpoint 未配置。
 - 私钥文件未加密，内存私钥刷新后丢失。
@@ -2039,9 +2035,8 @@ npm run build
 4. 统一 `ProjectStorage` 抽象，但应分模块迁移，不一次性重写。
 5. 让 `chunk_size` 真正控制分块，并提供旧 chunk 兼容测试。
 6. 明确审核关闭时成品过滤语义。
-7. 让应用版本统一来自 `package.json`。
-8. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
-9. 增加端到端手动测试清单或 Playwright 流程。
-10. 更新或标记早期设计文档的历史状态，避免误导维护者。
+7. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
+8. 增加端到端手动测试清单或 Playwright 流程。
+9. 更新或标记早期设计文档的历史状态，避免误导维护者。
 
 任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。

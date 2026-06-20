@@ -38,11 +38,13 @@ npm.cmd run tauri signer generate -- -w "$env:USERPROFILE\.tauri\textile.key"
 
 ## 发布前检查
 
-每次发布前同步版本号：
+每次发布前只手动修改 `package.json` 的版本号，然后同步桌面配置：
 
-- `package.json`
-- `src-tauri/tauri.conf.json`
-- `src-tauri/Cargo.toml`
+```powershell
+npm.cmd run version:sync
+```
+
+该脚本会更新 `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock` 中 Textile 自身的版本号。
 
 然后运行：
 

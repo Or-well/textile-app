@@ -8,6 +8,7 @@ import type {
 } from "../model/types";
 import { normalizeEntries } from "../model/status";
 import { nowIso } from "../utils/time";
+import { APP_VERSION } from "../utils/appVersion";
 import { createZip, type ZipContent } from "../utils/zip";
 import { exportCsvFile } from "./exporters/csvExporter";
 import { exportJsonFile } from "./exporters/jsonExporter";
@@ -102,7 +103,6 @@ export interface ExportProjectResult {
   summary: ReleaseExportSummary;
 }
 
-const EXPORT_APP_VERSION = "0.3.0";
 const REPORT_NAMES = ["untranslated", "disputes", "term-check"] as const;
 
 export const DEFAULT_RELEASE_EXPORT_SETTINGS: Required<ReleaseExportSettings> = {
@@ -371,7 +371,7 @@ function buildManifest(
     project_name: project.name,
     exported_at: exportedAt,
     exported_by: exportedBy || "unknown_user",
-    app_version: EXPORT_APP_VERSION,
+    app_version: APP_VERSION,
     entry_count: files.reduce((total, file) => total + file.entries.length, 0),
     format: options.format,
     only_reviewed: options.only_reviewed,

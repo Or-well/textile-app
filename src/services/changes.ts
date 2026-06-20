@@ -16,6 +16,7 @@ import { nowIso } from "../utils/time";
 import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
+import { APP_VERSION } from "../utils/appVersion";
 import type { ZipContent } from "../utils/zip";
 import {
   ensureDirectory,
@@ -180,7 +181,6 @@ export interface ApplyChangePackageOptions {
   actor?: Member | null;
 }
 
-const CHANGE_PACKAGE_APP_VERSION = "0.2.0";
 const SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION = 1;
 const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_entries: 0,
@@ -1520,7 +1520,7 @@ export async function exportChangePackage(
     changed_entries: summary.changed_entries,
     new_comments: summary.changed_comments,
     content_hash: contentHash,
-    app_version: CHANGE_PACKAGE_APP_VERSION,
+    app_version: APP_VERSION,
     source_project_version: String(project.schema_version),
     base_revision: baseRevision,
     target_revision: targetRevision,

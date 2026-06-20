@@ -1,5 +1,5 @@
-import packageInfo from "../../package.json";
 import { subscribeAppOperations } from "./appOperation";
+import { APP_VERSION } from "../utils/appVersion";
 import type {
   AppPlatform,
   AppUpdateState,
@@ -65,7 +65,7 @@ let unsubscribeOperations: (() => void) | null = null;
 
 let state: AppUpdateState = {
   status: "idle",
-  currentVersion: normalizeVersion(packageInfo.version),
+  currentVersion: APP_VERSION,
   channel: readUpdateChannel(),
   platform: detectPlatform(),
   sourceUrl: getSourceUrl(detectPlatform()),
@@ -589,10 +589,6 @@ function getChannelLabel(channel: UpdateChannel): string {
   return channel === "beta" ? "beta" : "stable";
 }
 
-function normalizeVersion(version: string): string {
-  return version.trim().replace(/^v/i, "");
-}
-
 function readUpdateChannel(): UpdateChannel {
   const storedValue = readStorage(UPDATE_CHANNEL_STORAGE_KEY);
   return storedValue === "beta" ? "beta" : "stable";
@@ -664,4 +660,3 @@ function broadcastMessage(message: BroadcastMessage): void {
 function createSourceId(): string {
   return `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
-

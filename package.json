@@ -4,14 +4,18 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prebuild": "node scripts/generate-version-manifest.mjs",
+    "prebuild": "node scripts/sync-app-version.mjs && node scripts/generate-version-manifest.mjs",
+    "version:sync": "node scripts/sync-app-version.mjs",
     "version:manifest": "node scripts/generate-version-manifest.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build --configLoader runner",
     "preview": "vite preview",
     "tauri": "tauri",
+    "pretauri:dev": "node scripts/sync-app-version.mjs",
     "tauri:dev": "tauri dev",
+    "pretauri:build": "node scripts/sync-app-version.mjs",
     "tauri:build": "tauri build",
+    "pretauri:release:check": "node scripts/sync-app-version.mjs",
     "tauri:release:check": "node scripts/check-tauri-release.mjs"
   },
   "dependencies": {
