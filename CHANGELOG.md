@@ -4,6 +4,12 @@
 
 格式参考 Keep a Changelog，版本号以根目录 `package.json` 为准。
 
+## [Unreleased]
+
+### Fixed
+
+- 修复 `version:manifest` 构建哈希受 Windows 行尾转换影响，导致发布工作流“Check generated files are committed”误报未提交变更的问题。
+
 ## [0.2.2] - 2026-06-20
 
 ### Added

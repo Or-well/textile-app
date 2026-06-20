@@ -1,9 +1,30 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join, relative } from "node:path";
+import { extname, join, relative } from "node:path";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
+const TEXT_FILE_EXTENSIONS = new Set([
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".jsonl",
+  ".map",
+  ".md",
+  ".mjs",
+  ".svg",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".vue",
+  ".webmanifest",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
 const packageJsonPath = join(root, "package.json");
 const versionJsonPath = join(root, "public", "version.json");
 const packageInfo = JSON.parse(readFileSync(packageJsonPath, "utf8"));
@@ -85,10 +106,23 @@ function addPathToHash(hash, targetPath) {
     return;
   }
 
-  hash.update(relative(root, targetPath).replaceAll("\\", "/"));
+  const relativePath = relative(root, targetPath).replaceAll("\\", "/");
+  hash.update(relativePath);
   hash.update("\0");
-  hash.update(readFileSync(targetPath));
+  hash.update(normalizeContentForHash(relativePath, readFileSync(targetPath)));
   hash.update("\0");
+}
+
+function normalizeContentForHash(relativePath, content) {
+  if (!isTextFile(relativePath)) {
+    return content;
+  }
+
+  return Buffer.from(content.toString("utf8").replaceAll("\r\n", "\n"), "utf8");
+}
+
+function isTextFile(relativePath) {
+  return TEXT_FILE_EXTENSIONS.has(extname(relativePath).toLowerCase());
 }
 
 function normalizeVersion(version) {
