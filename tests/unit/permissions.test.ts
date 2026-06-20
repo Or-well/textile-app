@@ -12,6 +12,8 @@ import {
   canTranslateEntry,
   getDefaultRolePermissions,
   getEffectivePermissions,
+  getProofreadBlockMessage,
+  getProofreadBlockReason,
   validateRolePermissionChange,
 } from "../../src/services/permissions";
 import { createEntry, createMember, createProject } from "./factories";
@@ -135,6 +137,37 @@ describe("entry workflow permissions", () => {
         { proofread_required: 2 },
       ),
     ).toBe(false);
+  });
+
+  it("explains why a proofreader is blocked", () => {
+    const proofreader = createMember(["proofreader"], {
+      id: "proofreader-1",
+    });
+    const selfTranslatedEntry = createEntry({
+      target: "Translated",
+      status: "translated",
+      translated_by: proofreader.id,
+    });
+    const reason = getProofreadBlockReason(
+      proofreader,
+      selfTranslatedEntry,
+      {
+        proofread_required: 1,
+        allow_self_proofread: false,
+      },
+    );
+
+    expect(reason).toBe("self_proofread_disabled");
+    expect(getProofreadBlockMessage(reason)).toBe(
+      "当前用户被记录为该译文的译者，项目未允许校对自己的译文。",
+    );
+    expect(
+      getProofreadBlockReason(
+        proofreader,
+        { ...selfTranslatedEntry, translated_by: "translator-1" },
+        { proofread_required: 1 },
+      ),
+    ).toBeNull();
   });
 
   it("requires completed proofread and a separate reviewer when configured", () => {

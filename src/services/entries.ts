@@ -1026,11 +1026,17 @@ export async function restoreEntryVersion(
       snapshot === "before"
         ? versionEvent.detail.before_target
         : versionEvent.detail.after_target;
+    const restoredTranslatedBy =
+      snapshot === "before"
+        ? versionEvent.detail.before_translated_by
+        : versionEvent.detail.after_translated_by;
     const restoredEntry: Entry = normalizeEntry({
       ...originalEntry,
       target: restoredTarget,
       status: restoredTarget.trim() ? "translated" : "untranslated",
-      translated_by: restoredTarget.trim() ? actor.id : "",
+      translated_by: restoredTarget.trim()
+        ? restoredTranslatedBy ?? ""
+        : "",
       proofread_by: [],
       proofread_count: 0,
       reviewed_by: "",

@@ -104,7 +104,7 @@ changes/
 - 保存者必须写入 `updated_by` 和 `updated_at`。
 - 翻译、校对、审核审计字段通过现有状态函数和 `entries.saveEntry()` 维护。
 - 手工保存导致译文或状态变化时，entries chunk 与 `logs/events.jsonl` 的版本事件必须通过同一写入计划提交；无变化保存不得产生空历史。
-- 恢复历史译文必须追加新事件而不是改写旧日志，并将工作流重置为 untranslated/translated、清空校对审核字段、保留争议标记。
+- 恢复历史译文必须追加新事件而不是改写旧日志，并将工作流重置为 untranslated/translated、清空校对审核字段、保留争议标记；恢复者只写 `updated_by`，不能被误记为历史译文的 `translated_by`。
 - 所有页面、任务和导出摘要的进度统一走 `services/stats.ts`。
 - 计算进度时必须传入项目的 `settings.progress_weights` 和 `settings.workflow`。
 - 关闭审核后审核权重为 0，其余权重重新归一化；UI 显示“未启用审核”。

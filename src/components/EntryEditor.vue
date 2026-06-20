@@ -14,6 +14,8 @@ import {
   canReviewEntry,
   canRollbackEntry,
   canTranslateEntry,
+  getProofreadBlockMessage,
+  getProofreadBlockReason,
   getCurrentUser,
 } from "../services/permissions";
 
@@ -52,6 +54,23 @@ const canSaveAsTranslated = computed(
 const canProofread = computed(() =>
   canProofreadEntry(currentUser.value, props.entry, props.workflow),
 );
+const proofreadBlockMessage = computed(() => {
+  if (
+    !props.entry ||
+    (props.entry.status !== "translated" &&
+      props.entry.status !== "proofread")
+  ) {
+    return "";
+  }
+
+  return getProofreadBlockMessage(
+    getProofreadBlockReason(
+      currentUser.value,
+      props.entry,
+      props.workflow,
+    ),
+  );
+});
 const canReview = computed(() =>
   canReviewEntry(currentUser.value, props.entry, props.workflow),
 );
@@ -236,6 +255,9 @@ async function copyEntryId() {
 
     <p v-if="permissionMessage" class="permission-message">
       {{ permissionMessage }}
+    </p>
+    <p v-if="proofreadBlockMessage" class="permission-message">
+      {{ proofreadBlockMessage }}
     </p>
 
     <footer class="actions">

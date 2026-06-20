@@ -344,43 +344,121 @@ export function canTranslateEntry(
   );
 }
 
-export function canProofreadEntry(
+export type ProofreadBlockReason =
+  | "missing_entry"
+  | "missing_user"
+  | "missing_permission"
+  | "entry_locked"
+  | "entry_hidden"
+  | "entry_disputed"
+  | "empty_target"
+  | "proofread_disabled"
+  | "already_reviewed"
+  | "proofread_complete"
+  | "self_proofread_disabled"
+  | "already_proofread_by_user"
+  | "invalid_status";
+
+export function getProofreadBlockReason(
   user: Member | null | undefined,
   entry: Entry | null | undefined,
   workflow?: ProjectWorkflowSettings,
-): boolean {
-  if (
-    !entry ||
-    !user?.id ||
-    entry.disputed ||
-    !entry.target.trim() ||
-    !canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_PROOFREAD)
-  ) {
-    return false;
+): ProofreadBlockReason | null {
+  if (!entry) {
+    return "missing_entry";
+  }
+
+  if (!user?.id) {
+    return "missing_user";
+  }
+
+  if (!can(user, PERMISSION_ACTIONS.ENTRY_PROOFREAD)) {
+    return "missing_permission";
+  }
+
+  if (entry.locked) {
+    return "entry_locked";
+  }
+
+  if (entry.hidden) {
+    return "entry_hidden";
+  }
+
+  if (entry.disputed) {
+    return "entry_disputed";
+  }
+
+  if (!entry.target.trim()) {
+    return "empty_target";
   }
 
   const settings = normalizeWorkflowSettings(workflow);
 
-  if (settings.proofread_required <= 0 || entry.status === "reviewed") {
-    return false;
+  if (settings.proofread_required <= 0) {
+    return "proofread_disabled";
+  }
+
+  if (entry.status === "reviewed") {
+    return "already_reviewed";
   }
 
   if (getEntryProofreadCount(entry) >= settings.proofread_required) {
-    return false;
+    return "proofread_complete";
   }
 
   if (!settings.allow_self_proofread && entry.translated_by === user.id) {
-    return false;
+    return "self_proofread_disabled";
   }
 
   if (
     !settings.allow_same_user_multi_proofread &&
     normalizeProofreadUsers(entry.proofread_by).includes(user.id)
   ) {
-    return false;
+    return "already_proofread_by_user";
   }
 
-  return entry.status === "translated" || entry.status === "proofread";
+  if (entry.status !== "translated" && entry.status !== "proofread") {
+    return "invalid_status";
+  }
+
+  return null;
+}
+
+export function getProofreadBlockMessage(
+  reason: ProofreadBlockReason | null,
+): string {
+  switch (reason) {
+    case "entry_locked":
+      return "当前词条已锁定，不能校对。";
+    case "entry_hidden":
+      return "当前词条已隐藏，不能校对。";
+    case "entry_disputed":
+      return "当前词条存在争议，解决争议后才能校对。";
+    case "empty_target":
+      return "当前词条没有译文，不能校对。";
+    case "proofread_disabled":
+      return "当前项目未启用校对流程。";
+    case "already_reviewed":
+      return "当前词条已经完成审核。";
+    case "proofread_complete":
+      return "当前词条已完成所需校对次数。";
+    case "self_proofread_disabled":
+      return "当前用户被记录为该译文的译者，项目未允许校对自己的译文。";
+    case "already_proofread_by_user":
+      return "当前用户已经校对过该词条，项目未允许同一成员重复校对。";
+    case "invalid_status":
+      return "当前词条尚未进入可校对阶段。";
+    default:
+      return "";
+  }
+}
+
+export function canProofreadEntry(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+  workflow?: ProjectWorkflowSettings,
+): boolean {
+  return getProofreadBlockReason(user, entry, workflow) === null;
 }
 
 export function canReviewEntry(

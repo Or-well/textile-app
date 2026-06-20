@@ -162,7 +162,7 @@ describe("entry version history", () => {
     expect(restored).toMatchObject({
       target: "First version",
       status: "translated",
-      translated_by: actor.id,
+      translated_by: "translator-1",
       proofread_by: [],
       proofread_count: 0,
       reviewed_by: "",
@@ -174,6 +174,8 @@ describe("entry version history", () => {
       detail: {
         before_target: "Reviewed version",
         after_target: "First version",
+        before_translated_by: "translator-1",
+        after_translated_by: "translator-1",
         restored_from_event_id: firstVersionEvent!.id,
         restored_from_snapshot: "after",
       },
@@ -196,6 +198,7 @@ describe("entry version history", () => {
     });
 
     expect(restored.target).toBe("Original");
+    expect(restored.translated_by).toBe("translator-1");
     await expect(
       storage.readJsonl<ProjectEvent>("logs/events.jsonl"),
     ).resolves.toMatchObject([
@@ -209,6 +212,38 @@ describe("entry version history", () => {
         },
       },
     ]);
+  });
+
+  it("does not attribute legacy restored versions to the restorer", async () => {
+    const { storage, entry } = await createEntryStorage();
+    const actor = createMember(["owner"], { id: "owner-1" });
+    const legacyVersionEvent: ProjectEvent = {
+      id: "legacy-version-event",
+      type: "entry.updated",
+      user_id: "translator-1",
+      entry_id: entry.id,
+      file_id: entry.file_id,
+      created_at: "2026-01-01T00:00:00.000Z",
+      detail: {
+        before_target: "Older",
+        after_target: "Legacy version",
+        before_status: "translated",
+        after_status: "translated",
+      },
+    };
+
+    await storage.writeJsonl("logs/events.jsonl", [legacyVersionEvent]);
+    setEntriesProjectStorage(storage);
+
+    const restored = await restoreEntryVersion(
+      entry.id,
+      legacyVersionEvent.id,
+      { actor },
+    );
+
+    expect(restored.target).toBe("Legacy version");
+    expect(restored.translated_by).toBe("");
+    expect(restored.updated_by).toBe(actor.id);
   });
 
   it("rolls back a restore when the history log write fails", async () => {

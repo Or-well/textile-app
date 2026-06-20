@@ -20,6 +20,8 @@ export interface EntryVersionDetail {
   after_target: string;
   before_status: EntryStatus;
   after_status: EntryStatus;
+  before_translated_by?: string;
+  after_translated_by?: string;
   restored_from_event_id?: string;
   restored_from_snapshot?: EntryVersionSnapshot;
 }
@@ -146,6 +148,8 @@ export function createEntryVersionEvent(
       after_target: after.target,
       before_status: before.status,
       after_status: after.status,
+      before_translated_by: before.translated_by,
+      after_translated_by: after.translated_by,
       ...(options.restoredFromEventId
         ? { restored_from_event_id: options.restoredFromEventId }
         : {}),
@@ -169,6 +173,10 @@ export function isEntryVersionEvent(
       typeof detail.before_target === "string" &&
       typeof detail.after_target === "string" &&
       ENTRY_STATUSES.includes(detail.before_status as EntryStatus) &&
-      ENTRY_STATUSES.includes(detail.after_status as EntryStatus),
+      ENTRY_STATUSES.includes(detail.after_status as EntryStatus) &&
+      (detail.before_translated_by === undefined ||
+        typeof detail.before_translated_by === "string") &&
+      (detail.after_translated_by === undefined ||
+        typeof detail.after_translated_by === "string"),
   );
 }

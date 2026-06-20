@@ -611,9 +611,9 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - `entry.updated`：手工保存导致译文或主状态变化。
 - `entry.restored`：恢复某个历史译文版本。
-- `detail` 保存 `before_target`、`after_target`、`before_status`、`after_status`。
+- `detail` 保存 `before_target`、`after_target`、`before_status`、`after_status`，新事件还保存 `before_translated_by` 和 `after_translated_by`。
 - 恢复事件额外保存 `restored_from_event_id` 和 `restored_from_snapshot`，明确恢复的是该事件的修改前或修改后快照。
-- 旧日志缺少上述快照字段时继续作为普通审计事件读取，但不能恢复。
+- 旧日志缺少译文或状态快照时继续作为普通审计事件读取，但不能恢复；仅缺少译者快照时仍可恢复，译者按未知处理。
 
 当前日志追加实现会读取整个 JSONL、加入新事件后重写文件。日志很大时会有性能和并发风险。
 
@@ -813,7 +813,8 @@ comments/<file_id>/<6位entry index>.jsonl
 - 恢复权限使用 `entry.edit` 或 `entry.translate`，不复用表示流程退回的 `entry.rollback`。
 - 锁定或隐藏词条不能恢复。
 - 恢复非空译文后状态为 translated，恢复空译文后状态为 untranslated。
-- 清空 `proofread_by`、`proofread_count`、`reviewed_by`，当前成员写入 `translated_by`、`updated_by` 和 `updated_at`。
+- 清空 `proofread_by`、`proofread_count`、`reviewed_by`；从快照恢复 `translated_by`，当前成员只写入 `updated_by` 和 `updated_at`。
+- 旧版本事件缺少译者快照时将 `translated_by` 设为空字符串，表示未知，不能把恢复者误记为译者。
 - 保留 `disputed` 及争议说明，不静默解决争议。
 - 恢复操作追加 `entry.restored` 事件，不删除或修改后续历史。
 
@@ -984,6 +985,7 @@ owner 锁定权限：
 
 - `canTranslateEntry`
 - `canProofreadEntry`
+- `getProofreadBlockReason` / `getProofreadBlockMessage`：统一提供校对按钮判断和用户可见的阻止原因。
 - `canReviewEntry`
 - `canCreateTask`
 - `canImportMemberChangePackage`
