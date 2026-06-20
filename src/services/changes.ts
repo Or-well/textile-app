@@ -164,7 +164,7 @@ export interface ChangeConflict {
   path: string;
   mainEntry: Entry;
   packageEntry: Entry;
-  reasons: ("target" | "status")[];
+  reasons: EntryConflictReason[];
 }
 
 export type ConflictResolutionAction =
@@ -200,6 +200,86 @@ export interface ApplyChangePackageOptions {
 }
 
 const SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION = 1;
+type EntryConflictReason =
+  | "target"
+  | "status"
+  | "translated_by"
+  | "proofread_by"
+  | "proofread_count"
+  | "reviewed_by";
+type EntryProtectedField =
+  | "id"
+  | "file_id"
+  | "index"
+  | "key"
+  | "speaker"
+  | "source"
+  | "context"
+  | "disputed"
+  | "dispute_reason"
+  | "dispute_resolved_at"
+  | "dispute_resolved_by"
+  | "assignee"
+  | "word_count"
+  | "hidden"
+  | "locked";
+type TaskProtectedField =
+  | "type"
+  | "title"
+  | "description"
+  | "file_id"
+  | "range_start"
+  | "range_end"
+  | "entry_ids"
+  | "assignee"
+  | "target"
+  | "submit_method"
+  | "proofread_round"
+  | "created_by"
+  | "created_at"
+  | "due_at";
+
+const ENTRY_CONFLICT_FIELDS = [
+  "target",
+  "status",
+  "translated_by",
+  "proofread_by",
+  "proofread_count",
+  "reviewed_by",
+] as const satisfies readonly EntryConflictReason[];
+const ENTRY_PROTECTED_FIELDS = [
+  "id",
+  "file_id",
+  "index",
+  "key",
+  "speaker",
+  "source",
+  "context",
+  "disputed",
+  "dispute_reason",
+  "dispute_resolved_at",
+  "dispute_resolved_by",
+  "assignee",
+  "word_count",
+  "hidden",
+  "locked",
+] as const satisfies readonly EntryProtectedField[];
+const TASK_PROTECTED_FIELDS = [
+  "type",
+  "title",
+  "description",
+  "file_id",
+  "range_start",
+  "range_end",
+  "entry_ids",
+  "assignee",
+  "target",
+  "submit_method",
+  "proofread_round",
+  "created_by",
+  "created_at",
+  "due_at",
+] as const satisfies readonly TaskProtectedField[];
 const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_entries: 0,
   changed_comments: 0,
@@ -1070,18 +1150,109 @@ function flattenEntries(entries: Record<string, Entry[]>): Entry[] {
   return Object.values(entries).flat();
 }
 
-function hasEntryConflict(mainEntry: Entry, packageEntry: Entry): ("target" | "status")[] {
-  const reasons: ("target" | "status")[] = [];
+function samePackageValue(left: unknown, right: unknown): boolean {
+  return stableStringify(left ?? null) === stableStringify(right ?? null);
+}
 
-  if (mainEntry.target !== packageEntry.target) {
-    reasons.push("target");
+function assertOrdinaryEntryPackageFields(
+  mainEntry: Entry,
+  packageEntry: Entry,
+): void {
+  const normalizedPackageEntry = normalizeEntry(packageEntry);
+
+  for (const field of ENTRY_PROTECTED_FIELDS) {
+    if (!samePackageValue(mainEntry[field], normalizedPackageEntry[field])) {
+      throw new Error(`普通修改包不能修改词条受保护字段：${field}。`);
+    }
+  }
+}
+
+function assertOrdinaryTaskPackageFields(
+  mainTask: Task,
+  packageTask: Task,
+): void {
+  for (const field of TASK_PROTECTED_FIELDS) {
+    if (!samePackageValue(mainTask[field], packageTask[field])) {
+      throw new Error(`普通修改包不能修改任务受保护字段：${field}。`);
+    }
+  }
+}
+
+function hasEntryConflict(
+  mainEntry: Entry,
+  packageEntry: Entry,
+  useOrdinarySafeguards: boolean,
+): EntryConflictReason[] {
+  if (useOrdinarySafeguards) {
+    assertOrdinaryEntryPackageFields(mainEntry, packageEntry);
   }
 
-  if (mainEntry.status !== packageEntry.status) {
-    reasons.push("status");
+  const normalizedPackageEntry = normalizeEntry(packageEntry);
+
+  return ENTRY_CONFLICT_FIELDS.filter(
+    (field) => !samePackageValue(mainEntry[field], normalizedPackageEntry[field]),
+  );
+}
+
+function mergeOrdinaryPackageEntry(
+  currentEntry: Entry,
+  packageEntry: Entry,
+  userId: string,
+  updatedAt = nowIso(),
+): Entry {
+  const normalizedPackageEntry = normalizeEntry(packageEntry);
+
+  assertOrdinaryEntryPackageFields(currentEntry, packageEntry);
+
+  if (normalizedPackageEntry.target !== currentEntry.target) {
+    return applyEntryTargetChange(currentEntry, normalizedPackageEntry.target, {
+      userId,
+      updatedAt,
+    });
   }
 
-  return reasons;
+  return normalizeEntry({
+    ...currentEntry,
+    status: normalizedPackageEntry.status,
+    translated_by: normalizedPackageEntry.translated_by,
+    proofread_by: normalizedPackageEntry.proofread_by,
+    proofread_count: normalizedPackageEntry.proofread_count,
+    reviewed_by: normalizedPackageEntry.reviewed_by,
+    updated_at: updatedAt,
+    updated_by: userId,
+  });
+}
+
+function mergeOrdinaryPackageTasks(
+  existingTasks: Task[],
+  packageTasks: Task[],
+): { rows: Task[]; imported: number } {
+  const nextRows = [...existingTasks];
+  let imported = 0;
+  const updatedAt = nowIso();
+
+  for (const packageTask of packageTasks) {
+    const index = nextRows.findIndex((task) => task.id === packageTask.id);
+
+    if (index < 0) {
+      throw new Error("普通修改包不能新增任务，只能更新已有任务的执行状态。");
+    }
+
+    const currentTask = nextRows[index]!;
+
+    assertOrdinaryTaskPackageFields(currentTask, packageTask);
+
+    if (currentTask.status !== packageTask.status) {
+      nextRows[index] = {
+        ...currentTask,
+        status: packageTask.status,
+        updated_at: updatedAt,
+      };
+      imported += 1;
+    }
+  }
+
+  return { rows: nextRows, imported };
 }
 
 function findResolution(
@@ -1338,22 +1509,6 @@ function createImportLogEvent(
       imported_by: options.actor?.id ?? "",
     },
   };
-}
-
-async function appendImportLog(
-  manifest: ChangePackageManifest,
-  result: ApplyChangePackageResult,
-  validation: ChangePackageValidation,
-  options: ApplyChangePackageOptions,
-): Promise<void> {
-  const storage = getProjectStorage();
-  const events = (await storage.fileExists("logs/events.jsonl"))
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
-  const event = createImportLogEvent(manifest, result, validation, options);
-
-  await storage.ensureDirectory("logs");
-  await storage.writeJsonl("logs/events.jsonl", [...events, event]);
 }
 
 export async function exportChangePackage(
@@ -1845,6 +2000,9 @@ export async function detectConflicts(
   }
 
   const conflicts: ChangeConflict[] = [];
+  const useOrdinarySafeguards = isMemberChangePackage(
+    getPackageType(changePackage.manifest),
+  );
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
     const currentEntries = await loadCurrentEntries(path);
@@ -1856,7 +2014,11 @@ export async function detectConflicts(
         continue;
       }
 
-      const reasons = hasEntryConflict(mainEntry, packageEntry);
+      const reasons = hasEntryConflict(
+        mainEntry,
+        packageEntry,
+        useOrdinarySafeguards,
+      );
 
       if (reasons.length > 0) {
         conflicts.push({
@@ -1983,6 +2145,96 @@ function assertProjectUpdateCanApply(
   return nextProject;
 }
 
+async function listExistingFiles(
+  storage: ProjectStorage,
+  directory: string,
+  prefix = directory,
+): Promise<string[]> {
+  if (!(await storage.fileExists(directory))) {
+    return [];
+  }
+
+  const names = await storage.listFiles(directory);
+  const paths: string[] = [];
+
+  for (const name of names) {
+    const path = `${prefix}/${name}`;
+
+    try {
+      await storage.readBinary(path);
+      paths.push(path);
+    } catch {
+      paths.push(
+        ...(await listExistingFiles(storage, path, path)),
+      );
+    }
+  }
+
+  return paths;
+}
+
+async function collectProjectUpdateStaleFiles(
+  storage: ProjectStorage,
+  currentProject: ProjectConfig,
+  nextProject: ProjectConfig,
+  changePackage: ReadChangePackage,
+): Promise<string[]> {
+  const nextSourcePaths = new Set(nextProject.files.map((file) => file.source_path));
+  const nextEntryDirectories = new Set(nextProject.files.map((file) => file.entries_path));
+  const packageEntryPaths = new Set(Object.keys(changePackage.entries));
+  const packageSourcePaths = new Set(Object.keys(changePackage.sourceFiles));
+  const writePaths = new Set([
+    ...packageEntryPaths,
+    ...packageSourcePaths,
+    ...Object.keys(changePackage.comments),
+    ...Object.keys(changePackage.terms),
+    ...Object.keys(changePackage.tasks),
+    ...Object.keys(changePackage.contexts),
+    "members.json",
+    "logs/events.jsonl",
+    "project.json",
+  ]);
+  const staleFiles = new Set<string>();
+
+  for (const file of currentProject.files) {
+    if (!nextSourcePaths.has(file.source_path)) {
+      staleFiles.add(file.source_path);
+    }
+
+    if (!nextEntryDirectories.has(file.entries_path)) {
+      for (const path of await listExistingFiles(storage, file.entries_path)) {
+        staleFiles.add(path);
+      }
+    }
+
+    if (!nextProject.files.some((nextFile) => nextFile.id === file.id)) {
+      for (const path of await listExistingFiles(storage, `comments/${file.id}`)) {
+        staleFiles.add(path);
+      }
+    }
+  }
+
+  for (const directory of nextEntryDirectories) {
+    const packageHasDirectory = Array.from(packageEntryPaths).some((path) =>
+      path.startsWith(`${directory}/`),
+    );
+
+    if (!packageHasDirectory) {
+      continue;
+    }
+
+    for (const path of await listExistingFiles(storage, directory)) {
+      if (!packageEntryPaths.has(path)) {
+        staleFiles.add(path);
+      }
+    }
+  }
+
+  return Array.from(staleFiles)
+    .filter((path) => !writePaths.has(path))
+    .sort((left, right) => right.split("/").length - left.split("/").length || left.localeCompare(right));
+}
+
 async function applyProjectUpdatePackage(
   changePackage: ReadChangePackage,
   validation: ChangePackageValidation,
@@ -2012,39 +2264,35 @@ async function applyProjectUpdatePackage(
   let importedProjectSettings = 0;
   let importedEvents = 0;
 
+  const writePlan = createProjectWritePlan(storage);
+
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeJsonl(path, packageEntries.map(normalizeEntry));
+    writePlan.writeJsonl(path, packageEntries.map(normalizeEntry));
     appliedEntries += packageEntries.length;
   }
 
   for (const [path, packageComments] of Object.entries(changePackage.comments)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeJsonl(path, packageComments);
+    writePlan.writeJsonl(path, packageComments);
     importedComments += packageComments.length;
   }
 
   for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeJsonl(path, packageTerms);
+    writePlan.writeJsonl(path, packageTerms);
     importedTerms += packageTerms.length;
   }
 
   for (const [path, content] of Object.entries(changePackage.contexts)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeText(path, content);
+    writePlan.writeText(path, content);
     importedContexts += 1;
   }
 
   for (const [path, content] of Object.entries(changePackage.sourceFiles)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeText(path, content);
+    writePlan.writeText(path, content);
     importedSourceFiles += 1;
   }
 
   for (const [path, packageTasks] of Object.entries(changePackage.tasks)) {
-    await storage.ensureDirectory(getDirectoryPath(path));
-    await storage.writeJsonl(path, packageTasks);
+    writePlan.writeJsonl(path, packageTasks);
     importedTasks += packageTasks.length;
   }
 
@@ -2053,18 +2301,14 @@ async function applyProjectUpdatePackage(
   const packageMembers = parseMembersFromPackage(changePackage.memberFiles);
 
   if (packageMembers.length > 0) {
-    await storage.writeJson("members.json", {
+    writePlan.writeJson("members.json", {
       schema_version: 1,
       members: mergePublicMembersWithLocalCredentials(currentMembers, packageMembers),
     });
     importedMembers = packageMembers.length;
   }
 
-  if (changePackage.events.length > 0) {
-    await storage.ensureDirectory("logs");
-    await storage.writeJsonl("logs/events.jsonl", changePackage.events);
-    importedEvents = changePackage.events.length;
-  }
+  importedEvents = changePackage.events.length;
 
   const result: ApplyChangePackageResult = {
     appliedEntries,
@@ -2077,13 +2321,33 @@ async function applyProjectUpdatePackage(
     importedProjectSettings,
     importedEvents,
   };
+  const importEvent = createImportLogEvent(
+    changePackage.manifest,
+    result,
+    validation,
+    options,
+  );
+  const staleFiles = await collectProjectUpdateStaleFiles(
+    storage,
+    currentProject,
+    nextProject,
+    changePackage,
+  );
 
-  await appendImportLog(changePackage.manifest, result, validation, options);
+  for (const path of staleFiles) {
+    writePlan.deleteFile(path);
+  }
 
-  await storage.writeText(
+  writePlan.writeJsonl("logs/events.jsonl", [
+    ...changePackage.events,
+    importEvent,
+  ]);
+  writePlan.writeText(
     "project.json",
     changePackage.projectFiles["project/project.json"],
   );
+
+  await writePlan.execute();
   setPermissionProject(nextProject);
 
   if (options.actor?.id) {
@@ -2165,6 +2429,7 @@ export async function applyChangePackage(
 
   const storage = getProjectStorage();
   const conflicts = await detectConflicts(changePackage);
+  const useOrdinarySafeguards = isMemberChangePackage(validation.packageType);
 
   await precheckChangePackageImport(changePackage, validation, conflicts);
 
@@ -2234,13 +2499,13 @@ export async function applyChangePackage(
       } else {
         const currentEntry = currentEntries[entryIndex];
 
-        currentEntries[entryIndex] =
-          packageEntry.target !== currentEntry.target
-            ? applyEntryTargetChange(currentEntry, packageEntry.target, {
-                userId: changePackage.manifest.user_id,
-                updatedAt: nowIso(),
-              })
-            : normalizeEntry(packageEntry);
+        currentEntries[entryIndex] = useOrdinarySafeguards
+          ? mergeOrdinaryPackageEntry(
+              currentEntry,
+              packageEntry,
+              changePackage.manifest.user_id,
+            )
+          : normalizeEntry(packageEntry);
       }
 
       changed = true;
@@ -2288,7 +2553,9 @@ export async function applyChangePackage(
     const existingTasks = (await storage.fileExists(path))
       ? await storage.readJsonl<Task>(path)
       : [];
-    const result = mergeRowsById(existingTasks, packageTasks);
+    const result = useOrdinarySafeguards
+      ? mergeOrdinaryPackageTasks(existingTasks, packageTasks)
+      : mergeRowsById(existingTasks, packageTasks);
 
     if (result.imported > 0) {
       writePlan.writeJsonl(path, result.rows);

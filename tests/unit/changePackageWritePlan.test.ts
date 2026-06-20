@@ -4,13 +4,18 @@ import type {
   Comment,
   Entry,
   Member,
+  ProjectConfig,
+  Task,
 } from "../../src/model/types";
+import { generateOwnSigningKey } from "../../src/services/keyManager";
 import {
   calculateChangePackageContentHash,
   type ChangePackagePayload,
 } from "../../src/services/changePackageHash";
 import {
   applyChangePackage,
+  exportChangePackage,
+  readChangePackage,
   setChangesProjectStorage,
   type ReadChangePackage,
 } from "../../src/services/changes";
@@ -21,6 +26,8 @@ import { FailingProjectStorage } from "./failingProjectStorage";
 
 async function createChangePackageFixture(options: {
   packageEntry?: Partial<Entry>;
+  originalTask?: Task;
+  packageTask?: Task;
 } = {}): Promise<{
   storage: ReturnType<typeof createProjectStorage>;
   actor: Member;
@@ -63,13 +70,18 @@ async function createChangePackageFixture(options: {
   const comments = {
     "comments/file-1/1.jsonl": [comment],
   };
+  const tasks = options.packageTask
+    ? {
+        "tasks/tasks.jsonl": [options.packageTask],
+      }
+    : {};
   const payload: ChangePackagePayload = {
     entries,
     comments,
     terms: {},
     contexts: {},
     sourceFiles: {},
-    tasks: {},
+    tasks,
     projectFiles: {},
     memberFiles: {},
     events: [],
@@ -104,6 +116,9 @@ async function createChangePackageFixture(options: {
   await storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
     originalEntry,
   ]);
+  if (options.originalTask) {
+    await storage.writeJsonl("tasks/tasks.jsonl", [options.originalTask]);
+  }
 
   return {
     storage,
@@ -117,11 +132,129 @@ async function createChangePackageFixture(options: {
       terms: {},
       contexts: {},
       sourceFiles: {},
-      tasks: {},
+      tasks,
       projectFiles: {},
       memberFiles: {},
       events: [],
     },
+  };
+}
+
+async function createProjectUpdateFixture() {
+  const baseProject = createProject({
+    revision: "base-revision",
+    revision_hash: "base-revision",
+    files: [
+      {
+        id: "file-1",
+        name: "dialog.txt",
+        source_path: "source/dialog.txt",
+        entries_path: "entries/file-1",
+        type: "txt",
+        hidden: false,
+        locked: false,
+      },
+    ],
+  });
+  const receiverProject: ProjectConfig = {
+    ...baseProject,
+    files: [
+      ...baseProject.files,
+      {
+        id: "file-old",
+        name: "old.txt",
+        source_path: "source/old.txt",
+        entries_path: "entries/file-old",
+        type: "txt",
+        hidden: false,
+        locked: false,
+      },
+    ],
+  };
+  const owner = createMember(["owner"], { id: "owner-1", name: "Owner" });
+  const sourceRoot = createMemoryProjectDirectory(
+    {
+      "project.json": `${JSON.stringify(baseProject, null, 2)}\n`,
+      "members.json": `${JSON.stringify(
+        { schema_version: 1, members: [owner] },
+        null,
+        2,
+      )}\n`,
+      "source/dialog.txt": "Updated source",
+      "entries/file-1/chunk_0001.jsonl": `${JSON.stringify(
+        createEntry({
+          id: "file-1:1",
+          file_id: "file-1",
+          index: 1,
+          target: "Updated",
+          status: "translated",
+          updated_by: "owner-1",
+        }),
+      )}\n`,
+      "logs/events.jsonl": "",
+    },
+    "project-update-source.hproj",
+  );
+  const sourceStorage = createProjectStorage(sourceRoot);
+  const keyResult = await generateOwnSigningKey(sourceRoot, [owner], owner);
+  const signingOwner = keyResult.member;
+
+  setChangesProjectStorage(sourceStorage);
+
+  const exported = await exportChangePackage(signingOwner.id, {
+    mode: "project_update",
+    sign: true,
+    actor: signingOwner,
+  });
+  const packageBytes = new Uint8Array(await exported.blob.arrayBuffer());
+  const changePackage = await readChangePackage(packageBytes as unknown as Blob);
+  const receiverOwner: Member = {
+    ...signingOwner,
+    password_hash: "local-password-hash",
+    password_salt: "local-password-salt",
+    password_updated_at: "2026-01-05T00:00:00.000Z",
+  };
+  const receiverRoot = createMemoryProjectDirectory(
+    {
+      "project.json": `${JSON.stringify(receiverProject, null, 2)}\n`,
+      "members.json": `${JSON.stringify(
+        { schema_version: 1, members: [receiverOwner] },
+        null,
+        2,
+      )}\n`,
+      "source/dialog.txt": "Old source",
+      "source/old.txt": "Stale source",
+      "entries/file-1/chunk_0001.jsonl": `${JSON.stringify(
+        createEntry({
+          id: "file-1:1",
+          file_id: "file-1",
+          index: 1,
+          target: "Old",
+          status: "translated",
+          updated_by: "member-2",
+        }),
+      )}\n`,
+      "entries/file-old/chunk_0001.jsonl": `${JSON.stringify(
+        createEntry({
+          id: "file-old:1",
+          file_id: "file-old",
+          index: 1,
+          target: "Stale",
+          status: "translated",
+          updated_by: "member-2",
+        }),
+      )}\n`,
+      "comments/file-old/000001.jsonl": "",
+      "logs/events.jsonl": "",
+    },
+    "project-update-receiver.hproj",
+  );
+
+  return {
+    changePackage,
+    receiverOwner,
+    receiverProject,
+    receiverStorage: createProjectStorage(receiverRoot),
   };
 }
 
@@ -217,5 +350,226 @@ describe("ordinary change-package write plan", () => {
         reviewed_by: "",
       },
     ]);
+  });
+
+  it("rejects protected entry field changes in ordinary packages", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        target: "Package changed",
+        locked: true,
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("受保护字段");
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([{ target: "Original", locked: false }]);
+  });
+
+  it("requires conflict resolution for workflow audit field changes", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        proofread_by: ["proofreader-1"],
+        proofread_count: 1,
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("冲突");
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            entryId: fixture.originalEntry.id,
+            action: "use_package",
+          },
+        ],
+        {
+          actor: fixture.actor,
+        },
+      ),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        proofread_by: ["proofreader-1"],
+        proofread_count: 1,
+        assignee: "",
+      },
+    ]);
+  });
+
+  it("rejects protected task field changes in ordinary packages", async () => {
+    const originalTask: Task = {
+      id: "task-1",
+      type: "translate",
+      title: "Translate chapter",
+      description: "",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 10,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "assigned",
+      target: "",
+      submit_method: "change_package",
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      originalTask,
+      packageTask: {
+        ...originalTask,
+        title: "Forged title",
+        status: "submitted",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("任务受保护字段");
+    await expect(
+      fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([
+      { title: "Translate chapter", status: "assigned" },
+    ]);
+  });
+
+  it("merges only task execution status from ordinary packages", async () => {
+    const originalTask: Task = {
+      id: "task-1",
+      type: "translate",
+      title: "Translate chapter",
+      description: "",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 10,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "assigned",
+      target: "",
+      submit_method: "change_package",
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      originalTask,
+      packageTask: {
+        ...originalTask,
+        status: "submitted",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).resolves.toMatchObject({ importedTasks: 1 });
+    await expect(
+      fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([
+      { title: "Translate chapter", status: "submitted", assignee: "member-2" },
+    ]);
+  });
+});
+
+describe("project update package write plan", () => {
+  it("applies authoritative content, removes stale files, and preserves local credentials", async () => {
+    const fixture = await createProjectUpdateFixture();
+
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({
+      appliedEntries: 1,
+      importedMembers: 1,
+      importedProjectSettings: 1,
+    });
+    await expect(
+      fixture.receiverStorage.readJson<ProjectConfig>("project.json"),
+    ).resolves.toMatchObject({
+      revision: fixture.changePackage.manifest.target_revision,
+      files: [{ id: "file-1" }],
+    });
+    await expect(
+      fixture.receiverStorage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([{ target: "Updated" }]);
+    await expect(
+      fixture.receiverStorage.fileExists("source/old.txt"),
+    ).resolves.toBe(false);
+    await expect(
+      fixture.receiverStorage.fileExists("entries/file-old/chunk_0001.jsonl"),
+    ).resolves.toBe(false);
+    await expect(
+      fixture.receiverStorage.fileExists("comments/file-old/000001.jsonl"),
+    ).resolves.toBe(false);
+    await expect(
+      fixture.receiverStorage.readJson<{ members: Member[] }>("members.json"),
+    ).resolves.toMatchObject({
+      members: [
+        {
+          id: fixture.receiverOwner.id,
+          password_hash: "local-password-hash",
+          password_salt: "local-password-salt",
+        },
+      ],
+    });
+    await expect(
+      fixture.receiverStorage.readJsonl("logs/events.jsonl"),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "change_package.applied" }),
+      ]),
+    );
+  });
+
+  it("restores project update writes when a later write fails", async () => {
+    const fixture = await createProjectUpdateFixture();
+    const failingStorage = new FailingProjectStorage(fixture.receiverStorage, 2);
+
+    setChangesProjectStorage(failingStorage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).rejects.toThrow("已尝试恢复原数据");
+    await expect(
+      fixture.receiverStorage.readJson<ProjectConfig>("project.json"),
+    ).resolves.toMatchObject({ revision: fixture.receiverProject.revision });
+    await expect(
+      fixture.receiverStorage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([{ target: "Old" }]);
+    await expect(
+      fixture.receiverStorage.fileExists("source/old.txt"),
+    ).resolves.toBe(true);
   });
 });

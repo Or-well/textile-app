@@ -1345,6 +1345,8 @@ manifest 示例：
 - 凭据、owner 提升和项目设置变化检测。
 - 目标路径是否可读取或创建。
 - 冲突列表是否已经生成。
+- 普通修改包中的词条受保护字段不能变化；允许参与冲突处理的词条字段限于 `target`、`status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by`。
+- 普通修改包中的任务只能更新既有任务的 `status`；标题、范围、创建者、分配关系等字段变化会阻止导入。
 
 预检查失败时不开始项目文件写入。
 
@@ -1362,13 +1364,14 @@ manifest 示例：
 2. 检查普通或维护导入权限。
 3. 检查维护和 owner 凭据确认。
 4. 检查危险导入权限。
-5. 检测冲突。
+5. 检测冲突；普通包会比较译文、状态、译者、校对成员、校对次数和审核成员。
 6. 要求每个冲突有 resolution。
 7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；包内译文改变时同样走 `applyEntryTargetChange()`，清空后续校对和审核状态。
-8. 维护包在内存中准备 project/members 最终内容。
-9. 去重合并包内 events，并生成导入日志事件。
-10. 将所有目标文件加入同一个补偿式写入计划。
-11. 提交成功后更新 entries 缓存。
+8. 普通包词条只合并允许的译文和工作流字段，`updated_by` 使用包 manifest 用户；普通包任务只合并执行状态。
+9. 维护包在内存中准备 project/members 最终内容。
+10. 去重合并包内 events，并生成导入日志事件。
+11. 将所有目标文件加入同一个补偿式写入计划。
+12. 提交成功后更新 entries 缓存。
 
 当前回滚边界：
 
@@ -1400,11 +1403,11 @@ manifest 示例：
 5. source
 6. tasks
 7. 公开成员与本地密码字段合并
-8. events
-9. 追加导入日志
+8. 删除项目更新后不再被引用的旧 source、entries chunk 和评论文件
+9. events 与导入日志
 10. 最后写 `project.json`
 
-把 `project.json` 放在最后，可以让失败时基线 revision 不提前推进，便于重试，但仍不是完整回滚。
+上述写入、删除和导入日志通过同一个 `ProjectWritePlan` 提交。把 `project.json` 放在最后，可以让失败时基线 revision 不提前推进，便于重试；断电、浏览器崩溃或回滚再次失败时仍可能留下需要人工检查的残留路径。
 
 ## 37. 冲突处理
 

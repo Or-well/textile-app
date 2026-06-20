@@ -78,6 +78,10 @@ function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
   const labels: Record<ChangeConflict["reasons"][number], string> = {
     target: "译文",
     status: "状态",
+    translated_by: "译者",
+    proofread_by: "校对成员",
+    proofread_count: "校对次数",
+    reviewed_by: "审核成员",
   };
 
   return reasons.map((reason) => labels[reason]).join("、");
