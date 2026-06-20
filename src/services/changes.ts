@@ -69,6 +69,22 @@ export interface ExportedChangePackage {
   blob: Blob;
   manifest: ChangePackageManifest;
   signature?: ChangePackageSignature;
+  completion:
+    | { kind: "none" }
+    | {
+        kind: "member_changes";
+        projectId: string;
+        userId: string;
+        baseRevision: string;
+        contentHash: string;
+      }
+    | {
+        kind: "project_update";
+        projectId: string;
+        baseRevision: string;
+        targetRevision: string;
+        projectJson: string;
+      };
 }
 
 export interface ReadChangePackage {
@@ -1530,30 +1546,78 @@ export async function exportChangePackage(
 
   const blob = await createZip(files);
 
-  if (options.mode === "member_changes") {
-    storeExportedMemberChangeHash(
-      project.project_id,
-      userId,
-      baseRevision,
-      contentHash,
-    );
-  }
-
-  if (options.mode === "project_update" && payload.projectFiles["project/project.json"]) {
-    const nextProject = JSON.parse(
-      payload.projectFiles["project/project.json"],
-    ) as ProjectConfig;
-
-    await storage.writeText("project.json", payload.projectFiles["project/project.json"]);
-    setPermissionProject(nextProject);
-  }
+  const projectUpdateJson = payload.projectFiles["project/project.json"];
 
   return {
     fileName: buildFileName(userId, manifestPackageType, createdAt, options.taskId),
     blob,
     manifest,
     signature,
+    completion:
+      options.mode === "member_changes"
+        ? {
+            kind: "member_changes",
+            projectId: project.project_id,
+            userId,
+            baseRevision,
+            contentHash,
+          }
+        : options.mode === "project_update" && projectUpdateJson && targetRevision
+          ? {
+              kind: "project_update",
+              projectId: project.project_id,
+              baseRevision,
+              targetRevision,
+              projectJson: projectUpdateJson,
+            }
+          : { kind: "none" },
   };
+}
+
+export async function completeChangePackageExport(
+  exported: ExportedChangePackage,
+): Promise<ProjectConfig | undefined> {
+  if (exported.completion.kind === "none") {
+    return undefined;
+  }
+
+  const storage = getProjectStorage();
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const completion = exported.completion;
+
+  if (project.project_id !== completion.projectId) {
+    throw new Error("当前打开的项目与刚才导出的修改包不一致，未提交导出状态。");
+  }
+
+  const currentRevision = getProjectRevision(project);
+
+  if (completion.kind === "member_changes") {
+    if (currentRevision !== completion.baseRevision) {
+      throw new Error("项目版本已变化，未提交刚才的个人修改导出状态。请重新导出。");
+    }
+
+    storeExportedMemberChangeHash(
+      completion.projectId,
+      completion.userId,
+      completion.baseRevision,
+      completion.contentHash,
+    );
+    return undefined;
+  }
+
+  if (currentRevision === completion.targetRevision) {
+    return project;
+  }
+
+  if (currentRevision !== completion.baseRevision) {
+    throw new Error("项目版本已变化，未发布刚才生成的项目更新包。请重新导出。");
+  }
+
+  const nextProject = JSON.parse(completion.projectJson) as ProjectConfig;
+
+  await storage.writeText("project.json", completion.projectJson);
+  setPermissionProject(nextProject);
+  return nextProject;
 }
 
 export async function readChangePackage(file: Blob): Promise<ReadChangePackage> {

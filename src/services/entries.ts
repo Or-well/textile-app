@@ -496,7 +496,20 @@ async function writeFileEntries(
   entries: Entry[],
   options: WriteEntriesOptions = {},
 ): Promise<void> {
-  const storage = getProjectStorage();
+  await writeEntriesForFileToStorage(
+    getProjectStorage(),
+    fileId,
+    entries,
+    options,
+  );
+}
+
+export async function writeEntriesForFileToStorage(
+  storage: ProjectStorage,
+  fileId: string,
+  entries: Entry[],
+  options: WriteEntriesOptions = {},
+): Promise<void> {
   const prepared = await prepareEntriesWrite(
     storage,
     fileId,

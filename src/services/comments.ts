@@ -287,6 +287,31 @@ export async function reopenComment(
   return updateCommentStatus(entry, commentId, "open");
 }
 
+export function getCommentDeletionSet(
+  comments: Comment[],
+  commentId: string,
+): Comment[] {
+  const deleteIds = new Set([commentId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (const comment of comments) {
+      if (
+        comment.reply_to &&
+        deleteIds.has(comment.reply_to) &&
+        !deleteIds.has(comment.id)
+      ) {
+        deleteIds.add(comment.id);
+        changed = true;
+      }
+    }
+  }
+
+  return comments.filter((comment) => deleteIds.has(comment.id));
+}
+
 export async function deleteComment(
   entry: Entry,
   commentId: string,
@@ -298,20 +323,15 @@ export async function deleteComment(
   const comments = await loadComments(entry);
   const targetComment = comments.find((comment) => comment.id === commentId);
   assertCommentWritePermission(canDeleteComment(actor, targetComment));
-  const deleteIds = new Set([commentId]);
-  let changed = true;
+  const commentsToDelete = getCommentDeletionSet(comments, commentId);
 
-  while (changed) {
-    changed = false;
-
-    for (const comment of comments) {
-      if (comment.reply_to && deleteIds.has(comment.reply_to) && !deleteIds.has(comment.id)) {
-        deleteIds.add(comment.id);
-        changed = true;
-      }
-    }
+  if (commentsToDelete.some((comment) => !canDeleteComment(actor, comment))) {
+    throw new Error(
+      "这条评论包含其他成员的回复，当前成员没有删除整组评论的权限。",
+    );
   }
 
+  const deleteIds = new Set(commentsToDelete.map((comment) => comment.id));
   const nextComments = comments.filter((comment) => !deleteIds.has(comment.id));
 
   await storage.writeJsonl(path, nextComments);

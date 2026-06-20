@@ -36,7 +36,10 @@ import {
   canDeleteProject,
   getCurrentUser,
 } from "../services/permissions";
-import { exportProjectPackage } from "../services/projectPackage";
+import {
+  completeProjectPackageExport,
+  exportProjectPackage,
+} from "../services/projectPackage";
 import { openProject, saveProject } from "../services/project";
 import {
   checkForUpdates,
@@ -58,6 +61,7 @@ import {
   getDesktopUpdateActionLabel,
 } from "../services/appUpdatePresentation";
 import { withAppOperation } from "../services/appOperation";
+import { saveBlobWithConfirmation } from "../utils/saveBlob";
 
 type SettingsSection =
   | "project"
@@ -346,18 +350,6 @@ function getWritableRoot(): ProjectDirectoryHandle {
   return root;
 }
 
-function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
 async function persistProject(
   config: EditableProjectConfig,
   successMessage: string,
@@ -578,11 +570,27 @@ async function handleExportProjectFile() {
   errorMessage.value = "";
 
   try {
-    const result = await withAppOperation("导出项目备份", () =>
-      exportProjectPackage(root),
-    );
+    const outcome = await withAppOperation("导出项目备份", async () => {
+      const result = await exportProjectPackage(root);
+      const saved = await saveBlobWithConfirmation(
+        result.blob,
+        result.fileName,
+        "下载已经开始。请确认项目备份已经保存到电脑。",
+      );
 
-    downloadBlob(result.blob, result.fileName);
+      if (saved) {
+        completeProjectPackageExport(root);
+      }
+
+      return { result, saved };
+    });
+    const { result, saved } = outcome;
+
+    if (!saved) {
+      message.value = "项目备份尚未确认保存，项目仍会保持未备份提示。";
+      return;
+    }
+
     message.value = `已导出为 Textile 项目文件：${result.fileName}`;
   } catch (error) {
     errorMessage.value =

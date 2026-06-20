@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectConfig } from "../../src/model/types";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import {
+  addSourceFileToStorage,
   deleteProjectFileFromStorage,
   updateSourceFileInStorage,
 } from "../../src/services/project";
@@ -70,6 +71,28 @@ async function createFileStorage(): Promise<{
 }
 
 describe("source file write plan", () => {
+  it("uses distinct source paths for files with the same display name", async () => {
+    const { storage, config } = await createFileStorage();
+    const actor = createMember(["owner"]);
+
+    const result = await addSourceFileToStorage(
+      storage,
+      config,
+      new File(["Replacement"], "dialog.txt", { type: "text/plain" }),
+      undefined,
+      actor,
+    );
+
+    expect(result.file.name).toBe("dialog.txt");
+    expect(result.file.source_path).not.toBe("source/dialog.txt");
+    await expect(storage.readText("source/dialog.txt")).resolves.toBe(
+      "First\nSecond",
+    );
+    await expect(storage.readText(result.file.source_path)).resolves.toBe(
+      "Replacement",
+    );
+  });
+
   it("commits source, chunks, and project config together", async () => {
     const { storage, config } = await createFileStorage();
     const actor = createMember(["owner"]);
@@ -131,6 +154,34 @@ describe("source file write plan", () => {
 });
 
 describe("project file deletion plan", () => {
+  it("keeps a legacy source file that is still referenced by another file", async () => {
+    const { storage, config } = await createFileStorage();
+    const actor = createMember(["owner"]);
+    const sharedConfig = createProject({
+      ...config,
+      files: [
+        ...config.files,
+        {
+          ...config.files[0],
+          id: "file-2",
+          entries_path: "entries/file-2",
+        },
+      ],
+    });
+
+    const result = await deleteProjectFileFromStorage(
+      storage,
+      sharedConfig,
+      "file-1",
+      actor,
+    );
+
+    expect(result.files).toHaveLength(1);
+    await expect(storage.readText("source/dialog.txt")).resolves.toBe(
+      "First\nSecond",
+    );
+  });
+
   it("commits source, entries, and project index deletion together", async () => {
     const { storage, config } = await createFileStorage();
     const actor = createMember(["owner"]);

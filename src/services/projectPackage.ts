@@ -774,12 +774,16 @@ export async function exportProjectPackage(
 
   const blob = await createZip(files);
 
-  markProjectPackageExported(root);
-
   return {
     fileName: buildPackageFileName(project),
     blob,
   };
+}
+
+export function completeProjectPackageExport(
+  root: ProjectDirectoryHandle,
+): void {
+  markProjectPackageExported(root);
 }
 
 export async function inspectProjectPackage(

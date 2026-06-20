@@ -331,7 +331,8 @@ changes/
 2. 读取可选 `members.json`。
 3. 递归收集已存在的项目目录。
 4. 生成 Blob。
-5. 对内存项目调用 `markProjectPackageExported()` 清除 dirty 状态。
+5. 页面优先通过系统保存对话框写入文件；不支持时触发浏览器下载并要求用户确认保存结果。
+6. 只有文件写入成功或用户确认已保存后，才调用 `completeProjectPackageExport()` 清除内存项目 dirty 状态。
 
 预览：
 
@@ -578,6 +579,8 @@ unassigned -> assigned -> in_progress -> submitted -> completed
 
 任务范围优先使用 `entry_ids`，否则使用 `file_id` 和起止 index。
 
+`tasks/tasks.jsonl` 不存在时按空任务列表处理；文件存在但读取或 JSONL 解析失败时必须向上报错，不得缓存为空列表，以免后续任务写入覆盖可恢复的数据。
+
 ## 15. comments JSONL
 
 路径：
@@ -597,7 +600,7 @@ comments/<file_id>/<6位entry index>.jsonl
 - 根评论和回复。
 - open/resolved。
 - 删除自己的评论或有权限时删除任意评论。
-- 删除父评论时级联删除回复。
+- 删除父评论时级联删除回复，并在 service 中逐条校验整棵删除树的权限；普通成员不能借由删除自己的父评论删除其他成员的回复。
 - 与争议标记联动。
 
 ## 16. `logs/events.jsonl`
@@ -629,7 +632,9 @@ comments/<file_id>/<6位entry index>.jsonl
 
 `source/` 保存导入的原始文本文件。
 
-`ProjectFile.source_path` 指向实际路径。添加源文件时会先解析内存内容，再写 source 和 entries，最后更新 `project.json`。
+`ProjectFile.source_path` 指向实际路径。新增文件使用基于唯一 `file_id` 的 source 路径，不依赖显示文件名保持唯一。旧项目中共享同一 `source_path` 的记录仍兼容读取，删除文件时只有不存在其他引用才删除源文件。
+
+添加源文件时会先解析内存内容，再写 source 和 entries，最后更新 `project.json`。
 
 项目更新包会包含源文件，`.hproj` 也会递归打包 source。
 
@@ -646,6 +651,8 @@ comments/<file_id>/<6位entry index>.jsonl
 新项目创建 `changes/`，`.hproj` 会打包该目录。
 
 当前普通修改包和项目更新包同样通过浏览器下载、文件选择导入，不会自动归档到 `changes/`。本地“已导出个人修改哈希”保存在浏览器存储，用于接收项目更新前判断未导出修改。
+
+生成修改包 Blob 不会立即写入“已导出个人修改哈希”或推进项目 revision。页面确认文件保存后调用 `completeChangePackageExport()`：普通修改包提交导出哈希，项目更新包提交新 revision。提交前会重新确认当前项目 ID 和 base revision，防止延迟确认覆盖已经变化的项目状态。
 
 不要假设 `changes/` 中一定有协作历史。
 

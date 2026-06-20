@@ -282,16 +282,26 @@ export async function loadTasks(): Promise<Task[]> {
     return cachedTasks;
   }
 
+  const storage = getProjectStorage();
+
+  if (!(await storage.fileExists(TASKS_PATH))) {
+    cachedTasks = [];
+    return cachedTasks;
+  }
+
   try {
     cachedTasks = sortTasks(
-      (await getProjectStorage().readJsonl<Partial<Task>>(TASKS_PATH)).map(
+      (await storage.readJsonl<Partial<Task>>(TASKS_PATH)).map(
         normalizeTask,
       ),
     );
     return cachedTasks;
-  } catch {
-    cachedTasks = [];
-    return cachedTasks;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "未知错误。";
+
+    throw new Error(
+      `任务数据无法读取。为避免覆盖原任务，当前项目已停止任务写入。原因：${reason}`,
+    );
   }
 }
 

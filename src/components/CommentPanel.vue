@@ -7,6 +7,7 @@ import type { Comment, Entry } from "../model/types";
 import {
   addComment,
   deleteComment,
+  getCommentDeletionSet,
   loadComments,
   markDisputed,
   reopenComment,
@@ -228,6 +229,28 @@ async function handleReopenComment(comment: Comment) {
 
 async function handleDeleteComment(comment: Comment) {
   if (!props.entry || !canDeleteComment(currentUser.value, comment)) {
+    return;
+  }
+
+  const commentsToDelete = getCommentDeletionSet(comments.value, comment.id);
+  const unauthorizedReply = commentsToDelete.some(
+    (item) => !canDeleteComment(currentUser.value, item),
+  );
+
+  if (unauthorizedReply) {
+    errorMessage.value =
+      "这条评论包含其他成员的回复，当前成员没有删除整组评论的权限。";
+    return;
+  }
+
+  const replyCount = Math.max(0, commentsToDelete.length - 1);
+  const confirmed = window.confirm(
+    replyCount > 0
+      ? `删除后将同时删除 ${replyCount} 条回复，且只能从备份或修改包恢复。确认继续？`
+      : "删除后只能从备份或修改包恢复。确认删除这条评论？",
+  );
+
+  if (!confirmed) {
     return;
   }
 

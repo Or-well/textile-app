@@ -8,9 +8,13 @@ import type {
   ReleaseExportFormat,
   Task,
 } from "../model/types";
-import { exportProjectPackage } from "../services/projectPackage";
+import {
+  completeProjectPackageExport,
+  exportProjectPackage,
+} from "../services/projectPackage";
 import {
   applyChangePackage,
+  completeChangePackageExport,
   detectConflicts,
   exportChangePackage,
   previewChangePackage,
@@ -54,6 +58,7 @@ import type { ProjectDirectoryHandle } from "../services/projectFs";
 import type { ProjectStorage } from "../services/projectStorage";
 import { withAppOperation } from "../services/appOperation";
 import { loadTasks, setTasksProjectStorage } from "../services/tasks";
+import { saveBlobWithConfirmation } from "../utils/saveBlob";
 
 const props = defineProps<{
   project?: ProjectConfig;
@@ -393,19 +398,34 @@ async function handleExportChanges() {
   message.value = "";
 
   try {
-    const result = await withAppOperation("导出修改包", () =>
-      exportChangePackage(currentUser.value!.id, {
+    const outcome = await withAppOperation("导出修改包", async () => {
+      const result = await exportChangePackage(currentUser.value!.id, {
         mode: exportMode.value,
         taskId: exportMode.value === "task_changes" ? selectedTaskId.value : undefined,
         sign: exportMode.value === "project_update" ? true : canSignPackages.value,
         actor: currentUser.value,
-      }),
-    );
+      });
+      const saved = await saveBlobWithConfirmation(
+        result.blob,
+        result.fileName,
+        "下载已经开始。请确认修改包文件已经保存到电脑；只有确认后，Textile 才会记录本次导出。",
+      );
+      const updatedProject = saved
+        ? await completeChangePackageExport(result)
+        : undefined;
 
-    downloadBlob(result.blob, result.fileName);
+      return { result, saved, updatedProject };
+    });
+    const { result, saved, updatedProject } = outcome;
+
+    if (!saved) {
+      message.value = "修改包尚未确认保存，项目状态没有变化。";
+      return;
+    }
+
     if (exportMode.value === "project_update") {
-      if (projectStorageForServices.value) {
-        emit("projectUpdated", await loadProjectFromStorage(projectStorageForServices.value));
+      if (updatedProject) {
+        emit("projectUpdated", updatedProject);
       }
 
       message.value = `已发布签名项目更新包：${result.fileName}`;
@@ -597,11 +617,27 @@ async function handleExportProjectFile() {
 
   try {
     const projectRoot = projectRootForExport.value;
-    const result = await withAppOperation("导出项目备份", () =>
-      exportProjectPackage(projectRoot),
-    );
+    const outcome = await withAppOperation("导出项目备份", async () => {
+      const result = await exportProjectPackage(projectRoot);
+      const saved = await saveBlobWithConfirmation(
+        result.blob,
+        result.fileName,
+        "下载已经开始。请确认项目备份已经保存到电脑。",
+      );
 
-    downloadBlob(result.blob, result.fileName);
+      if (saved) {
+        completeProjectPackageExport(projectRoot);
+      }
+
+      return { result, saved };
+    });
+    const { result, saved } = outcome;
+
+    if (!saved) {
+      message.value = "项目备份尚未确认保存，项目仍会保持未备份提示。";
+      return;
+    }
+
     message.value = `已导出 Textile 项目备份：${result.fileName}`;
   } catch (error) {
     errorMessage.value =

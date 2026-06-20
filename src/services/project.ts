@@ -20,7 +20,7 @@ import {
   importEntryTranslations,
   parseEntriesFromSourceFile,
   prepareUpdatedEntriesFromSourceFile,
-  writeEntriesForFile,
+  writeEntriesForFileToStorage,
 } from "./entries";
 import {
   createProjectRootFromPackage,
@@ -166,6 +166,36 @@ function uniqueFileId(config: ProjectConfig, name: string): string {
   }
 
   return nextId;
+}
+
+function getFileExtension(name: string): string {
+  const lastDot = name.lastIndexOf(".");
+
+  return lastDot > 0 ? name.slice(lastDot).toLowerCase() : "";
+}
+
+function buildSourcePath(fileId: string, name: string, suffix = 1): string {
+  const duplicateSuffix = suffix > 1 ? `_${suffix}` : "";
+
+  return `source/${fileId}${duplicateSuffix}${getFileExtension(name)}`;
+}
+
+async function createUniqueSourcePath(
+  storage: ProjectStorage,
+  config: ProjectConfig,
+  fileId: string,
+  name: string,
+): Promise<string> {
+  const configuredPaths = new Set(config.files.map((file) => file.source_path));
+  let suffix = 1;
+  let path = buildSourcePath(fileId, name, suffix);
+
+  while (configuredPaths.has(path) || await storage.fileExists(path)) {
+    suffix += 1;
+    path = buildSourcePath(fileId, name, suffix);
+  }
+
+  return path;
 }
 
 function normalizeProjectFileName(name: string): string {
@@ -415,7 +445,7 @@ export async function createProjectFile(
   const projectFile: ProjectFile = {
     id: fileId,
     name,
-    source_path: `source/${name}`,
+    source_path: await createUniqueSourcePath(storage, config, fileId, name),
     entries_path: `entries/${fileId}`,
     type: input.type || getFileType(name),
     folder: input.folder?.trim() || undefined,
@@ -445,16 +475,27 @@ export async function addSourceFileToProject(
 ): Promise<ProjectFileImportResult> {
   const storage = createProjectStorage(root);
 
+  return addSourceFileToStorage(storage, config, file, folder, actor);
+}
+
+export async function addSourceFileToStorage(
+  storage: ProjectStorage,
+  config: ProjectConfig,
+  file: File,
+  folder?: string,
+  actor?: Member | null,
+): Promise<ProjectFileImportResult> {
   assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_CREATE, config);
   assertSupportedImportFile(file.name);
 
   const sourceText = await file.text();
   const name = normalizeProjectFileName(file.name);
+  const fileId = uniqueFileId(config, name);
   const now = nowIso();
   const addedFile: ProjectFile = {
-    id: uniqueFileId(config, name),
+    id: fileId,
     name,
-    source_path: `source/${name}`,
+    source_path: await createUniqueSourcePath(storage, config, fileId, name),
     entries_path: "",
     type: getFileType(name),
     folder: folder?.trim() || undefined,
@@ -476,7 +517,7 @@ export async function addSourceFileToProject(
   try {
     await storage.ensureDirectory("source");
     await storage.writeText(addedFile.source_path, sourceText);
-    await writeEntriesForFile(addedFile.id, entries, {
+    await writeEntriesForFileToStorage(storage, addedFile.id, entries, {
       chunkSize: config.settings.chunk_size,
     });
     await saveProjectToStorage(storage, nextConfig);
@@ -721,6 +762,9 @@ export async function deleteProjectFileFromStorage(
     files: config.files.filter((item) => item.id !== fileId),
   };
   const writePlan = createProjectWritePlan(storage);
+  const sourcePathStillUsed = nextConfig.files.some(
+    (projectFile) => projectFile.source_path === file.source_path,
+  );
 
   if (await storage.fileExists(file.entries_path)) {
     const entryNames = await storage.listFiles(file.entries_path);
@@ -732,7 +776,9 @@ export async function deleteProjectFileFromStorage(
     writePlan.deleteDirectory(file.entries_path);
   }
 
-  writePlan.deleteFile(file.source_path);
+  if (!sourcePathStillUsed) {
+    writePlan.deleteFile(file.source_path);
+  }
   writePlan.writeJson("project.json", nextConfig);
 
   await writePlan.execute();
