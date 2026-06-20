@@ -21,6 +21,11 @@ import type {
   Role,
   RolePermissions,
 } from "../model/types";
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "../utils/browserStorage";
 
 const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 
@@ -38,11 +43,7 @@ function toSessionMember(user: Member): Member {
 }
 
 function readStoredUser(): Member | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const text = window.localStorage.getItem(CURRENT_USER_STORAGE_KEY);
+  const text = readLocalStorageItem(CURRENT_USER_STORAGE_KEY);
 
   if (!text) {
     return null;
@@ -51,22 +52,18 @@ function readStoredUser(): Member | null {
   try {
     return JSON.parse(text) as Member;
   } catch {
-    window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+    removeLocalStorageItem(CURRENT_USER_STORAGE_KEY);
     return null;
   }
 }
 
 function storeCurrentUser(user: Member | null): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
   if (!user) {
-    window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+    removeLocalStorageItem(CURRENT_USER_STORAGE_KEY);
     return;
   }
 
-  window.localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
+  writeLocalStorageItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(user));
 }
 
 function normalizeAction(action: PermissionAction | string): string {

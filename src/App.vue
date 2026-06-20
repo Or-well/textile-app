@@ -901,7 +901,10 @@ onBeforeUnmount(() => {
       />
 
       <TasksPage
-        v-else-if="route.section === 'tasks'"
+        v-else-if="
+          route.section === 'tasks' &&
+          currentProject.config.settings.workflow?.enable_tasks !== false
+        "
         :project="currentProject.config"
         :members="currentProject.members"
         :current-user="currentUser"

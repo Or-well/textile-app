@@ -98,13 +98,23 @@ function removeStorageKeys(keys: string[]): string[] {
   }
 
   const removed: string[] = [];
-  const storages = [window.localStorage, window.sessionStorage];
+  let storages: Storage[];
+
+  try {
+    storages = [window.localStorage, window.sessionStorage];
+  } catch {
+    return [];
+  }
 
   for (const storage of storages) {
     for (const key of keys) {
-      if (storage.getItem(key) !== null) {
-        storage.removeItem(key);
-        removed.push(key);
+      try {
+        if (storage.getItem(key) !== null) {
+          storage.removeItem(key);
+          removed.push(key);
+        }
+      } catch {
+        // Storage cleanup is best-effort.
       }
     }
   }

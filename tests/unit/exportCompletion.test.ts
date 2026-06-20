@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { ChangePackageManifest } from "../../src/model/types";
 import {
   completeChangePackageExport,
@@ -14,7 +14,8 @@ import {
   exportProjectPackage,
 } from "../../src/services/projectPackage";
 import { createProjectStorage } from "../../src/services/projectStorage";
-import { createProject } from "./factories";
+import { setCurrentUser } from "../../src/services/permissions";
+import { createMember, createProject } from "./factories";
 
 function createManifest(): ChangePackageManifest {
   return {
@@ -29,6 +30,10 @@ function createManifest(): ChangePackageManifest {
 }
 
 describe("export completion", () => {
+  afterEach(() => {
+    setCurrentUser(null);
+  });
+
   it("does not advance a project revision until export completion is committed", async () => {
     const project = createProject({ revision: "revision-1" });
     const nextProject = {
@@ -75,6 +80,7 @@ describe("export completion", () => {
     );
     const storage = createProjectStorage(root);
 
+    setCurrentUser(createMember(["owner"], { id: "owner-1" }));
     await storage.writeText("source/file.txt", "changed");
     expect(isPackedProjectDirty(root)).toBe(true);
 

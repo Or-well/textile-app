@@ -1,4 +1,9 @@
 import type { Member } from "../model/types";
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "../utils/browserStorage";
 import { nowIso } from "../utils/time";
 
 export interface ProjectSession {
@@ -11,16 +16,8 @@ export interface ProjectSession {
 const SESSION_STORAGE_KEY = "textile.projectSessions.v1";
 const DEFAULT_REMEMBER_DAYS = 30;
 
-function canUseBrowserStorage(): boolean {
-  return typeof window !== "undefined";
-}
-
 function readSessions(): ProjectSession[] {
-  if (!canUseBrowserStorage()) {
-    return [];
-  }
-
-  const text = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  const text = readLocalStorageItem(SESSION_STORAGE_KEY);
 
   if (!text) {
     return [];
@@ -31,17 +28,13 @@ function readSessions(): ProjectSession[] {
 
     return Array.isArray(rows) ? rows : [];
   } catch {
-    window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    removeLocalStorageItem(SESSION_STORAGE_KEY);
     return [];
   }
 }
 
 function writeSessions(sessions: ProjectSession[]): void {
-  if (!canUseBrowserStorage()) {
-    return;
-  }
-
-  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
+  writeLocalStorageItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
 }
 
 function getExpiryDate(rememberDays: number): string | undefined {

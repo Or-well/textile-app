@@ -21,6 +21,10 @@ import {
 } from "./projectStorage";
 import { calculateEntryProgress, type BasicProjectStats } from "./stats";
 import { checkTermUsageWithTerms } from "./terms";
+import {
+  canExportRelease,
+  getCurrentUser,
+} from "./permissions";
 
 export interface ReleaseExportOptions {
   format: ReleaseExportFormat;
@@ -129,6 +133,12 @@ function getProjectStorage(): ProjectStorage {
   }
 
   return currentProjectStorage;
+}
+
+function assertReleaseExportPermission(): void {
+  if (!canExportRelease(getCurrentUser())) {
+    throw new Error("Permission denied.");
+  }
 }
 
 function isReleaseExportFormat(
@@ -397,6 +407,8 @@ export async function exportFile(
   fileId: string,
   options: ExportProjectOptions = {},
 ): Promise<ReleaseFile> {
+  assertReleaseExportPermission();
+
   const config = await loadProjectConfig();
   const releaseOptions = normalizeReleaseExportOptions(config, options);
   const projectFile = config.files.find((file) => file.id === fileId);
@@ -455,6 +467,8 @@ export async function generateReleaseZip(
 export async function getReleaseExportSummary(
   options: ExportProjectOptions = {},
 ): Promise<ReleaseExportSummary> {
+  assertReleaseExportPermission();
+
   const config = await loadProjectConfig();
   const releaseOptions = normalizeReleaseExportOptions(config, options);
   const { allEntries, exportEntries } = await collectReleaseFiles(
@@ -468,6 +482,8 @@ export async function getReleaseExportSummary(
 export async function exportProject(
   options: ExportProjectOptions = {},
 ): Promise<ExportProjectResult> {
+  assertReleaseExportPermission();
+
   const config = await loadProjectConfig();
   const releaseOptions = normalizeReleaseExportOptions(config, options);
   const { files, allEntries, exportEntries } = await collectReleaseFiles(

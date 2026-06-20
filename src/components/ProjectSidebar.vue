@@ -12,6 +12,7 @@ type ProjectSection =
 
 const props = defineProps<{
   activeSection: ProjectSection;
+  tasksEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -37,13 +38,17 @@ function isActive(section: ProjectSection): boolean {
 
   return props.activeSection === section;
 }
+
+function isVisible(item: (typeof navItems)[number]): boolean {
+  return item.section !== "tasks" || props.tasksEnabled !== false;
+}
 </script>
 
 <template>
   <nav class="project-sidebar" aria-label="项目内导航">
     <p class="sidebar-title">项目工作台</p>
     <button
-      v-for="item in navItems"
+      v-for="item in navItems.filter(isVisible)"
       :key="item.section"
       class="nav-item"
       :class="{ active: isActive(item.section) }"

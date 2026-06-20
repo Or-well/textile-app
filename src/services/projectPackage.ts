@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "../model/types";
+import type { Member, ProjectConfig } from "../model/types";
 import { parseJsonl } from "../utils/jsonl";
 import { createZip, readZipEntries, type ZipContent } from "../utils/zip";
 import {
@@ -14,6 +14,10 @@ import {
 } from "./projectFs";
 import { createProjectStorage } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import {
+  canProjectBackup,
+  getCurrentUser,
+} from "./permissions";
 
 export interface ExportedProjectPackage {
   fileName: string;
@@ -757,7 +761,12 @@ async function collectDirectory(
 
 export async function exportProjectPackage(
   root: ProjectDirectoryHandle,
+  actor: Member | null | undefined = getCurrentUser(),
 ): Promise<ExportedProjectPackage> {
+  if (!canProjectBackup(actor)) {
+    throw new Error("Permission denied.");
+  }
+
   if (!(await fileExists(root, "project.json"))) {
     throw new Error("当前项目缺少项目配置，无法导出为项目文件。");
   }

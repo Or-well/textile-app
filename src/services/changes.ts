@@ -22,6 +22,10 @@ import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { APP_VERSION } from "../utils/appVersion";
+import {
+  readLocalStorageItem,
+  writeLocalStorageItem,
+} from "../utils/browserStorage";
 import type { ZipContent } from "../utils/zip";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import {
@@ -329,15 +333,7 @@ function readExportedMemberChangeHash(
   userId: string,
   revision: string,
 ): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    return window.localStorage.getItem(getExportMarkerKey(projectId, userId, revision));
-  } catch {
-    return null;
-  }
+  return readLocalStorageItem(getExportMarkerKey(projectId, userId, revision));
 }
 
 function storeExportedMemberChangeHash(
@@ -346,18 +342,7 @@ function storeExportedMemberChangeHash(
   revision: string,
   contentHash: string,
 ): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(
-      getExportMarkerKey(projectId, userId, revision),
-      contentHash,
-    );
-  } catch {
-    // Missing marker is fail-safe: the next project update requires a fresh export.
-  }
+  writeLocalStorageItem(getExportMarkerKey(projectId, userId, revision), contentHash);
 }
 
 function isMemberChangePackage(packageType: ChangePackageType): boolean {

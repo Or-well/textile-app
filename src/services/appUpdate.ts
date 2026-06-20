@@ -1,6 +1,11 @@
 import { subscribeAppDrafts } from "./appDraft";
 import { subscribeAppOperations } from "./appOperation";
 import { APP_VERSION } from "../utils/appVersion";
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "../utils/browserStorage";
 import type {
   AppPlatform,
   AppUpdateState,
@@ -621,30 +626,14 @@ function readDismissedVersion(): string {
 }
 
 function readStorage(key: string): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
+  return readLocalStorageItem(key);
 }
 
 function writeStorage(key: string, value: string): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  try {
-    if (value) {
-      window.localStorage.setItem(key, value);
-    } else {
-      window.localStorage.removeItem(key);
-    }
-  } catch {
-    // Update checks continue to work when localStorage is unavailable.
+  if (value) {
+    writeLocalStorageItem(key, value);
+  } else {
+    removeLocalStorageItem(key);
   }
 }
 

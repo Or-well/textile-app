@@ -43,6 +43,8 @@ interface MembersFile {
   members: Member[];
 }
 
+const SUPPORTED_PROJECT_SCHEMA_VERSION = 1;
+
 export interface OpenedProject {
   root: ProjectDirectoryHandle;
   storage: ProjectStorage;
@@ -234,6 +236,54 @@ function resolveProjectActor(actor?: Member | null): Member {
   return user;
 }
 
+function normalizeProjectConfig(config: ProjectConfig): ProjectConfig {
+  const schemaVersion = Number(config.schema_version ?? 1);
+
+  if (
+    !Number.isInteger(schemaVersion) ||
+    schemaVersion < 1 ||
+    schemaVersion > SUPPORTED_PROJECT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      `Project schema_version ${config.schema_version ?? "unknown"} is not supported.`,
+    );
+  }
+
+  if (!config.project_id || !config.name || !Array.isArray(config.files)) {
+    throw new Error("Project configuration is missing required fields.");
+  }
+
+  return {
+    ...config,
+    schema_version: schemaVersion,
+    source_language: config.source_language || "ja",
+    target_language: config.target_language || "zh-Hans",
+    files: config.files.map((file) => {
+      const fileId = file.id || createId("file");
+
+      return {
+        ...file,
+        id: fileId,
+        name: file.name || "Untitled",
+        source_path: file.source_path || `source/${fileId}`,
+        entries_path: file.entries_path || `entries/${fileId}`,
+        type: file.type || "txt",
+        hidden: file.hidden === true,
+        locked: file.locked === true,
+      };
+    }),
+    settings: {
+      chunk_size: config.settings?.chunk_size ?? 500,
+      auto_save: config.settings?.auto_save ?? true,
+      allow_change_package: config.settings?.allow_change_package ?? true,
+      workflow: config.settings?.workflow,
+      progress_weights: config.settings?.progress_weights,
+      export: config.settings?.export,
+      role_permissions: config.settings?.role_permissions,
+    },
+  };
+}
+
 export async function loadProject(
   root: ProjectDirectoryHandle,
 ): Promise<ProjectConfig> {
@@ -243,7 +293,7 @@ export async function loadProject(
 export async function loadProjectFromStorage(
   storage: ProjectStorage,
 ): Promise<ProjectConfig> {
-  return storage.readJson<ProjectConfig>("project.json");
+  return normalizeProjectConfig(await storage.readJson<ProjectConfig>("project.json"));
 }
 
 export async function saveProject(

@@ -81,6 +81,7 @@ const sectionLabels: Record<ProjectSection, string> = {
     <div class="workspace-body">
       <ProjectSidebar
         :active-section="activeSection"
+        :tasks-enabled="project?.settings.workflow?.enable_tasks !== false"
         @navigate="emit('navigateSection', $event)"
         @open-help="emit('openHelp')"
       />

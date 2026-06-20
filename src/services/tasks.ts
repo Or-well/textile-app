@@ -59,7 +59,7 @@ export interface TaskDraft {
   title: string;
   description?: string;
   type: TaskType;
-  file_id: string;
+  file_id?: string;
   range_start: number;
   range_end: number;
   entry_ids?: string[];
@@ -93,6 +93,33 @@ const SUBMIT_METHODS: readonly TaskSubmitMethod[] = [
   "change_package",
   "owner_manual",
 ];
+const TASK_STATUS_TRANSITIONS: Record<string, Partial<Record<TaskStatus, readonly TaskStatus[]>>> = {
+  assign: {
+    unassigned: ["assigned"],
+    assigned: ["assigned", "unassigned"],
+    in_progress: ["assigned", "unassigned"],
+    submitted: ["assigned", "unassigned"],
+  },
+  claim: {
+    unassigned: ["in_progress"],
+  },
+  submit: {
+    assigned: ["submitted"],
+    in_progress: ["submitted"],
+  },
+  complete: {
+    submitted: ["completed"],
+  },
+  reclaim: {
+    assigned: ["unassigned"],
+    in_progress: ["unassigned"],
+    submitted: ["unassigned"],
+  },
+  reopen: {
+    submitted: ["assigned", "in_progress", "unassigned"],
+    completed: ["assigned", "in_progress", "unassigned"],
+  },
+};
 
 let currentProjectStorage: ProjectStorage | null = null;
 let cachedTasks: Task[] | null = null;
@@ -127,6 +154,36 @@ function getTaskActor(): NonNullable<ReturnType<typeof getCurrentUser>> {
 function assertTaskWritePermission(canWrite: boolean): void {
   if (!canWrite) {
     throw new Error("Permission denied.");
+  }
+}
+
+async function loadProjectConfig(): Promise<ProjectConfig> {
+  return getProjectStorage().readJson<ProjectConfig>("project.json");
+}
+
+async function assertTasksEnabled(): Promise<ProjectConfig> {
+  const project = await loadProjectConfig();
+
+  if (project.settings.workflow?.enable_tasks === false) {
+    throw new Error("当前项目未启用任务，不能新增或更新任务。");
+  }
+
+  return project;
+}
+
+function assertTaskStatusTransition(
+  action: keyof typeof TASK_STATUS_TRANSITIONS,
+  from: TaskStatus,
+  to: TaskStatus,
+): void {
+  if (from === to) {
+    return;
+  }
+
+  const allowed = TASK_STATUS_TRANSITIONS[action]?.[from] ?? [];
+
+  if (!allowed.includes(to)) {
+    throw new Error(`任务状态不能从 ${from} 直接变为 ${to}。`);
   }
 }
 
@@ -277,6 +334,76 @@ async function loadEntriesForFile(fileId: string): Promise<Entry[]> {
   );
 }
 
+async function loadAllEntries(): Promise<Entry[]> {
+  const storage = getProjectStorage();
+  let fileIds: string[];
+
+  try {
+    fileIds = await storage.listFiles("entries");
+  } catch {
+    return [];
+  }
+
+  const entryGroups = await Promise.all(
+    fileIds.map(async (fileId) => {
+      try {
+        return await loadEntriesForFile(fileId);
+      } catch {
+        return [];
+      }
+    }),
+  );
+
+  return entryGroups.flat();
+}
+
+async function loadEntriesForTask(task: Task): Promise<Entry[]> {
+  if (task.file_id) {
+    return (await loadEntriesForFile(task.file_id)).filter((entry) =>
+      isEntryInTask(entry, task),
+    );
+  }
+
+  if (task.entry_ids.length > 0) {
+    const ids = new Set(task.entry_ids);
+
+    return (await loadAllEntries()).filter((entry) => ids.has(entry.id));
+  }
+
+  return [];
+}
+
+async function validateTaskScope(task: Task): Promise<void> {
+  if (task.file_id) {
+    const entries = await loadEntriesForFile(task.file_id);
+
+    if (task.entry_ids.length > 0) {
+      const ids = new Set(entries.map((entry) => entry.id));
+      const missingIds = task.entry_ids.filter((entryId) => !ids.has(entryId));
+
+      if (missingIds.length > 0) {
+        throw new Error(`Task entries do not belong to file ${task.file_id}: ${missingIds.join(", ")}`);
+      }
+    } else if (!entries.some((entry) => isEntryInTask(entry, task))) {
+      throw new Error("Task range does not match any entries.");
+    }
+
+    return;
+  }
+
+  if (task.entry_ids.length === 0) {
+    return;
+  }
+
+  const entries = await loadAllEntries();
+  const ids = new Set(entries.map((entry) => entry.id));
+  const missingIds = task.entry_ids.filter((entryId) => !ids.has(entryId));
+
+  if (missingIds.length > 0) {
+    throw new Error(`Task entries do not exist: ${missingIds.join(", ")}`);
+  }
+}
+
 export async function loadTasks(): Promise<Task[]> {
   if (cachedTasks) {
     return cachedTasks;
@@ -375,11 +502,7 @@ export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
   }
 
   const project = await getProjectStorage().readJson<ProjectConfig>("project.json");
-  const entries = task.file_id
-    ? (await loadEntriesForFile(task.file_id)).filter((entry) =>
-        isEntryInTask(entry, task),
-      )
-    : [];
+  const entries = await loadEntriesForTask(task);
   const progress = calculateEntryProgress(
     entries,
     project.settings?.progress_weights,
@@ -402,7 +525,7 @@ function mergeTaskPatch(task: Task, patch: TaskPatch): Task {
 
 async function updateTaskById(
   taskId: string,
-  updater: (task: Task) => Task,
+  updater: (task: Task) => Task | Promise<Task>,
 ): Promise<Task> {
   const tasks = await loadTasks();
   const taskIndex = tasks.findIndex((task) => task.id === taskId);
@@ -411,7 +534,9 @@ async function updateTaskById(
     throw new Error("没有找到要更新的任务。请重新打开项目后再试。");
   }
 
-  const updatedTask = normalizeTask(updater(tasks[taskIndex]));
+  const updatedTask = normalizeTask(await updater(tasks[taskIndex]));
+  await validateTaskScope(updatedTask);
+
   const nextTasks = [...tasks];
   nextTasks[taskIndex] = updatedTask;
 
@@ -424,6 +549,7 @@ export async function createTask(draft: TaskDraft, userId: string): Promise<Task
   const actor = getTaskActor();
 
   assertTaskWritePermission(canCreateTask(actor));
+  await assertTasksEnabled();
 
   const now = nowIso();
   const task = normalizeTask({
@@ -434,6 +560,8 @@ export async function createTask(draft: TaskDraft, userId: string): Promise<Task
     created_at: now,
     updated_at: now,
   });
+  await validateTaskScope(task);
+
   const tasks = await loadTasks();
 
   await saveTasks([...tasks, task]);
@@ -446,12 +574,23 @@ export async function updateTask(
   patch: TaskPatch,
 ): Promise<Task> {
   assertTaskWritePermission(canUpdateTask(getTaskActor()));
+  await assertTasksEnabled();
 
-  return updateTaskById(taskId, (task) => mergeTaskPatch(task, patch));
+  return updateTaskById(taskId, (task) => {
+    if (patch.status && patch.status !== task.status) {
+      throw new Error("Task status must be changed through task workflow actions.");
+    }
+
+    return mergeTaskPatch(task, {
+      ...patch,
+      status: task.status,
+    });
+  });
 }
 
 export async function deleteTask(taskId: string): Promise<void> {
   assertTaskWritePermission(canDeleteTask(getTaskActor()));
+  await assertTasksEnabled();
 
   const tasks = await loadTasks();
   const nextTasks = tasks.filter((task) => task.id !== taskId);
@@ -468,25 +607,32 @@ export async function assignTask(
   assignee: string,
 ): Promise<Task> {
   assertTaskWritePermission(canAssignTask(getTaskActor()));
+  await assertTasksEnabled();
 
-  return updateTaskById(taskId, (task) =>
-    mergeTaskPatch(task, {
+  return updateTaskById(taskId, (task) => {
+    const status = assignee ? "assigned" : "unassigned";
+    assertTaskStatusTransition("assign", task.status, status);
+
+    return mergeTaskPatch(task, {
       assignee,
-      status: assignee ? "assigned" : "unassigned",
-    }),
-  );
+      status,
+    });
+  });
 }
 
 export async function claimTask(taskId: string, userId: string): Promise<Task> {
   const actor = getTaskActor();
 
   assertTaskWritePermission(canClaimTask(actor));
+  await assertTasksEnabled();
 
   return updateTaskById(taskId, (task) =>
     {
       if (task.assignee) {
         throw new Error("Task already assigned.");
       }
+
+      assertTaskStatusTransition("claim", task.status, "in_progress");
 
       return mergeTaskPatch(task, {
         assignee: actor.id || userId,
@@ -500,12 +646,15 @@ export async function submitTask(taskId: string): Promise<Task> {
   const actor = getTaskActor();
 
   assertTaskWritePermission(canSubmitTask(actor));
+  await assertTasksEnabled();
 
   return updateTaskById(taskId, (task) =>
     {
       if (task.assignee !== actor.id && !canManageTask(actor)) {
         throw new Error("Only assignee can submit this task.");
       }
+
+      assertTaskStatusTransition("submit", task.status, "submitted");
 
       return mergeTaskPatch(task, {
         status: "submitted",
@@ -516,31 +665,41 @@ export async function submitTask(taskId: string): Promise<Task> {
 
 export async function completeTask(taskId: string): Promise<Task> {
   assertTaskWritePermission(canCompleteTask(getTaskActor()));
+  await assertTasksEnabled();
 
-  return updateTaskById(taskId, (task) =>
-    mergeTaskPatch(task, {
+  return updateTaskById(taskId, (task) => {
+    assertTaskStatusTransition("complete", task.status, "completed");
+
+    return mergeTaskPatch(task, {
       status: "completed",
-    }),
-  );
+    });
+  });
 }
 
 export async function reclaimTask(taskId: string): Promise<Task> {
   assertTaskWritePermission(canReclaimTask(getTaskActor()));
+  await assertTasksEnabled();
 
-  return updateTaskById(taskId, (task) =>
-    mergeTaskPatch(task, {
+  return updateTaskById(taskId, (task) => {
+    assertTaskStatusTransition("reclaim", task.status, "unassigned");
+
+    return mergeTaskPatch(task, {
       assignee: "",
       status: "unassigned",
-    }),
-  );
+    });
+  });
 }
 
 export async function reopenTask(taskId: string): Promise<Task> {
   assertTaskWritePermission(canReopenTask(getTaskActor()));
+  await assertTasksEnabled();
 
-  return updateTaskById(taskId, (task) =>
-    mergeTaskPatch(task, {
-      status: task.assignee ? "in_progress" : "unassigned",
-    }),
-  );
+  return updateTaskById(taskId, (task) => {
+    const status = task.assignee ? "in_progress" : "unassigned";
+    assertTaskStatusTransition("reopen", task.status, status);
+
+    return mergeTaskPatch(task, {
+      status,
+    });
+  });
 }

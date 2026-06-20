@@ -1,3 +1,8 @@
+import {
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+} from "../utils/browserStorage";
 import { nowIso } from "../utils/time";
 import type { ProjectDirectoryHandle } from "./projectFs";
 
@@ -29,16 +34,8 @@ const RECENT_PROJECTS_DB_VERSION = 1;
 const PROJECT_HANDLES_STORE = "projectHandles";
 const MAX_RECENT_PROJECTS = 12;
 
-function canUseBrowserStorage(): boolean {
-  return typeof window !== "undefined";
-}
-
 function readRecentProjects(): RecentProjectRecord[] {
-  if (!canUseBrowserStorage()) {
-    return [];
-  }
-
-  const text = window.localStorage.getItem(RECENT_PROJECTS_STORAGE_KEY);
+  const text = readLocalStorageItem(RECENT_PROJECTS_STORAGE_KEY);
 
   if (!text) {
     return [];
@@ -49,7 +46,7 @@ function readRecentProjects(): RecentProjectRecord[] {
 
     return Array.isArray(rows) ? sortRecentProjects(normalizeRecords(rows)) : [];
   } catch {
-    window.localStorage.removeItem(RECENT_PROJECTS_STORAGE_KEY);
+    removeLocalStorageItem(RECENT_PROJECTS_STORAGE_KEY);
     return [];
   }
 }
@@ -72,11 +69,7 @@ function normalizeRecords(records: RecentProjectRecord[]): RecentProjectRecord[]
 }
 
 function writeRecentProjects(records: RecentProjectRecord[]): void {
-  if (!canUseBrowserStorage()) {
-    return;
-  }
-
-  window.localStorage.setItem(
+  writeLocalStorageItem(
     RECENT_PROJECTS_STORAGE_KEY,
     JSON.stringify(sortRecentProjects(records).slice(0, MAX_RECENT_PROJECTS)),
   );

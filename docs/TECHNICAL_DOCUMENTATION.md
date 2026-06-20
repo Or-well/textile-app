@@ -438,14 +438,14 @@ changes/
 
 字段说明：
 
-- `schema_version`：项目格式版本，当前为 1。
+- `schema_version`：项目格式版本，当前为 1。读取时缺失 schema 按 v1 兼容处理；高于当前支持版本的 schema 会阻止打开。
 - `project_id`：跨副本和修改包匹配的稳定 ID。
 - `revision`/`revision_hash`：项目更新包的线性基线。
 - `files`：项目文件索引。
 - `chunk_size`：控制新增、更新源文件和导入译文时每个 entries chunk 的最大词条数；旧的单 chunk 项目仍兼容读取。
 - `auto_save`：保留设置，当前编辑仍以显式保存为主。
 - `allow_change_package`：项目级开关字段，当前主要能力仍由权限 action 决定。
-- `enable_tasks`：保存于工作流，但当前任务页不会因此隐藏。
+- `enable_tasks`：保存于工作流；为 `false` 时 UI 隐藏任务入口，任务 service 拒绝写入类操作。
 - `role_permissions`：项目可覆盖默认角色权限。
 
 ## 11. `members.json`
@@ -544,6 +544,8 @@ terms/terms.jsonl
 - 优先按 id。
 - 没有 id 时按 source。
 - 支持 JSON、JSONL、CSV、XLSX 第一工作表。
+- CSV 使用 `utils/csv.ts` 统一解析，支持引号、逗号、转义引号和多行字段。
+- 术语目标匹配和成品导出术语报告都遵守 `case_sensitive`。
 - 不支持旧 `.xls`。
 
 导出当前只生成 JSONL。
@@ -577,7 +579,7 @@ unassigned -> assigned -> in_progress -> submitted -> completed
 - `git_hidden` 提交方式规范化为 `change_package`。
 - `git_manual` 规范化为 `owner_manual`。
 
-任务范围优先使用 `entry_ids`，否则使用 `file_id` 和起止 index。
+任务范围优先使用 `entry_ids`，否则使用 `file_id` 和起止 index；没有 `file_id` 但包含 `entry_ids` 的任务可以正常计算进度。
 
 `tasks/tasks.jsonl` 不存在时按空任务列表处理；文件存在但读取或 JSONL 解析失败时必须向上报错，不得缓存为空列表，以免后续任务写入覆盖可恢复的数据。
 
@@ -932,7 +934,7 @@ comments/<file_id>/<6位entry index>.jsonl
 风险点：
 
 - 整个任务文件每次写入整体重写。
-- `enable_tasks` 当前没有阻止任务页或任务 service 使用。
+- `enable_tasks === false` 时任务页入口隐藏，任务 service 会拒绝新增、更新、删除、分配、领取、提交、完成、收回和重开。
 
 ## 25. `comments.ts`
 
@@ -1663,6 +1665,8 @@ textile.projectSessions.v1
 
 LocalStorage：
 
+`utils/browserStorage.ts` 是 LocalStorage 的集中容错封装。业务模块不应直接假设 LocalStorage 可读写；隐私模式、配额限制或浏览器策略导致失败时，应降级为不持久化本地提示或缓存。
+
 ```text
 textile.recentProjects.v1
 ```
@@ -2154,7 +2158,6 @@ npm run build
 - 没有断电或进程崩溃后的持久化事务日志。
 - 没有多标签页并发锁。
 - 尚无集成测试和端到端自动化测试。
-- `enable_tasks` 未控制任务页显示。
 - Web 下载地址未配置。
 - Tauri updater 公钥和 endpoint 未配置。
 - 私钥文件未加密，内存私钥刷新后丢失。

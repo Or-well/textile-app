@@ -2,10 +2,12 @@ import JSZip from "jszip";
 import type { Term } from "../model/types";
 import { createId } from "../utils/id";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
+import { parseCsvRecords } from "../utils/csv";
 import { nowIso } from "../utils/time";
 import {
   canCreateTerm,
   canDeleteTerm,
+  canExportTerm,
   canImportTerm,
   canUpdateTerm,
   getCurrentUser,
@@ -235,48 +237,8 @@ function normalizeHeaderName(value: string): string {
   return normalized;
 }
 
-function parseCsvLine(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const nextChar = line[index + 1];
-
-    if (char === "\"" && inQuotes && nextChar === "\"") {
-      current += "\"";
-      index += 1;
-      continue;
-    }
-
-    if (char === "\"") {
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (char === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
-      continue;
-    }
-
-    current += char;
-  }
-
-  cells.push(current);
-
-  return cells.map((cell) => cell.trim());
-}
-
 function parseCsvTerms(text: string, userId: string): Term[] {
-  const rows = text
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"))
-    .map(parseCsvLine);
+  const rows = parseCsvRecords(text);
 
   if (rows.length === 0) {
     return [];
@@ -714,6 +676,8 @@ export async function importTermsFile(
 }
 
 export async function exportTermsFile(): Promise<ExportedTermsFile> {
+  assertTermWritePermission(canExportTerm(getCurrentUser()));
+
   const terms = await loadTerms();
   const createdAt = nowIso().slice(0, 10);
 
@@ -870,6 +834,10 @@ export function checkTermUsageWithTerms(
   return terms.map((term) => ({
     term,
     matchedText: findMatchedText(term, sourceText) ?? term.source,
-    isRecommendedUsed: targetText.includes(term.target),
+    isRecommendedUsed: includesTermText(
+      targetText,
+      term.target,
+      term.case_sensitive === true,
+    ),
   }));
 }

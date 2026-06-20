@@ -13,6 +13,7 @@ import {
   normalizeProofreadUsers,
 } from "../model/status";
 import { parseJsonl } from "../utils/jsonl";
+import { parseCsvRecords } from "../utils/csv";
 import { nowIso } from "../utils/time";
 import {
   createEntryVersionEvent,
@@ -172,48 +173,8 @@ function isHeaderRow(columns: string[]): boolean {
   return names.includes("key") && (names.includes("source") || names.includes("target"));
 }
 
-function parseCsvLine(line: string): string[] {
-  const cells: string[] = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const nextChar = line[index + 1];
-
-    if (char === "\"" && inQuotes && nextChar === "\"") {
-      current += "\"";
-      index += 1;
-      continue;
-    }
-
-    if (char === "\"") {
-      inQuotes = !inQuotes;
-      continue;
-    }
-
-    if (char === "," && !inQuotes) {
-      cells.push(current);
-      current = "";
-      continue;
-    }
-
-    current += char;
-  }
-
-  cells.push(current);
-
-  return cells.map((cell) => cell.trim());
-}
-
 function parseCsvRows(text: string): ImportEntryRow[] {
-  const rows = text
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"))
-    .map(parseCsvLine);
+  const rows = parseCsvRecords(text);
 
   if (rows.length === 0) {
     return [];
@@ -320,15 +281,36 @@ function normalizeSourceEntry(
   });
 }
 
+function assertUniqueEntryKeys(entries: Entry[]): void {
+  const seenKeys = new Set<string>();
+
+  for (const entry of entries) {
+    const key = entry.key.trim();
+
+    if (!key) {
+      continue;
+    }
+
+    if (seenKeys.has(key)) {
+      throw new Error(`源文件包含重复 key：${key}。请先修正后再导入。`);
+    }
+
+    seenKeys.add(key);
+  }
+}
+
 function parseSourceText(fileId: string, fileName: string, text: string): SourceImportResult {
   const format = getSupportedTextFormat(fileName);
 
   if (format === "jsonl" || format === "json") {
     const rows =
       format === "jsonl" ? parseJsonl<ImportEntryRow>(text) : parseJsonRows(text);
+    const entries = rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1));
+
+    assertUniqueEntryKeys(entries);
 
     return {
-      entries: rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1)),
+      entries,
       supported: true,
       formatLabel: format === "jsonl" ? "JSONL 词条" : "JSON 词条",
     };
@@ -336,9 +318,12 @@ function parseSourceText(fileId: string, fileName: string, text: string): Source
 
   if (format === "csv") {
     const rows = parseCsvRows(text);
+    const entries = rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1));
+
+    assertUniqueEntryKeys(entries);
 
     return {
-      entries: rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1)),
+      entries,
       supported: true,
       formatLabel: "CSV 词条",
     };
