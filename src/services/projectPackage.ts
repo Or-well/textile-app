@@ -1,18 +1,19 @@
 import type { ProjectConfig } from "../model/types";
+import { parseJsonl } from "../utils/jsonl";
 import { createZip, readZipEntries, type ZipContent } from "../utils/zip";
 import {
   createMemoryProjectDirectory,
   deleteEntry,
-  ensureDirectory,
   fileExists,
   listFiles,
   markProjectPackageExported,
   openProjectDirectory,
   readBinaryFile,
   readJson,
-  writeBinaryFile,
   type ProjectDirectoryHandle,
 } from "./projectFs";
+import { createProjectStorage } from "./projectStorage";
+import { createProjectWritePlan } from "./projectWritePlan";
 
 export interface ExportedProjectPackage {
   fileName: string;
@@ -52,6 +53,28 @@ export interface ImportedProjectPackage {
   root: ProjectDirectoryHandle;
   folderName: string;
   preview: ProjectPackagePreview;
+}
+
+export class ProjectPackageImportError extends Error {
+  readonly cause: unknown;
+  readonly residualPaths: string[];
+
+  constructor(cause: unknown, residualPaths: string[]) {
+    const reason = cause instanceof Error ? cause.message : "未知错误。";
+    const visiblePaths = residualPaths.slice(0, 5);
+    const remainingCount = residualPaths.length - visiblePaths.length;
+    const residualMessage =
+      visiblePaths.length > 0
+        ? ` 已保留残留路径：${visiblePaths.join("、")}${
+            remainingCount > 0 ? ` 等 ${residualPaths.length} 项` : ""
+          }。`
+        : "";
+
+    super(`导入 Textile 项目文件失败。原因：${reason}${residualMessage}`);
+    this.name = "ProjectPackageImportError";
+    this.cause = cause;
+    this.residualPaths = residualPaths;
+  }
 }
 
 interface MembersFile {
@@ -153,6 +176,39 @@ function readPackageProjectConfig(
   }
 
   return project;
+}
+
+function assertProjectPackageDataReadable(
+  projectPackage: NormalizedProjectPackage,
+): void {
+  readPackageProjectConfig(projectPackage.files);
+
+  const membersFile = parsePackageJson<MembersFile>(
+    projectPackage.files,
+    "members.json",
+    "这个项目文件缺少成员数据，无法导入。",
+  );
+
+  if (!Array.isArray(membersFile.members)) {
+    throw new Error("项目文件 members.json 缺少 members 数组，无法导入。");
+  }
+
+  for (const [path, content] of Object.entries(projectPackage.files)) {
+    if (
+      path.endsWith(".jsonl") &&
+      ["entries/", "terms/", "tasks/", "comments/", "logs/"].some(
+        (prefix) => path.startsWith(prefix),
+      )
+    ) {
+      try {
+        parseJsonl(decodePackageText(content));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "格式错误。";
+
+        throw new Error(`项目数据文件 ${path} 格式有问题，无法导入。${reason}`);
+      }
+    }
+  }
 }
 
 async function readNormalizedProjectPackage(
@@ -402,10 +458,9 @@ function buildPreview(
   };
 }
 
-async function writePackageFilesToRoot(
-  root: ProjectDirectoryHandle,
+function getPackageDirectories(
   projectPackage: NormalizedProjectPackage,
-): Promise<void> {
+): string[] {
   const directories = new Set<string>([
     ...PACKED_PROJECT_DIRECTORIES,
     ...projectPackage.directories,
@@ -419,15 +474,243 @@ async function writePackageFilesToRoot(
     }
   }
 
-  for (const directory of Array.from(directories).sort(
-    (left, right) => left.split("/").length - right.split("/").length,
-  )) {
-    await ensureDirectory(root, directory);
+  return Array.from(directories).sort(
+    (left, right) =>
+      left.split("/").length - right.split("/").length ||
+      left.localeCompare(right),
+  );
+}
+
+function getPackageFileEntries(
+  projectPackage: NormalizedProjectPackage,
+): Array<[string, Uint8Array]> {
+  return Object.entries(projectPackage.files).sort(([left], [right]) => {
+    if (left === "project.json") {
+      return 1;
+    }
+
+    if (right === "project.json") {
+      return -1;
+    }
+
+    return left.localeCompare(right);
+  });
+}
+
+interface DirectoryScanResult {
+  files: string[];
+  directories: string[];
+  inaccessible: string[];
+}
+
+async function scanDirectoryTree(
+  root: ProjectDirectoryHandle,
+  path = "",
+): Promise<DirectoryScanResult> {
+  const result: DirectoryScanResult = {
+    files: [],
+    directories: [],
+    inaccessible: [],
+  };
+  let names: string[];
+
+  try {
+    names = await listFiles(root, path);
+  } catch {
+    result.inaccessible.push(path);
+    return result;
   }
 
-  for (const [path, content] of Object.entries(projectPackage.files)) {
-    await writeBinaryFile(root, path, content);
+  for (const name of names) {
+    const childPath = [path, name].filter(Boolean).join("/");
+
+    try {
+      await readBinaryFile(root, childPath);
+      result.files.push(childPath);
+      continue;
+    } catch {
+      // Directories cannot be read as files.
+    }
+
+    try {
+      const childResult = await scanDirectoryTree(root, childPath);
+
+      result.directories.push(childPath, ...childResult.directories);
+      result.files.push(...childResult.files);
+      result.inaccessible.push(...childResult.inaccessible);
+    } catch {
+      result.inaccessible.push(childPath);
+    }
   }
+
+  return result;
+}
+
+function sortDeepestFirst(paths: string[]): string[] {
+  return [...paths].sort((left, right) => {
+    const depthDiff = right.split("/").length - left.split("/").length;
+
+    return depthDiff || right.localeCompare(left);
+  });
+}
+
+async function listResidualImportPaths(
+  parentRoot: ProjectDirectoryHandle,
+  folderName: string,
+): Promise<string[]> {
+  if (!(await fileExists(parentRoot, folderName))) {
+    return [];
+  }
+
+  try {
+    const targetRoot = await parentRoot.getDirectoryHandle(folderName);
+    const scan = await scanDirectoryTree(targetRoot);
+    const paths = [
+      ...scan.files,
+      ...scan.directories,
+      ...scan.inaccessible,
+    ];
+
+    if (paths.length === 0) {
+      return [folderName];
+    }
+
+    return Array.from(
+      new Set(
+        paths.map((path) => (path ? `${folderName}/${path}` : folderName)),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+  } catch {
+    return [folderName];
+  }
+}
+
+async function cleanupFailedProjectImport(
+  parentRoot: ProjectDirectoryHandle,
+  folderName: string,
+): Promise<string[]> {
+  try {
+    await deleteEntry(parentRoot, folderName, { recursive: true });
+  } catch {
+    // Fall through to leaf-first cleanup.
+  }
+
+  if (!(await fileExists(parentRoot, folderName))) {
+    return [];
+  }
+
+  try {
+    const targetRoot = await parentRoot.getDirectoryHandle(folderName);
+    const scan = await scanDirectoryTree(targetRoot);
+
+    for (const path of sortDeepestFirst(scan.files)) {
+      try {
+        await deleteEntry(targetRoot, path);
+      } catch {
+        // Residual scan below reports paths that could not be removed.
+      }
+    }
+
+    for (const path of sortDeepestFirst(scan.directories)) {
+      try {
+        await deleteEntry(targetRoot, path);
+      } catch {
+        // Non-empty or inaccessible directories are reported below.
+      }
+    }
+
+    try {
+      await deleteEntry(parentRoot, folderName, { recursive: true });
+    } catch {
+      // Residual scan below reports the final state.
+    }
+  } catch {
+    // Residual scan below reports the target directory itself.
+  }
+
+  return listResidualImportPaths(parentRoot, folderName);
+}
+
+async function importPreparedProjectPackage(
+  projectPackage: NormalizedProjectPackage,
+  preview: ProjectPackagePreview,
+  parentRoot: ProjectDirectoryHandle,
+): Promise<ImportedProjectPackage> {
+  const folderName = preview.suggestedFolderName;
+
+  if (await fileExists(parentRoot, folderName)) {
+    throw new Error(
+      `目标位置已存在 ${folderName}，请换一个导入位置或先移动已有文件夹。`,
+    );
+  }
+
+  const targetRoot = await parentRoot.getDirectoryHandle(folderName, {
+    create: true,
+  });
+  const targetStorage = createProjectStorage(targetRoot);
+  let existingNames: string[];
+
+  try {
+    existingNames = await targetStorage.listFiles("");
+  } catch (error) {
+    const residualPaths = await cleanupFailedProjectImport(
+      parentRoot,
+      folderName,
+    );
+
+    throw new ProjectPackageImportError(error, residualPaths);
+  }
+
+  if (existingNames.length > 0) {
+    throw new Error(
+      `目标目录 ${folderName} 在导入前已包含内容，已停止导入以避免覆盖。`,
+    );
+  }
+
+  const writePlan = createProjectWritePlan(targetStorage);
+
+  for (const directory of getPackageDirectories(projectPackage)) {
+    writePlan.ensureDirectory(directory);
+  }
+
+  for (const [path, content] of getPackageFileEntries(projectPackage)) {
+    writePlan.writeBinary(path, content);
+  }
+
+  try {
+    await writePlan.execute({ verifyWrites: true });
+  } catch (error) {
+    const residualPaths = await cleanupFailedProjectImport(
+      parentRoot,
+      folderName,
+    );
+
+    throw new ProjectPackageImportError(error, residualPaths);
+  }
+
+  return {
+    root: targetRoot,
+    folderName,
+    preview,
+  };
+}
+
+async function prepareProjectPackageImport(file: File): Promise<{
+  projectPackage: NormalizedProjectPackage;
+  preview: ProjectPackagePreview;
+}> {
+  const projectPackage = await readNormalizedProjectPackage(file);
+  const preview = buildPreview(file, projectPackage);
+
+  if (!preview.valid) {
+    throw new Error(
+      `这个 Textile 项目文件不能导入，缺少：${preview.missingPaths.join("、")}。`,
+    );
+  }
+
+  assertProjectPackageDataReadable(projectPackage);
+
+  return { projectPackage, preview };
 }
 
 async function addFileIfExists(
@@ -508,52 +791,19 @@ export async function inspectProjectPackage(
 export async function importProjectPackageToDirectory(
   file: File,
 ): Promise<ImportedProjectPackage> {
-  const projectPackage = await readNormalizedProjectPackage(file);
-  const preview = buildPreview(file, projectPackage);
-
-  if (!preview.valid) {
-    throw new Error(
-      `这个 Textile 项目文件不能导入，缺少：${preview.missingPaths.join("、")}。`,
-    );
-  }
-
+  const { projectPackage, preview } = await prepareProjectPackageImport(file);
   const parentRoot = await openProjectDirectory();
-  const folderName = preview.suggestedFolderName;
 
-  if (await fileExists(parentRoot, folderName)) {
-    throw new Error(
-      `目标位置已存在 ${folderName}，请换一个导入位置或先移动已有文件夹。`,
-    );
-  }
+  return importPreparedProjectPackage(projectPackage, preview, parentRoot);
+}
 
-  const targetRoot = await parentRoot.getDirectoryHandle(folderName, {
-    create: true,
-  });
+export async function importProjectPackageToParentDirectory(
+  file: File,
+  parentRoot: ProjectDirectoryHandle,
+): Promise<ImportedProjectPackage> {
+  const { projectPackage, preview } = await prepareProjectPackageImport(file);
 
-  try {
-    await writePackageFilesToRoot(targetRoot, projectPackage);
-  } catch (error) {
-    let cleanupFailed = false;
-
-    try {
-      await deleteEntry(parentRoot, folderName, { recursive: true });
-    } catch {
-      cleanupFailed = true;
-    }
-
-    const reason = error instanceof Error ? error.message : "未知错误。";
-    const cleanupMessage = cleanupFailed
-      ? ` 已保留残留目录：${folderName}。`
-      : "";
-
-    throw new Error(`导入 Textile 项目文件失败。原因：${reason}${cleanupMessage}`);
-  }
-
-  return {
-    root: targetRoot,
-    folderName,
-    preview,
-  };
+  return importPreparedProjectPackage(projectPackage, preview, parentRoot);
 }
 
 export async function createProjectRootFromPackage(

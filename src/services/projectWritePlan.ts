@@ -33,6 +33,10 @@ export interface ProjectWritePlanResult {
   appliedPaths: string[];
 }
 
+export interface ProjectWritePlanExecuteOptions {
+  verifyWrites?: boolean;
+}
+
 export class ProjectWritePlanError extends Error {
   readonly cause: unknown;
   readonly rollbackFailures: string[];
@@ -83,6 +87,14 @@ function sortDeepestFirst(paths: Iterable<string>): string[] {
 
     return depthDiff || right.localeCompare(left);
   });
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
 }
 
 export class ProjectWritePlan {
@@ -148,7 +160,9 @@ export class ProjectWritePlan {
     return this;
   }
 
-  async execute(): Promise<ProjectWritePlanResult> {
+  async execute(
+    options: ProjectWritePlanExecuteOptions = {},
+  ): Promise<ProjectWritePlanResult> {
     const fileSnapshots = new Map<string, FileSnapshot>();
     const directorySnapshots = new Map<string, DirectorySnapshot>();
     const implicitParentSnapshots = new Map<string, DirectorySnapshot>();
@@ -165,6 +179,14 @@ export class ProjectWritePlan {
       for (const operation of this.operations) {
         appliedOperations.push(operation);
         await this.applyOperation(operation);
+
+        if (options.verifyWrites && operation.kind === "write") {
+          const writtenContent = await this.storage.readBinary(operation.path);
+
+          if (!bytesEqual(writtenContent, operation.content)) {
+            throw new Error(`项目文件写入校验失败：${operation.path}`);
+          }
+        }
       }
 
       return {

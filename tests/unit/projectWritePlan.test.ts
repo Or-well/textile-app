@@ -92,6 +92,36 @@ describe("ProjectWritePlan", () => {
     await expect(baseStorage.readText("data/existing.txt")).resolves.toBe("old");
   });
 
+  it("rolls back when write verification detects different bytes", async () => {
+    const baseStorage = await createStorage({});
+    const storage = new Proxy(baseStorage, {
+      get(target, property) {
+        if (property === "readBinary") {
+          return async (path: string) => {
+            const content = await target.readBinary(path);
+
+            return path === "data/new.txt"
+              ? new Uint8Array([...content, 0])
+              : content;
+          };
+        }
+
+        const value = Reflect.get(target, property, target);
+
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const plan = createProjectWritePlan(storage);
+
+    plan.writeText("data/new.txt", "new");
+
+    await expect(plan.execute({ verifyWrites: true })).rejects.toThrow(
+      "项目文件写入校验失败",
+    );
+    await expect(baseStorage.fileExists("data/new.txt")).resolves.toBe(false);
+    await expect(baseStorage.fileExists("data")).resolves.toBe(false);
+  });
+
   it("rejects duplicate target paths before execution", async () => {
     const storage = await createStorage({});
     const plan = createProjectWritePlan(storage);
