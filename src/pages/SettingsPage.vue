@@ -218,6 +218,12 @@ const latestBuildText = computed(() =>
 );
 const releaseNoteRows = computed(() => updateState.value.latest?.notes ?? []);
 const isDesktopUpdate = computed(() => updateState.value.platform === "desktop");
+const hasPendingProgramRefresh = computed(
+  () =>
+    updateState.value.pwaRefreshReady ||
+    updateState.value.desktopUpdateDownloaded ||
+    updateState.value.status === "waiting-for-safe-state",
+);
 const downloadUrlConfigured = computed(() =>
   hasConfiguredDownloadUrl(updateState.value.latest?.download_url),
 );
@@ -1396,7 +1402,9 @@ onBeforeUnmount(() => {
                 <span v-if="updateState.pwaRefreshReady">
                   新版资源已下载：{{ updateState.latestDownloadedAt ? new Date(updateState.latestDownloadedAt).toLocaleString() : "刚刚" }}
                 </span>
-                <span v-if="updateState.refreshBlockedReason">
+                <span
+                  v-if="hasPendingProgramRefresh && updateState.refreshBlockedReason"
+                >
                   暂缓刷新：{{ updateState.refreshBlockedReason }}
                 </span>
               </div>

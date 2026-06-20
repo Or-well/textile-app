@@ -22,7 +22,10 @@ import {
   isTauriRuntime,
   isTauriUpdateDownloaded,
 } from "./tauriUpdateAdapter";
-import { getAppUpdateSafety } from "./updateSafety";
+import {
+  getAppUpdateSafety,
+  getPendingUpdateBlockedReason,
+} from "./updateSafety";
 import {
   checkWebUpdate,
   hasConfiguredWebDownloadUrl,
@@ -498,7 +501,10 @@ function syncSafetyState(): void {
   state = {
     ...state,
     canAutoRefresh: safety.canAutoRefresh,
-    refreshBlockedReason: safety.canAutoRefresh ? "" : safety.reason,
+    refreshBlockedReason: getPendingUpdateBlockedReason(
+      safety,
+      updateWaiting,
+    ),
     message:
       updateWaiting && !safety.canAutoRefresh
         ? safety.reason

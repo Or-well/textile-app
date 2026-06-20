@@ -48,6 +48,13 @@ export function getAppUpdateSafety(): UpdateSafetyState {
   return { ...state };
 }
 
+export function getPendingUpdateBlockedReason(
+  safety: UpdateSafetyState,
+  hasPendingUpdate: boolean,
+): string {
+  return hasPendingUpdate && !safety.canAutoRefresh ? safety.reason : "";
+}
+
 function evaluateUpdateSafety(input: UpdateSafetyInput): UpdateSafetyState {
   const activeOperations = getActiveAppOperations();
 
