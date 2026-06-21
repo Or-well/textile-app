@@ -63,7 +63,7 @@ function isVisible(item: (typeof navItems)[number]): boolean {
       type="button"
       @click="emit('openHelp')"
     >
-      帮助
+      使用手册
     </button>
   </nav>
 </template>

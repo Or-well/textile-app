@@ -7,9 +7,9 @@ import {
   type PermissionAction,
 } from "../model/permissions";
 import {
+  getCurrentProofreadRoundFirstProofreader,
   getEntryProofreadCount,
-  getLatestProofreader,
-  getLatestTranslator,
+  getFirstTranslator,
   isEntryProofreadComplete,
   normalizeProofreadUsers,
   normalizeWorkflowSettings,
@@ -407,7 +407,7 @@ export function getProofreadBlockReason(
 
   if (
     !settings.allow_self_proofread &&
-    getLatestTranslator(entry) === user.id
+    getFirstTranslator(entry) === user.id
   ) {
     return "self_proofread_disabled";
   }
@@ -534,7 +534,7 @@ export function getReviewBlockReason(
 
   if (
     !settings.allow_self_review &&
-    getLatestProofreader(entry) === user.id
+    getCurrentProofreadRoundFirstProofreader(entry) === user.id
   ) {
     return "self_review_disabled";
   }
@@ -565,7 +565,7 @@ export function getReviewBlockMessage(
     case "already_reviewed":
       return "当前词条已经完成审核。";
     case "self_review_disabled":
-      return "当前用户是该译文的最新校对者，项目未允许审核自己校对的译文。";
+      return "当前用户是最近一轮校对的首位校对者，项目未允许审核自己校对的译文。";
     case "invalid_status":
       return "当前词条尚未进入可审核阶段。";
     default:

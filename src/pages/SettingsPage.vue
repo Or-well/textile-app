@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import licenseText from "../../LICENSE?raw";
 import { useAppDraft } from "../composables/useAppDraft";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
 import ClearCacheDialog from "../components/settings/ClearCacheDialog.vue";
@@ -166,6 +167,7 @@ const isClearingCache = ref(false);
 const isScanningProjectDeletion = ref(false);
 const showClearCacheDialog = ref(false);
 const showDeleteProjectDialog = ref(false);
+const showLicenseDialog = ref(false);
 const projectDeletionScan = ref<ProjectDeletionScan | null>(null);
 const projectDeletionError = ref("");
 const message = ref("");
@@ -1045,7 +1047,7 @@ onBeforeUnmount(() => {
         <section v-else-if="activeSection === 'workflow'" class="settings-card">
           <header class="card-header">
             <h2>工作流</h2>
-            <p>设置校对次数，以及同一成员是否可以参与自己的译文校对或审核。</p>
+            <p>设置校对次数，以及同一成员是否可以校对自己的译文或审核自己校对的译文。</p>
           </header>
 
           <div class="form-stack">
@@ -1087,7 +1089,7 @@ onBeforeUnmount(() => {
             <div class="form-row">
               <div class="row-label">
                 <span>人员限制</span>
-                <p>默认避免译者自校、自审，以及同一成员重复完成多轮校对。</p>
+                <p>默认避免译者自校、审核自己校对的译文，以及同一成员重复完成多轮校对。</p>
               </div>
               <div class="row-control workflow-options">
                 <label class="checkbox-control">
@@ -1104,7 +1106,7 @@ onBeforeUnmount(() => {
                     type="checkbox"
                     :disabled="!canManageProject"
                   />
-                  <span>允许译者审核自己的译文</span>
+                  <span>允许审核自己校对的译文</span>
                 </label>
                 <label class="checkbox-control">
                   <input
@@ -1449,6 +1451,24 @@ onBeforeUnmount(() => {
 
             <div class="form-row">
               <div class="row-label">
+                <span>许可证</span>
+                <p>Textile 使用 Apache License 2.0 发布。</p>
+              </div>
+              <div class="row-control license-control">
+                <strong>Apache-2.0</strong>
+                <span>Copyright 2026 Or_well</span>
+                <button
+                  class="secondary-button"
+                  type="button"
+                  @click="showLicenseDialog = true"
+                >
+                  查看许可证
+                </button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="row-label">
                 <label for="update-channel">更新通道</label>
                 <p>stable 为默认通道，beta 用于提前查看测试版提示。</p>
               </div>
@@ -1620,6 +1640,35 @@ onBeforeUnmount(() => {
       @cancel="showDeleteProjectDialog = false"
       @confirm="handleDeleteProjectConfirmed"
     />
+
+    <section
+      v-if="showLicenseDialog"
+      class="license-dialog-backdrop"
+      role="presentation"
+      @click.self="showLicenseDialog = false"
+    >
+      <article
+        class="license-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Apache-2.0 许可证"
+      >
+        <header class="license-dialog-header">
+          <div>
+            <h2>Apache License 2.0</h2>
+            <p>Textile · Copyright 2026 Or_well</p>
+          </div>
+          <button
+            class="secondary-button"
+            type="button"
+            @click="showLicenseDialog = false"
+          >
+            关闭
+          </button>
+        </header>
+        <pre class="license-text">{{ licenseText }}</pre>
+      </article>
+    </section>
   </section>
 </template>
 
@@ -2141,20 +2190,28 @@ code {
 }
 
 .readonly-control,
-.update-result {
+.update-result,
+.license-control {
   display: grid;
   gap: 4px;
 }
 
 .readonly-control strong,
 .update-result strong,
+.license-control strong,
 .update-notes strong {
   color: #111827;
 }
 
 .readonly-control span,
-.update-result span {
+.update-result span,
+.license-control span {
   font-size: 13px;
+}
+
+.license-control .secondary-button {
+  justify-self: start;
+  margin-top: 6px;
 }
 
 .update-notes {
@@ -2169,6 +2226,60 @@ code {
 .update-notes ul {
   margin: 0;
   padding-left: 18px;
+}
+
+.license-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 0.46);
+}
+
+.license-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(860px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 22px 55px rgb(15 23 42 / 0.22);
+  overflow: hidden;
+}
+
+.license-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.license-dialog-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.license-dialog-header p {
+  margin: 4px 0 0;
+  color: #4b5563;
+}
+
+.license-text {
+  min-height: 0;
+  margin: 0;
+  padding: 16px 18px;
+  overflow: auto;
+  background: #f8fafb;
+  color: #1f2937;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .danger-card {

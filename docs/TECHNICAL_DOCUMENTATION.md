@@ -619,7 +619,7 @@ comments/<file_id>/<6位entry index>.jsonl
 示例：
 
 ```json
-{"id":"event_xxx","type":"entry.updated","user_id":"user_a","created_at":"2026-06-19T00:00:00.000Z","entry_id":"script_001:000001","file_id":"script_001","detail":{"operation":"proofread","before_target":"旧译文","after_target":"新译文","before_status":"translated","after_status":"proofread","before_translated_by":"translator_a","after_translated_by":"proofreader_a","before_proofread_by":[],"after_proofread_by":["proofreader_a"],"before_proofread_count":0,"after_proofread_count":1,"before_reviewed_by":"","after_reviewed_by":""}}
+{"id":"event_xxx","type":"entry.updated","user_id":"proofreader_a","created_at":"2026-06-19T00:00:00.000Z","entry_id":"script_001:000001","file_id":"script_001","detail":{"operation":"proofread","before_target":"旧译文","after_target":"新译文","before_status":"translated","after_status":"proofread","before_translated_by":"translator_a","after_translated_by":"translator_a","before_proofread_by":[],"after_proofread_by":["proofreader_a"],"before_proofread_count":0,"after_proofread_count":1,"before_reviewed_by":"","after_reviewed_by":""}}
 ```
 
 字段：
@@ -1098,20 +1098,22 @@ disputed: boolean
 翻译：
 
 - 当前保存者写 `updated_by`。
-- 首次产生译文或当前译文内容变化时写 `translated_by`，该字段表示当前有效译文的最新译者。
+- 普通翻译保存、批量导入或普通修改包翻译变更首次产生译文或改变当前译文内容时写 `translated_by`，该字段表示当前有效译文流程的首位翻译者。
 
 校对：
 
 - 当前成员加入 `proofread_by`。
-- `proofread_by` 按校对发生顺序保存，最后一项表示最新校对者；旧字符串按单元素数组读取。
+- `proofread_by` 按当前有效译文这一轮校对的发生顺序保存，第一项表示最近一轮校对的首位校对者；旧字符串按单元素数组读取。
 - `proofread_count` 增加。
 - 未达到要求次数时仍保持 translated 主状态，但 UI 显示校对中。
 - 达到次数后进入 proofread。
+- 校对时修改译文不会覆盖 `translated_by`。
 
 审核：
 
 - 当前成员写 `reviewed_by`。
 - 状态进入 reviewed。
+- 审核时修改译文不会覆盖 `translated_by`。
 
 回退：
 
@@ -1122,8 +1124,8 @@ disputed: boolean
 
 未显式放开时的限制：
 
-- 不允许当前有效译文的最新译者校对该译文。
-- 不允许最新校对者审核自己的校对结果；译者或更早轮次的校对者不会仅因此被阻止。
+- 不允许当前有效译文流程的首位翻译者校对该译文。
+- 不允许最近一轮校对的首位校对者审核自己的校对结果；译者或后续校对者不会仅因此被阻止。
 - 不允许同一成员重复完成多轮校对。
 
 这些规则可在创建项目和项目工作流设置中调整；创建项目页默认勾选放开这些限制，旧项目缺失对应字段时仍按上述限制读取。
@@ -1742,7 +1744,9 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
-工作台侧边栏的“帮助”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，让系统默认 PDF 阅读器打开随包资源。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
+工作台侧边栏的“使用手册”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，让系统默认 PDF 阅读器打开随包资源。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
+
+设置页“关于 Textile / 更新”显示当前程序版本、更新状态和许可证信息。许可证全文通过 `LICENSE?raw` 导入到 `SettingsPage.vue` 的本地弹窗中展示，根目录 `LICENSE` 仍是唯一维护源。
 
 ## 46. 词条编辑页滚动布局
 
@@ -1797,7 +1801,7 @@ store: projectHandles
 - 更新状态订阅通知。
 - Web 下载页打开、PWA 刷新或 Tauri 安装重启动作。
 
-内置用户手册不进入更新状态机。手册入口位于工作台侧边栏“帮助”，桌面版通过 Tauri `open_manual_pdf` 命令打开打包资源，Web/PWA 通过浏览器打开 `/manual.pdf`。
+内置用户手册不进入更新状态机。手册入口位于工作台侧边栏“使用手册”，桌面版通过 Tauri `open_manual_pdf` 命令打开打包资源，Web/PWA 通过浏览器打开 `/manual.pdf`。
 
 状态机包含：
 

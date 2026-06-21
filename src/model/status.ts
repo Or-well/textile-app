@@ -127,16 +127,16 @@ export function normalizeProofreadUsers(
   return proofreadBy?.trim() ? [proofreadBy.trim()] : [];
 }
 
-export function getLatestTranslator(entry: {
+export function getFirstTranslator(entry: {
   translated_by?: string;
 }): string {
   return entry.translated_by?.trim() ?? "";
 }
 
-export function getLatestProofreader(entry: {
+export function getCurrentProofreadRoundFirstProofreader(entry: {
   proofread_by?: string[] | string;
 }): string {
-  return normalizeProofreadUsers(entry.proofread_by).at(-1) ?? "";
+  return normalizeProofreadUsers(entry.proofread_by)[0] ?? "";
 }
 
 export function getEntryProofreadCount(entry: {
@@ -312,9 +312,7 @@ export function applyEntryWorkflowOperation(
         nextProofreadCount >= settings.proofread_required
           ? "proofread"
           : "translated",
-      translated_by: targetChanged
-        ? options.userId
-        : entry.translated_by || options.userId,
+      translated_by: entry.translated_by,
       proofread_by: nextProofreadBy,
       proofread_count: nextProofreadCount,
       reviewed_by: "",
@@ -327,9 +325,7 @@ export function applyEntryWorkflowOperation(
       ...entry,
       target: options.target,
       status: "reviewed",
-      translated_by: targetChanged
-        ? options.userId
-        : entry.translated_by || options.userId,
+      translated_by: entry.translated_by,
       proofread_by: currentProofreadBy,
       proofread_count: Math.max(
         currentProofreadCount,

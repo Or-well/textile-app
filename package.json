@@ -2,6 +2,7 @@
   "name": "textile",
   "private": true,
   "version": "0.3.1",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "prebuild": "node scripts/sync-app-version.mjs && node scripts/generate-version-manifest.mjs",

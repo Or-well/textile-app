@@ -704,7 +704,7 @@ describe("ordinary change-package write plan", () => {
       packageEntry: {
         target: "Proofread package edit",
         status: "proofread",
-        translated_by: "member-2",
+        translated_by: "translator-1",
         proofread_by: ["member-2"],
         proofread_count: 1,
         reviewed_by: "",
@@ -733,7 +733,7 @@ describe("ordinary change-package write plan", () => {
       {
         target: "Proofread package edit",
         status: "proofread",
-        translated_by: "member-2",
+        translated_by: "translator-1",
         proofread_by: ["member-2"],
         proofread_count: 1,
         reviewed_by: "",

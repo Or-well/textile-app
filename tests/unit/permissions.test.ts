@@ -172,7 +172,7 @@ describe("entry workflow permissions", () => {
     ).toBeNull();
   });
 
-  it("requires completed proofread and blocks only the latest proofreader", () => {
+  it("requires completed proofread and blocks only the current round first proofreader", () => {
     const reviewer = createMember(["reviewer"], { id: "reviewer-1" });
     const entry = createEntry({
       target: "Translated",
@@ -220,7 +220,7 @@ describe("entry workflow permissions", () => {
           allow_self_review: false,
         },
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canReviewEntry(
         reviewer,
@@ -235,7 +235,7 @@ describe("entry workflow permissions", () => {
           allow_self_review: false,
         },
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       canReviewEntry(
         reviewer,
@@ -259,13 +259,13 @@ describe("entry workflow permissions", () => {
     ).toBe(false);
   });
 
-  it("explains when the latest proofreader cannot review", () => {
+  it("explains when the current round first proofreader cannot review", () => {
     const reviewer = createMember(["reviewer"], { id: "reviewer-1" });
     const entry = createEntry({
       target: "Translated",
       status: "proofread",
       translated_by: reviewer.id,
-      proofread_by: ["proofreader-1", reviewer.id],
+      proofread_by: [reviewer.id, "proofreader-2"],
       proofread_count: 2,
     });
     const reason = getReviewBlockReason(reviewer, entry, {
@@ -276,14 +276,14 @@ describe("entry workflow permissions", () => {
 
     expect(reason).toBe("self_review_disabled");
     expect(getReviewBlockMessage(reason)).toBe(
-      "当前用户是该译文的最新校对者，项目未允许审核自己校对的译文。",
+      "当前用户是最近一轮校对的首位校对者，项目未允许审核自己校对的译文。",
     );
     expect(
       getReviewBlockReason(
         reviewer,
         {
           ...entry,
-          proofread_by: ["reviewer-1", "proofreader-2"],
+          proofread_by: ["proofreader-1", reviewer.id],
         },
         {
           proofread_required: 2,

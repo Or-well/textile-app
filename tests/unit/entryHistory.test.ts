@@ -149,12 +149,12 @@ describe("entry version history", () => {
     ).resolves.toEqual([]);
   });
 
-  it("blocks review by the latest proofreader at the service boundary", async () => {
+  it("blocks review by the current proofread round first proofreader at the service boundary", async () => {
     const actor = createMember(["reviewer"], { id: "reviewer-1" });
     const { storage, entry } = await createEntryStorage({
       status: "proofread",
       translated_by: "translator-1",
-      proofread_by: ["proofreader-1", actor.id],
+      proofread_by: [actor.id, "proofreader-2"],
       proofread_count: 2,
     });
 
@@ -176,7 +176,7 @@ describe("entry version history", () => {
           },
         },
       ),
-    ).rejects.toThrow("最新校对者");
+    ).rejects.toThrow("首位校对者");
   });
 
   it("allows the translator to review when another member proofread last", async () => {
@@ -269,7 +269,7 @@ describe("entry version history", () => {
     expect(saved).toMatchObject({
       target: "Proofread edit",
       status: "proofread",
-      translated_by: actor.id,
+      translated_by: "translator-1",
       proofread_by: [actor.id],
       proofread_count: 1,
       reviewed_by: "",
@@ -281,7 +281,7 @@ describe("entry version history", () => {
           operation: "proofread",
           before_target: "Original",
           after_target: "Proofread edit",
-          after_translated_by: actor.id,
+          after_translated_by: "translator-1",
           after_proofread_by: [actor.id],
           after_proofread_count: 1,
         },
@@ -318,7 +318,7 @@ describe("entry version history", () => {
     expect(saved).toMatchObject({
       target: "Review edit",
       status: "reviewed",
-      translated_by: actor.id,
+      translated_by: "translator-1",
       proofread_by: ["proofreader-1"],
       proofread_count: 1,
       reviewed_by: actor.id,

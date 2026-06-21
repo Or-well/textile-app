@@ -155,3 +155,9 @@ scripts/            版本清单和发布检查脚本
 - [技术文档](docs/TECHNICAL_DOCUMENTATION.md)
 - [代码代理开发规范](AGENTS.md)
 - [Tauri Updater 发布说明](docs/TAURI_UPDATER_RELEASE.md)
+
+## License
+
+Copyright 2026 Or_well.
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

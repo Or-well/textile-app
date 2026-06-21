@@ -272,7 +272,7 @@ async function handleCreateProject() {
 
             <label class="check-row">
               <input v-model="allowSelfReview" type="checkbox" />
-              <span>允许译者审核自己的译文</span>
+              <span>允许审核自己校对的译文</span>
             </label>
 
             <label class="check-row">

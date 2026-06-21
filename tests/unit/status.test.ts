@@ -3,9 +3,9 @@ import {
   applyEntryTargetChange,
   applyEntryWorkflowOperation,
   applyEntryWorkflowStatus,
-  getLatestProofreader,
-  getLatestTranslator,
+  getCurrentProofreadRoundFirstProofreader,
   getEntryProofreadCount,
+  getFirstTranslator,
   inferEntryStatus,
   isEntryProofreadComplete,
   isEntryReleaseComplete,
@@ -115,21 +115,21 @@ describe("legacy entry normalization", () => {
 });
 
 describe("entry workflow audit actors", () => {
-  it("uses the current translator and the latest proofread record", () => {
+  it("uses the first translator and current proofread round first proofreader", () => {
     expect(
-      getLatestTranslator(
+      getFirstTranslator(
         createEntry({ translated_by: " translator-latest " }),
       ),
     ).toBe("translator-latest");
     expect(
-      getLatestProofreader(
+      getCurrentProofreadRoundFirstProofreader(
         createEntry({
           proofread_by: ["proofreader-1", "proofreader-2", "proofreader-1"],
         }),
       ),
     ).toBe("proofreader-1");
     expect(
-      getLatestProofreader({
+      getCurrentProofreadRoundFirstProofreader({
         proofread_by: " legacy-proofreader ",
       }),
     ).toBe("legacy-proofreader");
@@ -232,7 +232,7 @@ describe("applyEntryWorkflowOperation", () => {
     ).toMatchObject({
       target: "After",
       status: "proofread",
-      translated_by: "proofreader-2",
+      translated_by: "translator-1",
       proofread_by: ["proofreader-1", "proofreader-2"],
       proofread_count: 2,
       reviewed_by: "",
@@ -262,7 +262,7 @@ describe("applyEntryWorkflowOperation", () => {
     ).toMatchObject({
       target: "After",
       status: "reviewed",
-      translated_by: "reviewer-1",
+      translated_by: "translator-1",
       proofread_by: ["proofreader-1"],
       proofread_count: 1,
       reviewed_by: "reviewer-1",
