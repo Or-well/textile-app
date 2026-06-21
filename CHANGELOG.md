@@ -4,7 +4,7 @@
 
 格式参考 Keep a Changelog，版本号以根目录 `package.json` 为准。
 
-## [Unreleased]
+## [0.4.0] - 2026-06-21
 
 ### Added
 
