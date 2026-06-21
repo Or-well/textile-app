@@ -450,6 +450,7 @@ changes/
 - `allow_change_package`：项目级开关字段，当前主要能力仍由权限 action 决定。
 - `collaboration.require_signed_change_packages`：要求普通、任务和维护修改包带有有效成员签名。新项目默认 `true`；旧项目缺失该字段时按 `false` 兼容读取。
 - `enable_tasks`：保存于工作流；为 `false` 时 UI 隐藏任务入口，任务 service 拒绝写入类操作。
+- `allow_self_proofread`、`allow_self_review`、`allow_same_user_multi_proofread`：创建项目页可选择并默认勾选允许；旧项目缺失字段时由 `normalizeWorkflowSettings()` 按不允许兼容读取。
 - `role_permissions`：项目可覆盖默认角色权限。
 
 ## 11. `members.json`
@@ -1119,13 +1120,13 @@ disputed: boolean
 - 后续审计字段按状态函数清理或保留。
 - 该操作只处理工作流阶段，不恢复旧译文内容；译文内容恢复走历史面板和 `restoreEntryVersion()`。
 
-默认限制：
+未显式放开时的限制：
 
 - 不允许当前有效译文的最新译者校对该译文。
 - 不允许最新校对者审核自己的校对结果；译者或更早轮次的校对者不会仅因此被阻止。
 - 不允许同一成员重复完成多轮校对。
 
-这些规则可在项目工作流设置中调整。
+这些规则可在创建项目和项目工作流设置中调整；创建项目页默认勾选放开这些限制，旧项目缺失对应字段时仍按上述限制读取。
 
 ## 30. `stats.ts`
 

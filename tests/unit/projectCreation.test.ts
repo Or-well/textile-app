@@ -38,6 +38,11 @@ describe("createProjectInStorage", () => {
       project_id: result.project.config.project_id,
       name: input.name,
       settings: {
+        workflow: {
+          allow_self_proofread: false,
+          allow_self_review: false,
+          allow_same_user_multi_proofread: false,
+        },
         collaboration: {
           require_signed_change_packages: true,
         },
@@ -84,6 +89,27 @@ describe("createProjectInStorage", () => {
       settings: {
         collaboration: {
           require_signed_change_packages: false,
+        },
+      },
+    });
+  });
+
+  it("can create a project with relaxed workflow member restrictions", async () => {
+    const storage = createEmptyStorage();
+
+    await createProjectInStorage(storage, {
+      ...input,
+      allowSelfProofread: true,
+      allowSelfReview: true,
+      allowSameUserMultiProofread: true,
+    });
+
+    await expect(storage.readJson("project.json")).resolves.toMatchObject({
+      settings: {
+        workflow: {
+          allow_self_proofread: true,
+          allow_self_review: true,
+          allow_same_user_multi_proofread: true,
         },
       },
     });

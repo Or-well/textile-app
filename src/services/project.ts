@@ -78,6 +78,9 @@ export interface CreateProjectInput {
   enableProofread: boolean;
   enableReview: boolean;
   proofreadRequired: ProofreadRequired;
+  allowSelfProofread?: boolean;
+  allowSelfReview?: boolean;
+  allowSameUserMultiProofread?: boolean;
   progressWeights: {
     translation: number;
     proofread: number;
@@ -1064,9 +1067,10 @@ export async function createProjectInStorage(
         enable_review: input.enableReview,
         proofread_required: input.proofreadRequired,
         review_required: input.enableReview,
-        allow_self_proofread: false,
-        allow_self_review: false,
-        allow_same_user_multi_proofread: false,
+        allow_self_proofread: input.allowSelfProofread ?? false,
+        allow_self_review: input.allowSelfReview ?? false,
+        allow_same_user_multi_proofread:
+          input.allowSameUserMultiProofread ?? false,
       },
       progress_weights: {
         translation: input.progressWeights.translation,

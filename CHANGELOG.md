@@ -4,6 +4,12 @@
 
 格式参考 Keep a Changelog，版本号以根目录 `package.json` 为准。
 
+## [Unreleased]
+
+### Changed
+
+- 创建项目时可以设置译者自校、自审和同一成员多轮校对开关，新项目创建页默认勾选允许。
+
 ## [0.3.0] - 2026-06-21
 
 ### Changed

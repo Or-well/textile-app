@@ -22,6 +22,9 @@ const enableTasks = ref(true);
 const enableProofread = ref(true);
 const enableReview = ref(true);
 const requireSignedChangePackages = ref(true);
+const allowSelfProofread = ref(true);
+const allowSelfReview = ref(true);
+const allowSameUserMultiProofread = ref(true);
 const proofreadRequired = ref<ProofreadRequired>(1);
 const translationWeight = ref(40);
 const proofreadWeight = ref(30);
@@ -129,6 +132,9 @@ async function handleCreateProject() {
       enableProofread: enableProofread.value,
       enableReview: enableReview.value,
       requireSignedChangePackages: requireSignedChangePackages.value,
+      allowSelfProofread: allowSelfProofread.value,
+      allowSelfReview: allowSelfReview.value,
+      allowSameUserMultiProofread: allowSameUserMultiProofread.value,
       proofreadRequired: proofreadRequired.value,
       progressWeights: {
         translation: translationWeight.value,
@@ -218,35 +224,63 @@ async function handleCreateProject() {
       <section class="form-card">
         <h2>流程设置</h2>
 
-        <label class="check-row">
-          <input v-model="enableTasks" type="checkbox" />
-          <span>启用任务</span>
-        </label>
+        <div class="workflow-grid">
+          <div class="workflow-column">
+            <h3>流程阶段</h3>
 
-        <label class="check-row">
-          <input v-model="enableProofread" type="checkbox" />
-          <span>启用校对</span>
-        </label>
+            <label class="check-row">
+              <input v-model="enableTasks" type="checkbox" />
+              <span>启用任务</span>
+            </label>
 
-        <label class="check-row">
-          <input v-model="enableReview" type="checkbox" />
-          <span>启用审核</span>
-        </label>
+            <label class="check-row">
+              <input v-model="enableProofread" type="checkbox" />
+              <span>启用校对</span>
+            </label>
 
-        <label class="check-row">
-          <input v-model="requireSignedChangePackages" type="checkbox" />
-          <span>强制使用签名修改包</span>
-        </label>
+            <label class="check-row">
+              <input v-model="enableReview" type="checkbox" />
+              <span>启用审核</span>
+            </label>
 
-        <label>
-          <span>校对次数</span>
-          <select v-model.number="proofreadRequired" :disabled="!enableProofread">
-            <option :value="0">不需要校对</option>
-            <option :value="1">一次校对</option>
-            <option :value="2">二次校对</option>
-            <option :value="3">三次校对</option>
-          </select>
-        </label>
+            <label class="check-row">
+              <input v-model="requireSignedChangePackages" type="checkbox" />
+              <span>强制使用签名修改包</span>
+            </label>
+
+            <label>
+              <span>校对次数</span>
+              <select
+                v-model.number="proofreadRequired"
+                :disabled="!enableProofread"
+              >
+                <option :value="0">不需要校对</option>
+                <option :value="1">一次校对</option>
+                <option :value="2">二次校对</option>
+                <option :value="3">三次校对</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="workflow-column">
+            <h3>人员限制</h3>
+
+            <label class="check-row">
+              <input v-model="allowSelfProofread" type="checkbox" />
+              <span>允许译者校对自己的译文</span>
+            </label>
+
+            <label class="check-row">
+              <input v-model="allowSelfReview" type="checkbox" />
+              <span>允许译者审核自己的译文</span>
+            </label>
+
+            <label class="check-row">
+              <input v-model="allowSameUserMultiProofread" type="checkbox" />
+              <span>允许同一成员完成多轮校对</span>
+            </label>
+          </div>
+        </div>
 
         <div class="weights-card">
           <div class="weights-title">
@@ -362,6 +396,13 @@ h2 {
   color: #111827;
   font-size: 19px;
   line-height: 1.25;
+}
+
+h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 15px;
+  line-height: 1.35;
 }
 
 .summary,
@@ -485,6 +526,19 @@ select:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.workflow-column {
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  min-width: 0;
+}
+
 .location-box,
 .weights-card {
   display: grid;
@@ -599,6 +653,7 @@ button:disabled {
 @media (max-width: 640px) {
   .field-grid,
   .field-grid.three,
+  .workflow-grid,
   .location-box {
     grid-template-columns: 1fr;
   }
