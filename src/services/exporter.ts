@@ -6,7 +6,12 @@ import type {
   ReleaseExportSettings,
   Term,
 } from "../model/types";
-import { isEntryReleaseComplete, normalizeEntries } from "../model/status";
+import {
+  hasVisibleText,
+  hasWorkflowTarget,
+  isEntryReleaseComplete,
+  normalizeEntries,
+} from "../model/status";
 import { nowIso, utcDateKey } from "../utils/time";
 import { APP_VERSION } from "../utils/appVersion";
 import { createZip, type ZipContent } from "../utils/zip";
@@ -252,8 +257,16 @@ function formatReportEntry(entry: Entry): string {
     entry.speaker || "-",
     entry.status,
     entry.source,
-    entry.target || "-",
+    formatReportTarget(entry),
   ].join("\t");
+}
+
+function formatReportTarget(entry: Entry): string {
+  if (hasVisibleText(entry.target)) {
+    return entry.target;
+  }
+
+  return hasWorkflowTarget(entry) ? "空白译文" : "-";
 }
 
 export function generateUntranslatedReport(entries: Entry[]): string {
@@ -297,7 +310,7 @@ export function generateTermCheckReport(entries: Entry[], terms: Term[]): string
           result.matchedText,
           result.term.target,
           entry.source,
-          entry.target || "-",
+          formatReportTarget(entry),
         ].join("\t"),
       ),
   );

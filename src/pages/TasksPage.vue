@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import TaskEditDialog from "../components/TaskEditDialog.vue";
 import TaskListItem from "../components/TaskListItem.vue";
 import TaskPanel from "../components/TaskPanel.vue";
@@ -328,21 +329,23 @@ watch(visibleTasks, (nextTasks) => {
 
 <template>
   <section class="tasks-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">任务管理</p>
-        <h1>{{ project.name }}</h1>
-      </div>
-      <button
-        v-if="canCreate"
-        class="primary-button"
-        type="button"
-        :disabled="isBusy"
-        @click="openCreateDialog"
-      >
-        创建任务
-      </button>
-    </header>
+    <ProjectPageHeader
+      eyebrow="任务管理"
+      title="任务"
+      summary="分配、跟踪和处理成员的翻译协作任务。"
+    >
+      <template #actions>
+        <button
+          v-if="canCreate"
+          class="primary-button"
+          type="button"
+          :disabled="isBusy"
+          @click="openCreateDialog"
+        >
+          创建任务
+        </button>
+      </template>
+    </ProjectPageHeader>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
@@ -454,32 +457,11 @@ watch(visibleTasks, (nextTasks) => {
   min-height: calc(100vh - 108px);
 }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.eyebrow,
-h1,
 h2,
 .error-message,
 .saved-message,
 .empty-state {
   margin: 0;
-}
-
-.eyebrow {
-  color: #5b6472;
-  font-size: 14px;
-}
-
-h1 {
-  margin-top: 4px;
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
 }
 
 h2 {
@@ -623,10 +605,4 @@ select {
   }
 }
 
-@media (max-width: 720px) {
-  .page-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-}
 </style>

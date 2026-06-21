@@ -14,6 +14,7 @@ import type {
 import {
   applyEntryWorkflowOperation,
   applyEntryTargetChange,
+  hasWorkflowTarget,
   normalizeEntries,
   normalizeEntry,
   type EntryWorkflowOperation,
@@ -1347,7 +1348,7 @@ function mergeOrdinaryPackageEntry(
       });
     }
 
-    if (!normalizedPackageEntry.target.trim()) {
+    if (!hasWorkflowTarget(normalizedPackageEntry)) {
       throw new Error("校对或审核记录不能把空译文标记为流程通过。");
     }
 
@@ -1366,6 +1367,13 @@ function mergeOrdinaryPackageEntry(
       updated_at: updatedAt,
       updated_by: userId,
     });
+  }
+
+  if (
+    normalizedPackageEntry.status !== "untranslated" &&
+    !hasWorkflowTarget(normalizedPackageEntry)
+  ) {
+    throw new Error("校对或审核记录不能把空译文标记为流程通过。");
   }
 
   return normalizeEntry({
@@ -2947,6 +2955,14 @@ export async function applyChangePackage(
               operation,
             )
           : normalizeEntry(packageEntry);
+      }
+
+      if (
+        useOrdinarySafeguards &&
+        nextEntry.status !== "untranslated" &&
+        !hasWorkflowTarget(nextEntry)
+      ) {
+        throw new Error("校对或审核记录不能把空译文标记为流程通过。");
       }
 
       currentEntries[entryIndex] = nextEntry;

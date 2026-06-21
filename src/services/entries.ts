@@ -13,6 +13,7 @@ import {
   applyEntryWorkflowOperation,
   applyEntryTargetChange,
   getEntryProofreadCount,
+  hasWorkflowTarget,
   normalizeEntries,
   normalizeEntry,
   normalizeProofreadUsers,
@@ -300,7 +301,7 @@ function normalizeSourceEntry(
     status:
       exchangeWorkflow?.status ??
       row.status ??
-      (target.trim() ? "translated" : "untranslated"),
+      (hasWorkflowTarget({ source, target }) ? "translated" : "untranslated"),
     disputed: false,
     assignee: "",
     translated_by: exchangeWorkflow?.translated_by ?? "",
@@ -661,7 +662,7 @@ function assertCanWriteEntry(
   }
 
   if (operation === "review") {
-    if (!nextEntry.target.trim()) {
+    if (!hasWorkflowTarget(nextEntry)) {
       throw new Error("译文为空，不能审核通过。");
     }
 
@@ -676,7 +677,7 @@ function assertCanWriteEntry(
   }
 
   if (operation === "proofread") {
-    if (!nextEntry.target.trim()) {
+    if (!hasWorkflowTarget(nextEntry)) {
       throw new Error("译文为空，不能校对通过。");
     }
 
@@ -1186,13 +1187,15 @@ export async function restoreEntryVersion(
       snapshot === "before"
         ? versionEvent.detail.before_translated_by
         : versionEvent.detail.after_translated_by;
+    const restoredHasWorkflowTarget = hasWorkflowTarget({
+      source: originalEntry.source,
+      target: restoredTarget,
+    });
     const restoredEntry: Entry = normalizeEntry({
       ...originalEntry,
       target: restoredTarget,
-      status: restoredTarget.trim() ? "translated" : "untranslated",
-      translated_by: restoredTarget.trim()
-        ? restoredTranslatedBy ?? ""
-        : "",
+      status: restoredHasWorkflowTarget ? "translated" : "untranslated",
+      translated_by: restoredHasWorkflowTarget ? restoredTranslatedBy ?? "" : "",
       proofread_by: [],
       proofread_count: 0,
       reviewed_by: "",

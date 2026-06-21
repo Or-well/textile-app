@@ -8,7 +8,9 @@ import type {
 } from "../model/types";
 import {
   applyEntryWorkflowOperation,
+  type EntryWorkflowOperation,
   getEntryProofreadCount,
+  hasWorkflowTarget,
   normalizeEntry,
 } from "../model/status";
 import { createId } from "../utils/id";
@@ -28,6 +30,7 @@ import {
   canMarkDisputed,
   canResolveDispute,
   canRollbackEntry,
+  canTranslateEntry,
   getProofreadBlockMessage,
   getProofreadBlockReason,
   getReviewBlockMessage,
@@ -42,12 +45,21 @@ import { createProjectWritePlan } from "./projectWritePlan";
 import { isEntryInTask, loadTasks } from "./tasks";
 
 export type EntryBatchOperation =
-  | "proofread"
-  | "review"
-  | "rollback_to_translated"
-  | "rollback_to_proofread"
-  | "mark_disputed"
-  | "resolve_dispute";
+  | "set_reviewed"
+  | "set_proofread"
+  | "set_translated"
+  | "set_disputed"
+  | "clear_disputed";
+
+type EntryBatchWorkflowOperation = EntryWorkflowOperation;
+
+const ENTRY_BATCH_OPERATIONS = new Set<string>([
+  "set_reviewed",
+  "set_proofread",
+  "set_translated",
+  "set_disputed",
+  "clear_disputed",
+]);
 
 export interface EntryBatchRequest {
   entryIds: string[];
@@ -115,6 +127,12 @@ function resolveActor(actor: Member | null | undefined): Member {
   return actor;
 }
 
+function assertEntryBatchOperation(operation: string): asserts operation is EntryBatchOperation {
+  if (!ENTRY_BATCH_OPERATIONS.has(operation)) {
+    throw new Error("不支持的批量操作。");
+  }
+}
+
 function uniqueEntryIds(entryIds: string[]): string[] {
   return Array.from(
     new Set(entryIds.map((entryId) => entryId.trim()).filter(Boolean)),
@@ -164,8 +182,36 @@ function getTaskScopeBlockReason(
     : "不在当前成员可编辑的已分配任务范围内";
 }
 
+function resolveWorkflowOperation(
+  operation: EntryBatchOperation,
+  entry: Entry,
+): EntryBatchWorkflowOperation | null {
+  if (operation === "set_reviewed") {
+    return "review";
+  }
+
+  if (operation === "set_proofread") {
+    return entry.status === "reviewed" ? "rollback_to_proofread" : "proofread";
+  }
+
+  if (operation === "set_translated") {
+    if (entry.status === "untranslated") {
+      return "translation_edit";
+    }
+
+    if (entry.status === "translated" && getEntryProofreadCount(entry) === 0) {
+      return null;
+    }
+
+    return "rollback_to_translated";
+  }
+
+  return null;
+}
+
 function getOperationBlockReason(
   operation: EntryBatchOperation,
+  workflowOperation: EntryBatchWorkflowOperation | null,
   entry: Entry,
   actor: Member,
   project: ProjectConfig,
@@ -183,13 +229,13 @@ function getOperationBlockReason(
 
   if (
     note &&
-    (operation === "mark_disputed" || operation === "resolve_dispute") &&
+    (operation === "set_disputed" || operation === "clear_disputed") &&
     !canCreateComment(actor)
   ) {
     return "当前成员没有发表评论的权限";
   }
 
-  if (operation === "proofread") {
+  if (workflowOperation === "proofread") {
     const reason = getProofreadBlockReason(
       actor,
       entry,
@@ -201,7 +247,7 @@ function getOperationBlockReason(
       : "";
   }
 
-  if (operation === "review") {
+  if (workflowOperation === "review") {
     const reason = getReviewBlockReason(
       actor,
       entry,
@@ -213,72 +259,83 @@ function getOperationBlockReason(
       : "";
   }
 
-  if (operation === "rollback_to_translated") {
-    if (entry.status === "reviewed") {
-      return "已审核词条需要先撤销审核";
+  if (operation === "set_translated") {
+    if (!hasWorkflowTarget(entry)) {
+      return "词条没有译文，不能设为已翻译";
     }
 
+    if (!workflowOperation) {
+      return "词条已经是已翻译";
+    }
+
+    if (workflowOperation === "translation_edit") {
+      return canTranslateEntry(actor, entry)
+        ? ""
+        : "当前成员没有设置该词条为已翻译的权限";
+    }
+  }
+
+  if (workflowOperation === "rollback_to_translated") {
     if (
       entry.status !== "proofread" &&
+      entry.status !== "reviewed" &&
       getEntryProofreadCount(entry) === 0
     ) {
-      return "词条没有可撤销的校对记录";
+      return entry.status === "translated"
+        ? "词条已经是已翻译"
+        : "词条尚未翻译";
     }
 
     return canRollbackEntry(actor, entry)
       ? ""
-      : "当前成员没有回退该词条的权限";
+      : "当前成员没有设置该词条为已翻译的权限";
   }
 
-  if (operation === "rollback_to_proofread") {
+  if (workflowOperation === "rollback_to_proofread") {
     if (entry.status !== "reviewed") {
-      return "词条尚未完成审核";
+      return "词条尚未进入已审核阶段";
     }
 
     return canRollbackEntry(actor, entry)
       ? ""
-      : "当前成员没有回退该词条的权限";
+      : "当前成员没有设置该词条为已校对的权限";
   }
 
-  if (operation === "mark_disputed") {
+  if (operation === "set_disputed") {
     return canMarkDisputed(actor, entry)
       ? ""
       : entry.disputed
-        ? "词条已经标记为争议"
-        : "当前成员没有标记争议的权限";
+        ? "词条已经是有争议"
+        : "当前成员没有设置有争议的权限";
   }
 
   return canResolveDispute(actor, entry)
     ? ""
     : !entry.disputed
       ? "词条当前没有争议"
-      : "当前成员没有解决争议的权限";
+      : "当前成员没有设置无争议的权限";
 }
 
 function applyOperation(
   operation: EntryBatchOperation,
+  workflowOperation: EntryBatchWorkflowOperation | null,
   entry: Entry,
   actor: Member,
   project: ProjectConfig,
   updatedAt: string,
   note: string,
 ): Entry {
-  if (
-    operation === "proofread" ||
-    operation === "review" ||
-    operation === "rollback_to_translated" ||
-    operation === "rollback_to_proofread"
-  ) {
+  if (workflowOperation) {
     return applyEntryWorkflowOperation(entry, {
       userId: actor.id,
       target: entry.target,
-      operation,
+      operation: workflowOperation,
       workflow: project.settings.workflow,
       updatedAt,
     });
   }
 
-  if (operation === "mark_disputed") {
+  if (operation === "set_disputed") {
     return normalizeEntry({
       ...entry,
       disputed: true,
@@ -298,21 +355,6 @@ function applyOperation(
     updated_at: updatedAt,
     updated_by: actor.id,
   });
-}
-
-function getHistoryOperation(
-  operation: EntryBatchOperation,
-): "proofread" | "review" | "rollback_to_translated" | "rollback_to_proofread" | null {
-  if (
-    operation === "proofread" ||
-    operation === "review" ||
-    operation === "rollback_to_translated" ||
-    operation === "rollback_to_proofread"
-  ) {
-    return operation;
-  }
-
-  return null;
 }
 
 async function loadEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
@@ -378,6 +420,7 @@ async function appendBatchComment(
 async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> {
   const storage = getProjectStorage();
   const actor = resolveActor(request.actor);
+  assertEntryBatchOperation(request.operation);
   const entryIds = uniqueEntryIds(request.entryIds);
   const note = request.note?.trim() ?? "";
   const storedProject = await storage.readJson<ProjectConfig>("project.json");
@@ -401,7 +444,6 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
   const commentsByPath = new Map<string, Comment[]>();
   const batchId = createId("entry_batch");
   const updatedAt = nowIso();
-  const historyOperation = getHistoryOperation(request.operation);
 
   for (const entryId of entryIds) {
     const storedEntry = entriesById.get(entryId);
@@ -419,6 +461,7 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
       proofread_count: audit.proofreadCount,
       reviewed_by: audit.reviewedBy,
     });
+    const workflowOperation = resolveWorkflowOperation(request.operation, entry);
     const taskReason = getTaskScopeBlockReason(
       entry,
       actor,
@@ -429,6 +472,7 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
       taskReason ||
       getOperationBlockReason(
         request.operation,
+        workflowOperation,
         entry,
         actor,
         storedProject,
@@ -442,6 +486,7 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
 
     const updatedEntry = applyOperation(
       request.operation,
+      workflowOperation,
       entry,
       actor,
       storedProject,
@@ -451,10 +496,10 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
 
     updatedEntries.push(updatedEntry);
 
-    if (historyOperation) {
+    if (workflowOperation) {
       versionEvents.push(
         createEntryVersionEvent(entry, updatedEntry, actor.id, {
-          operation: historyOperation,
+          operation: workflowOperation,
           batchId,
         }),
       );
@@ -462,7 +507,7 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
       otherEvents.push({
         id: createId("event"),
         type:
-          request.operation === "mark_disputed"
+          request.operation === "set_disputed"
             ? "entry.mark_disputed"
             : "entry.resolve_dispute",
         user_id: actor.id,
@@ -480,7 +525,7 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
         updatedEntry,
         actor,
         note,
-        request.operation === "mark_disputed",
+        request.operation === "set_disputed",
         updatedAt,
         commentsByPath,
         otherEvents,

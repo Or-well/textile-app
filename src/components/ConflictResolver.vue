@@ -5,8 +5,12 @@ import type {
   ConflictResolution,
   ConflictResolutionAction,
 } from "../services/changes";
-import type { EntryStatus } from "../model/types";
-import { ENTRY_STATUSES } from "../model/status";
+import type { Entry, EntryStatus } from "../model/types";
+import {
+  ENTRY_STATUSES,
+  hasVisibleText,
+  hasWorkflowTarget,
+} from "../model/status";
 
 interface ConflictDraft {
   entryId: string;
@@ -90,6 +94,14 @@ function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
 
   return reasons.map((reason) => labels[reason]).join("、");
 }
+
+function formatTarget(entry: Entry): string {
+  if (hasVisibleText(entry.target)) {
+    return entry.target;
+  }
+
+  return hasWorkflowTarget(entry) ? "空白译文" : "未填写译文";
+}
 </script>
 
 <template>
@@ -122,12 +134,12 @@ function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
       <div class="compare-grid">
         <section>
           <h3>主项目版本</h3>
-          <p>{{ conflict.mainEntry.target || "未填写译文" }}</p>
+          <p>{{ formatTarget(conflict.mainEntry) }}</p>
           <small>状态：{{ conflict.mainEntry.status }}</small>
         </section>
         <section>
           <h3>我的修改</h3>
-          <p>{{ conflict.packageEntry.target || "未填写译文" }}</p>
+          <p>{{ formatTarget(conflict.packageEntry) }}</p>
           <small>状态：{{ conflict.packageEntry.status }}</small>
         </section>
       </div>

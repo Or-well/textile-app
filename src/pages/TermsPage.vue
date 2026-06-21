@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import TermEditDialog from "../components/TermEditDialog.vue";
 import TermImportDialog from "../components/TermImportDialog.vue";
 import type { Term } from "../model/types";
@@ -287,15 +288,15 @@ onMounted(loadTermRows);
 
 <template>
   <section class="terms-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">术语</p>
-        <h1>术语</h1>
-        <p class="summary">查看、检索和维护当前项目的术语表。</p>
-      </div>
-
-      <span class="count-badge">{{ filteredTerms.length }} / {{ terms.length }} 条</span>
-    </header>
+    <ProjectPageHeader
+      eyebrow="术语表"
+      title="术语"
+      summary="维护项目术语，统一原文、译名和使用规则。"
+    >
+      <template #actions>
+        <span class="count-badge">{{ filteredTerms.length }} / {{ terms.length }} 条</span>
+      </template>
+    </ProjectPageHeader>
 
     <section class="toolbar">
       <select v-model="partOfSpeechFilter" aria-label="词性筛选">
@@ -455,42 +456,18 @@ onMounted(loadTermRows);
   gap: 16px;
 }
 
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.eyebrow,
-.summary,
 .field-label,
 dt,
 .readonly-note {
   color: #5b6472;
 }
 
-.eyebrow,
-h1,
-.summary,
 p,
 dl,
 dd {
   margin: 0;
 }
 
-.eyebrow {
-  margin-bottom: 6px;
-  font-size: 14px;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
-}
-
-.summary,
 .readonly-note {
   margin-top: 8px;
   line-height: 1.7;
@@ -700,14 +677,9 @@ dd {
 }
 
 @media (max-width: 760px) {
-  .page-header,
   .term-main,
   .term-meta {
     grid-template-columns: 1fr;
-  }
-
-  .page-header {
-    display: grid;
   }
 
   .toolbar {

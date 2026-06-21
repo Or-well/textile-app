@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import type { ProjectConfig } from "../model/types";
 import { getProjectStats, type BasicProjectStats } from "../services/stats";
 
@@ -64,13 +65,11 @@ watch(
 
 <template>
   <section class="stats-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">统计</p>
-        <h1>统计</h1>
-        <p class="summary">查看当前项目的翻译进度和词条状态分布。</p>
-      </div>
-    </header>
+    <ProjectPageHeader
+      eyebrow="项目统计"
+      title="统计"
+      summary="查看翻译、校对、审核和争议状态的统计结果。"
+    />
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-else-if="isLoading" class="empty-state">正在加载统计...</p>
@@ -154,15 +153,6 @@ watch(
   gap: 16px;
 }
 
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.eyebrow,
-.summary,
 .weight-note,
 .workflow-note,
 .stats-grid span,
@@ -170,33 +160,14 @@ watch(
   color: #5b6472;
 }
 
-.eyebrow,
-h1,
 h2,
-.summary,
 p {
   margin: 0;
-}
-
-.eyebrow {
-  margin-bottom: 6px;
-  font-size: 14px;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
 }
 
 h2 {
   color: #111827;
   font-size: 18px;
-}
-
-.summary {
-  margin-top: 8px;
-  line-height: 1.7;
 }
 
 .error-message {

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import licenseText from "../../LICENSE?raw";
 import { useAppDraft } from "../composables/useAppDraft";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import ClearCacheDialog from "../components/settings/ClearCacheDialog.vue";
 import DeleteProjectDialog from "../components/settings/DeleteProjectDialog.vue";
 import MemberPermissionOverrides from "../components/settings/MemberPermissionOverrides.vue";
@@ -858,25 +859,23 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="settings-page">
-    <header class="settings-header">
-      <div>
-        <p class="eyebrow">设置中心</p>
-        <h1>项目设置</h1>
-        <p class="summary">
-          集中管理项目基础信息、成员、权限、进度权重和协作入口。
-        </p>
-      </div>
-
-      <button
-        v-if="!hasProjectContext"
-        class="primary-button"
-        type="button"
-        :disabled="isLoading"
-        @click="handleOpenProject"
-      >
-        {{ isLoading ? "正在加载..." : "打开项目文件夹" }}
-      </button>
-    </header>
+    <ProjectPageHeader
+      eyebrow="设置中心"
+      title="设置"
+      summary="管理项目基础信息、工作流、成员权限和协作选项。"
+    >
+      <template #actions>
+        <button
+          v-if="!hasProjectContext"
+          class="primary-button"
+          type="button"
+          :disabled="isLoading"
+          @click="handleOpenProject"
+        >
+          {{ isLoading ? "正在加载..." : "打开项目文件夹" }}
+        </button>
+      </template>
+    </ProjectPageHeader>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="message" class="message">{{ message }}</p>
@@ -1687,16 +1686,6 @@ onBeforeUnmount(() => {
   color: #1f2937;
 }
 
-.settings-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  min-height: 0;
-}
-
-.eyebrow,
-.summary,
 .card-header p,
 .row-label p,
 .placeholder-note,
@@ -1711,24 +1700,10 @@ onBeforeUnmount(() => {
   color: #5b6472;
 }
 
-.eyebrow,
-h1,
 h2,
 h3,
 p {
   margin: 0;
-}
-
-.eyebrow {
-  margin-bottom: 4px;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-h1 {
-  color: #111827;
-  font-size: 26px;
-  line-height: 1.2;
 }
 
 h2 {
@@ -1742,7 +1717,6 @@ h3 {
   font-size: 15px;
 }
 
-.summary,
 .card-header p,
 .row-label p,
 .placeholder-note,
@@ -2339,15 +2313,10 @@ code {
 }
 
 @media (max-width: 680px) {
-  .settings-header,
   .form-row,
   .member-row,
   .danger-row {
     grid-template-columns: 1fr;
-  }
-
-  .settings-header {
-    display: grid;
   }
 
   .settings-card {

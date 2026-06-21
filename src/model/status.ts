@@ -70,8 +70,19 @@ const DEFAULT_WORKFLOW_SETTINGS: NormalizedWorkflowSettings = {
   allow_same_user_multi_proofread: false,
 };
 
-function hasText(value: string | undefined): boolean {
+export function hasVisibleText(value: string | undefined): boolean {
   return Boolean(value?.trim());
+}
+
+export function isBlankLikeSource(source: string | undefined): boolean {
+  return !hasVisibleText(source);
+}
+
+export function hasWorkflowTarget(entry: {
+  source?: string;
+  target?: string;
+}): boolean {
+  return hasVisibleText(entry.target) || isBlankLikeSource(entry.source);
 }
 
 function clampProofreadRequired(value: unknown): ProofreadRequired {
@@ -151,6 +162,7 @@ export function getEntryProofreadCount(entry: {
 
 export function isEntryProofreadComplete(
   entry: {
+    source?: string;
     target?: string;
     proofread_by?: string[] | string;
     proofread_count?: number;
@@ -160,10 +172,10 @@ export function isEntryProofreadComplete(
   const settings = normalizeWorkflowSettings(workflow);
 
   if (settings.proofread_required === 0) {
-    return hasText(entry.target);
+    return hasWorkflowTarget(entry);
   }
 
-  return hasText(entry.target) && getEntryProofreadCount(entry) >= settings.proofread_required;
+  return hasWorkflowTarget(entry) && getEntryProofreadCount(entry) >= settings.proofread_required;
 }
 
 export function isEntryReviewComplete(
@@ -177,6 +189,7 @@ export function isEntryReviewComplete(
 
 export function isEntryReleaseComplete(
   entry: {
+    source?: string;
     status?: EntryStatus;
     target?: string;
     proofread_by?: string[] | string;
@@ -198,11 +211,12 @@ export function isEntryReleaseComplete(
     return isEntryProofreadComplete(entry, settings);
   }
 
-  return hasText(entry.target);
+  return hasWorkflowTarget(entry);
 }
 
 export function inferEntryStatus(entry: {
   status?: LegacyEntryStatus;
+  source?: string;
   target?: string;
   proofread_by?: string | string[];
   proofread_count?: number;
@@ -212,7 +226,7 @@ export function inferEntryStatus(entry: {
     return entry.status as EntryStatus;
   }
 
-  if (hasText(entry.reviewed_by)) {
+  if (hasVisibleText(entry.reviewed_by)) {
     return "reviewed";
   }
 
@@ -220,7 +234,7 @@ export function inferEntryStatus(entry: {
     return "proofread";
   }
 
-  if (hasText(entry.target)) {
+  if (hasWorkflowTarget(entry)) {
     return "translated";
   }
 
@@ -271,7 +285,10 @@ export function applyEntryWorkflowOperation(
 ): Entry {
   const settings = normalizeWorkflowSettings(options.workflow);
   const targetChanged = options.target !== entry.target;
-  const hasTarget = hasText(options.target);
+  const hasTarget = hasWorkflowTarget({
+    source: entry.source,
+    target: options.target,
+  });
   const currentProofreadBy = normalizeProofreadUsers(entry.proofread_by);
   const currentProofreadCount = getEntryProofreadCount(entry);
   const auditFields = options.updatedAt

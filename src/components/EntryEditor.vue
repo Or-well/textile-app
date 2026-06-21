@@ -5,6 +5,7 @@ import {
   applyEntryWorkflowStatus,
   getEntryWorkflowLabel,
   getNextProofreadLabel,
+  hasWorkflowTarget,
 } from "../model/status";
 import {
   canEditEntry,
@@ -49,10 +50,16 @@ const currentUser = computed(() => getCurrentUser());
 const hasUnsavedTarget = computed(
   () => Boolean(props.entry) && target.value !== props.entry?.target,
 );
+const draftHasWorkflowTarget = computed(() =>
+  Boolean(
+    props.entry &&
+      hasWorkflowTarget({ source: props.entry.source, target: target.value }),
+  ),
+);
 const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
 const canSaveAsTranslated = computed(
   () =>
-    Boolean(target.value.trim()) &&
+    draftHasWorkflowTarget.value &&
     props.entry?.status === "untranslated" &&
     canTranslateEntry(currentUser.value, props.entry),
 );
@@ -60,7 +67,7 @@ const canProofreadWorkflow = computed(() =>
   canProofreadEntry(currentUser.value, props.entry, props.workflow),
 );
 const canProofread = computed(
-  () => Boolean(target.value.trim()) && canProofreadWorkflow.value,
+  () => draftHasWorkflowTarget.value && canProofreadWorkflow.value,
 );
 const proofreadBlockMessage = computed(() => {
   if (
@@ -83,7 +90,7 @@ const canReviewWorkflow = computed(() =>
   canReviewEntry(currentUser.value, props.entry, props.workflow),
 );
 const canReview = computed(
-  () => Boolean(target.value.trim()) && canReviewWorkflow.value,
+  () => draftHasWorkflowTarget.value && canReviewWorkflow.value,
 );
 const reviewBlockMessage = computed(() => {
   const reason = getReviewBlockReason(

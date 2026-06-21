@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import ProgressBar from "../components/ProgressBar.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import SyncStatusPanel from "../components/SyncStatusPanel.vue";
 import type { ProjectConfig } from "../model/types";
 import {
@@ -37,16 +38,17 @@ const canImportPackage = computed(
 
 <template>
   <section class="project-overview">
-    <div class="page-title">
-      <div>
-        <p class="eyebrow">项目概览</p>
-        <h1>{{ project.name }}</h1>
-      </div>
-
-      <button class="primary-button" type="button" @click="emit('openFiles')">
-        查看文件
-      </button>
-    </div>
+    <ProjectPageHeader
+      eyebrow="项目概览"
+      title="概览"
+      summary="查看项目进度、词条状态和当前协作概况。"
+    >
+      <template #actions>
+        <button class="primary-button" type="button" @click="emit('openFiles')">
+          查看文件
+        </button>
+      </template>
+    </ProjectPageHeader>
 
     <div class="overview-grid">
       <section class="overview-panel progress-panel">
@@ -147,31 +149,11 @@ const canImportPackage = computed(
   gap: 18px;
 }
 
-.page-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5b6472;
-  font-size: 14px;
-}
-
-h1,
 h2,
 p,
 dl,
 dd {
   margin: 0;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
 }
 
 h2 {
@@ -253,11 +235,6 @@ dd {
 }
 
 @media (max-width: 820px) {
-  .page-title {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .overview-grid {
     grid-template-columns: 1fr;
   }

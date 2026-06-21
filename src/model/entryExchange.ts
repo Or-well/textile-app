@@ -1,4 +1,5 @@
 import type { Entry, EntryStatus } from "./types";
+import { hasWorkflowTarget } from "./status";
 
 export const ENTRY_EXCHANGE_STATUSES: readonly EntryStatus[] = [
   "untranslated",
@@ -60,6 +61,12 @@ export function hasEntryExchangeWorkflowFields(
 
 function getTargetText(row: Record<string, unknown>): string {
   const value = row.target ?? row.translation ?? "";
+
+  return typeof value === "string" ? value : "";
+}
+
+function getSourceText(row: Record<string, unknown>): string {
+  const value = row.source ?? row.original ?? "";
 
   return typeof value === "string" ? value : "";
 }
@@ -168,6 +175,7 @@ export function parseEntryExchangeWorkflowFields(
   }
 
   const status = row.status as EntryStatus;
+  const source = getSourceText(row);
   const target = getTargetText(row);
   const translatedBy = parseOptionalUser(row, "translated_by", rowLabel);
   const reviewedBy = parseOptionalUser(row, "reviewed_by", rowLabel);
@@ -199,7 +207,7 @@ export function parseEntryExchangeWorkflowFields(
         `${rowLabel}标记为 untranslated 时，译文和翻译、校对、审核信息必须为空。`,
       );
     }
-  } else if (!target.trim()) {
+  } else if (!hasWorkflowTarget({ source, target })) {
     throw new Error(`${rowLabel}标记为 ${status} 时译文不能为空。`);
   }
 

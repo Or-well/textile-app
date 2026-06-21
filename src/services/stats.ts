@@ -1,5 +1,6 @@
 import type { Entry, ProjectConfig } from "../model/types";
 import {
+  hasWorkflowTarget,
   isEntryProofreadComplete,
   normalizeEntries,
   normalizeWorkflowSettings,
@@ -114,7 +115,7 @@ export function calculateEntryProgress(
     ? countByStatus(rows, "reviewed")
     : 0;
   const disputedEntries = rows.filter((entry) => entry.disputed === true).length;
-  const entriesWithTarget = rows.filter((entry) => entry.target.trim()).length;
+  const entriesWithTarget = rows.filter((entry) => hasWorkflowTarget(entry)).length;
 
   const translationRatio =
     totalEntries === 0 ? 0 : entriesWithTarget / totalEntries;

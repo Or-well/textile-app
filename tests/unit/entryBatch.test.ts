@@ -90,7 +90,7 @@ describe("entry batch workflow", () => {
     await expect(
       previewEntryBatch({
         entryIds: [entry.id],
-        operation: "mark_disputed",
+        operation: "set_disputed",
         actor: createMember(["owner"], { id: "owner-1" }),
         project: requestProject,
       }),
@@ -149,7 +149,7 @@ describe("entry batch workflow", () => {
 
     const preview = await previewEntryBatch({
       entryIds: entries.map((entry) => entry.id),
-      operation: "proofread",
+      operation: "set_proofread",
       actor,
       project,
     });
@@ -222,7 +222,7 @@ describe("entry batch workflow", () => {
 
     const result = await executeEntryBatch({
       entryIds: [first.id, second.id],
-      operation: "proofread",
+      operation: "set_proofread",
       actor,
       project,
     });
@@ -287,7 +287,7 @@ describe("entry batch workflow", () => {
 
     await executeEntryBatch({
       entryIds: [entry.id],
-      operation: "mark_disputed",
+      operation: "set_disputed",
       actor,
       project,
       note: "术语需要确认",
@@ -375,7 +375,7 @@ describe("entry batch workflow", () => {
     await expect(
       executeEntryBatch({
         entryIds: [first.id, second.id],
-        operation: "proofread",
+        operation: "set_proofread",
         actor,
         project,
       }),

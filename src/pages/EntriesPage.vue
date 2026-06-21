@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import { PERMISSION_ACTIONS } from "../model/permissions";
-import { getEntryWorkflowLabel } from "../model/status";
+import {
+  getEntryWorkflowLabel,
+  hasVisibleText,
+  hasWorkflowTarget,
+} from "../model/status";
 import type {
   Entry,
   EntryStatus,
@@ -24,10 +29,12 @@ type StatusFilter = EntryStatus | "all";
 type DisputeFilter = "all" | "disputed" | "clear";
 type SortMode = "file-index" | "updated-desc" | "status";
 
+const pageSizeOptions = [20, 50, 100, 200, 500, 800];
+
 interface BatchActionOption {
   value: EntryBatchOperation;
   label: string;
-  permission: string;
+  permissions: string[];
 }
 
 const props = defineProps<{
@@ -44,34 +51,36 @@ const emit = defineEmits<{
 
 const batchActionOptions: BatchActionOption[] = [
   {
-    value: "proofread",
-    label: "校对通过",
-    permission: PERMISSION_ACTIONS.ENTRY_PROOFREAD,
+    value: "set_reviewed",
+    label: "已审核",
+    permissions: [PERMISSION_ACTIONS.ENTRY_REVIEW],
   },
   {
-    value: "review",
-    label: "审核通过",
-    permission: PERMISSION_ACTIONS.ENTRY_REVIEW,
+    value: "set_proofread",
+    label: "已校对",
+    permissions: [
+      PERMISSION_ACTIONS.ENTRY_PROOFREAD,
+      PERMISSION_ACTIONS.ENTRY_ROLLBACK,
+    ],
   },
   {
-    value: "rollback_to_translated",
-    label: "退回已翻译",
-    permission: PERMISSION_ACTIONS.ENTRY_ROLLBACK,
+    value: "set_translated",
+    label: "已翻译",
+    permissions: [
+      PERMISSION_ACTIONS.ENTRY_EDIT,
+      PERMISSION_ACTIONS.ENTRY_TRANSLATE,
+      PERMISSION_ACTIONS.ENTRY_ROLLBACK,
+    ],
   },
   {
-    value: "rollback_to_proofread",
-    label: "撤销审核，退回已校对",
-    permission: PERMISSION_ACTIONS.ENTRY_ROLLBACK,
+    value: "set_disputed",
+    label: "有争议",
+    permissions: [PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED],
   },
   {
-    value: "mark_disputed",
-    label: "标记为争议",
-    permission: PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-  },
-  {
-    value: "resolve_dispute",
-    label: "解决争议",
-    permission: PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
+    value: "clear_disputed",
+    label: "无争议",
+    permissions: [PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE],
   },
 ];
 
@@ -87,7 +96,7 @@ const disputeFilter = ref<DisputeFilter>("all");
 const sortMode = ref<SortMode>("file-index");
 const pageSize = ref(50);
 const currentPage = ref(1);
-const selectedOperation = ref<EntryBatchOperation>("proofread");
+const selectedOperation = ref<EntryBatchOperation>("set_reviewed");
 const batchNote = ref("");
 const batchPreview = ref<EntryBatchPreview | null>(null);
 const isLoading = ref(false);
@@ -104,7 +113,9 @@ const memberById = computed(
 );
 const availableBatchActions = computed(() =>
   batchActionOptions.filter((option) =>
-    can(props.currentUser, option.permission, props.project),
+    option.permissions.some((permission) =>
+      can(props.currentUser, permission, props.project),
+    ),
   ),
 );
 const selectedTask = computed(() =>
@@ -211,8 +222,8 @@ const selectedOperationLabel = computed(
 );
 const batchNeedsNote = computed(
   () =>
-    selectedOperation.value === "mark_disputed" ||
-    selectedOperation.value === "resolve_dispute",
+    selectedOperation.value === "set_disputed" ||
+    selectedOperation.value === "clear_disputed",
 );
 
 function getMemberName(memberId: string): string {
@@ -231,6 +242,14 @@ function getTaskLabel(task: Task): string {
   const assignee = getMemberName(task.assignee);
 
   return `${task.title} · ${assignee}`;
+}
+
+function getTargetLabel(entry: Entry): string {
+  if (hasVisibleText(entry.target)) {
+    return entry.target;
+  }
+
+  return hasWorkflowTarget(entry) ? "空白译文" : "未填写";
 }
 
 async function loadPageData() {
@@ -416,18 +435,26 @@ onMounted(loadPageData);
 
 <template>
   <section class="entries-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">项目词条</p>
-        <h1>词条管理</h1>
-      </div>
-      <p class="count-summary">
-        {{ filteredEntries.length }} / {{ entries.length }} 条
-      </p>
-    </header>
+    <ProjectPageHeader
+      eyebrow="词条管理"
+      title="词条"
+      summary="跨文件筛选、查看和批量处理项目词条。"
+    >
+      <template #actions>
+        <p class="count-summary">
+          {{ filteredEntries.length }} / {{ entries.length }} 条
+        </p>
+      </template>
+    </ProjectPageHeader>
 
-    <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
-    <p v-if="noticeMessage" class="notice-message">{{ noticeMessage }}</p>
+    <div
+      class="message-row"
+      :class="{ empty: !errorMessage && !noticeMessage }"
+      aria-live="polite"
+    >
+      <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+      <p v-else-if="noticeMessage" class="notice-message">{{ noticeMessage }}</p>
+    </div>
 
     <section class="filter-bar" aria-label="词条筛选">
       <label class="search-field">
@@ -631,10 +658,10 @@ onMounted(loadPageData);
               </td>
               <td
                 class="truncate-cell target-cell"
-                :class="{ empty: !entry.target }"
+                :class="{ empty: !hasWorkflowTarget(entry) }"
                 :title="entry.target"
               >
-                {{ entry.target || "未填写" }}
+                {{ getTargetLabel(entry) }}
               </td>
               <td class="truncate-cell" :title="getMemberName(entry.assignee)">
                 {{ getMemberName(entry.assignee) }}
@@ -664,9 +691,13 @@ onMounted(loadPageData);
         <label>
           <span>每页</span>
           <select v-model="pageSize">
-            <option :value="50">50</option>
-            <option :value="100">100</option>
-            <option :value="200">200</option>
+            <option
+              v-for="option in pageSizeOptions"
+              :key="option"
+              :value="option"
+            >
+              {{ option }}
+            </option>
           </select>
         </label>
         <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
@@ -775,14 +806,13 @@ onMounted(loadPageData);
 <style scoped>
 .entries-page {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 12px;
+  grid-template-rows: auto 24px auto auto minmax(0, 1fr);
+  gap: 10px;
   height: calc(100vh - 108px);
-  min-height: 640px;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.page-header,
-.batch-bar,
 .batch-controls,
 .selection-actions,
 .pagination,
@@ -790,11 +820,6 @@ onMounted(loadPageData);
 .batch-dialog footer {
   display: flex;
   align-items: center;
-}
-
-.page-header {
-  justify-content: space-between;
-  gap: 18px;
 }
 
 .eyebrow,
@@ -843,6 +868,18 @@ h3 {
   background: #ffffff;
 }
 
+.message-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.4;
+}
+
+.message-row.empty {
+  visibility: hidden;
+}
+
 label {
   display: grid;
   gap: 5px;
@@ -875,10 +912,13 @@ input[type="checkbox"] {
 }
 
 .batch-bar {
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  min-height: 50px;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) auto minmax(360px, 1.4fr);
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 52px;
   padding: 8px 12px;
+  overflow: hidden;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #f8fafb;
@@ -887,7 +927,8 @@ input[type="checkbox"] {
 .selection-summary {
   display: grid;
   gap: 2px;
-  min-width: 180px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .selection-summary strong {
@@ -901,19 +942,32 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
+.selection-summary strong,
+.selection-summary span,
+.permission-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .selection-actions,
 .batch-controls {
   gap: 8px;
+  min-width: 0;
 }
 
 .batch-controls {
-  flex: 1 1 430px;
+  min-width: 0;
   justify-content: flex-end;
+}
+
+.batch-controls select {
+  flex: 0 0 116px;
 }
 
 .batch-controls input {
   flex: 1 1 260px;
-  max-width: 420px;
+  max-width: 360px;
 }
 
 .primary-button,
@@ -950,7 +1004,11 @@ button:disabled {
 
 .error-message,
 .notice-message {
+  min-width: 0;
+  overflow: hidden;
   line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-message {
@@ -964,6 +1022,7 @@ button:disabled {
 .table-frame {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   border: 1px solid #d7dde5;
@@ -1257,13 +1316,27 @@ tbody tr.selected {
   .search-field {
     grid-column: span 2;
   }
+
+  .batch-bar {
+    grid-template-columns: minmax(150px, 1fr) minmax(250px, auto);
+  }
+
+  .batch-controls {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .batch-controls input {
+    max-width: none;
+  }
 }
 
 @media (max-width: 840px) {
   .entries-page {
-    grid-template-rows: auto;
+    grid-template-rows: auto 24px auto auto minmax(560px, 1fr);
     height: auto;
     min-height: 0;
+    overflow: visible;
   }
 
   .filter-bar {
@@ -1281,6 +1354,16 @@ tbody tr.selected {
   .batch-controls > * {
     flex: 1 1 100%;
     max-width: none;
+  }
+
+  .batch-bar {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .selection-actions,
+  .batch-controls {
+    flex-wrap: wrap;
   }
 
   .table-frame {

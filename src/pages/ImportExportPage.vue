@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import type {
   Member,
   ProjectConfig,
@@ -827,22 +828,23 @@ watch(
 <template>
   <main class="import-export-page">
     <section class="export-panel">
-      <div class="page-header">
-        <div>
-          <p class="eyebrow">Textile 导入 / 导出</p>
-          <h1>{{ projectName || "导出修改包" }}</h1>
-        </div>
-
-        <button
-          v-if="!hasProjectContext"
-          class="open-button"
-          type="button"
-          :disabled="isLoading"
-          @click="handleOpenProject"
-        >
-          {{ isLoading ? "正在加载..." : "打开项目文件夹" }}
-        </button>
-      </div>
+      <ProjectPageHeader
+        eyebrow="协作与备份"
+        title="导入导出"
+        summary="导出修改包、导入协作结果，并生成备份或成品文件。"
+      >
+        <template #actions>
+          <button
+            v-if="!hasProjectContext"
+            class="open-button"
+            type="button"
+            :disabled="isLoading"
+            @click="handleOpenProject"
+          >
+            {{ isLoading ? "正在加载..." : "打开项目文件夹" }}
+          </button>
+        </template>
+      </ProjectPageHeader>
 
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
       <p v-if="message" class="message">{{ message }}</p>
@@ -1129,27 +1131,8 @@ watch(
   background: #ffffff;
 }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5b6472;
-  font-size: 14px;
-}
-
-h1,
 p {
   margin: 0;
-}
-
-h1 {
-  font-size: 30px;
-  line-height: 1.2;
 }
 
 .open-button,
@@ -1362,11 +1345,6 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 680px) {
-  .page-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .summary-grid {
     grid-template-columns: 1fr 1fr;
   }

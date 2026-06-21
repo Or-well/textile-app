@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import FileImportDialog from "../components/FileImportDialog.vue";
 import FileListItem from "../components/FileListItem.vue";
 import FileToolbar from "../components/FileToolbar.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import type { Member, ProjectConfig, ProjectFile } from "../model/types";
 import { PERMISSION_ACTIONS } from "../model/permissions";
 import { loadEntries } from "../services/entries";
@@ -547,22 +548,24 @@ onMounted(loadFileSummaries);
 
 <template>
   <section class="files-page">
-    <div class="page-title">
-      <div>
-        <p class="eyebrow">项目文件</p>
-        <h1>文件</h1>
-      </div>
-      <div class="title-actions">
-        <span class="file-count">{{ visibleFiles.length }} 个文件</span>
-        <button
-          class="secondary-button"
-          type="button"
-          @click="emit('manageEntries')"
-        >
-          管理全部词条
-        </button>
-      </div>
-    </div>
+    <ProjectPageHeader
+      eyebrow="项目文件"
+      title="文件"
+      summary="管理源文件、导入译文，并查看各文件翻译进度。"
+    >
+      <template #actions>
+        <div class="title-actions">
+          <span class="file-count">{{ visibleFiles.length }} 个文件</span>
+          <button
+            class="secondary-button"
+            type="button"
+            @click="emit('manageEntries')"
+          >
+            管理全部词条
+          </button>
+        </div>
+      </template>
+    </ProjectPageHeader>
 
     <FileToolbar
       :search-text="searchText"
@@ -685,29 +688,9 @@ onMounted(loadFileSummaries);
   gap: 10px;
 }
 
-.page-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5b6472;
-  font-size: 14px;
-}
-
-h1,
 h2,
 p {
   margin: 0;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
 }
 
 h2 {

@@ -1,4 +1,4 @@
-import {
+﻿import {
   ALL_PERMISSION_ACTIONS,
   OWNER_LOCKED_PERMISSIONS,
   PERMISSION_ACTIONS,
@@ -10,6 +10,7 @@ import {
   getCurrentProofreadRoundFirstProofreader,
   getEntryProofreadCount,
   getFirstTranslator,
+  hasWorkflowTarget,
   isEntryProofreadComplete,
   normalizeProofreadUsers,
   normalizeWorkflowSettings,
@@ -387,7 +388,7 @@ export function getProofreadBlockReason(
     return "entry_disputed";
   }
 
-  if (!entry.target.trim()) {
+  if (!hasWorkflowTarget(entry)) {
     return "empty_target";
   }
 
@@ -514,7 +515,7 @@ export function getReviewBlockReason(
     return "entry_disputed";
   }
 
-  if (!entry.target.trim()) {
+  if (!hasWorkflowTarget(entry)) {
     return "empty_target";
   }
 

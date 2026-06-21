@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import CommentListItem from "../components/CommentListItem.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import type { Comment, Entry, Member, ProjectConfig } from "../model/types";
 import { loadAllComments } from "../services/comments";
 import { loadAllEntries } from "../services/entries";
@@ -165,13 +166,15 @@ watch(
 
 <template>
   <main class="comments-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">评论协作</p>
-        <h1>{{ project?.name || "评论" }}</h1>
-      </div>
-      <p class="comment-count">{{ visibleRows.length }} / {{ comments.length }} 条</p>
-    </header>
+    <ProjectPageHeader
+      eyebrow="评论协作"
+      title="评论"
+      summary="查看词条讨论、争议记录和成员协作反馈。"
+    >
+      <template #actions>
+        <p class="comment-count">{{ visibleRows.length }} / {{ comments.length }} 条</p>
+      </template>
+    </ProjectPageHeader>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="!canViewComments" class="empty-state">当前用户不能查看评论。</p>
@@ -251,29 +254,8 @@ watch(
   gap: 16px;
 }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.eyebrow,
-h1,
 p {
   margin: 0;
-}
-
-.eyebrow {
-  margin-bottom: 6px;
-  color: #5b6472;
-  font-size: 14px;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
 }
 
 .comment-count {
@@ -371,11 +353,6 @@ input {
 }
 
 @media (max-width: 760px) {
-  .page-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .filter-controls {
     display: grid;
   }
