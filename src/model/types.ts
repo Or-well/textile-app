@@ -58,6 +58,10 @@ export interface ReleaseExportSettings {
   include_manifest?: boolean;
 }
 
+export interface ProjectCollaborationSettings {
+  require_signed_change_packages?: boolean;
+}
+
 export type RolePermissions = Partial<Record<Role, string[]>>;
 
 export interface ProjectConfig {
@@ -85,6 +89,7 @@ export interface ProjectConfig {
       reviewWeight?: number;
     };
     export?: ReleaseExportSettings;
+    collaboration?: ProjectCollaborationSettings;
     role_permissions?: RolePermissions;
   };
 }

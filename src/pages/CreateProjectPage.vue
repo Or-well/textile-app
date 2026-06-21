@@ -21,6 +21,7 @@ const targetLanguage = ref("zh-Hans");
 const enableTasks = ref(true);
 const enableProofread = ref(true);
 const enableReview = ref(true);
+const requireSignedChangePackages = ref(true);
 const proofreadRequired = ref<ProofreadRequired>(1);
 const translationWeight = ref(40);
 const proofreadWeight = ref(30);
@@ -127,6 +128,7 @@ async function handleCreateProject() {
       enableTasks: enableTasks.value,
       enableProofread: enableProofread.value,
       enableReview: enableReview.value,
+      requireSignedChangePackages: requireSignedChangePackages.value,
       proofreadRequired: proofreadRequired.value,
       progressWeights: {
         translation: translationWeight.value,
@@ -229,6 +231,11 @@ async function handleCreateProject() {
         <label class="check-row">
           <input v-model="enableReview" type="checkbox" />
           <span>启用审核</span>
+        </label>
+
+        <label class="check-row">
+          <input v-model="requireSignedChangePackages" type="checkbox" />
+          <span>强制使用签名修改包</span>
         </label>
 
         <label>

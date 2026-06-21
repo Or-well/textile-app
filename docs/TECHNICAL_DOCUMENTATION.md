@@ -431,6 +431,9 @@ changes/
       "include_report": true,
       "include_manifest": true
     },
+    "collaboration": {
+      "require_signed_change_packages": true
+    },
     "role_permissions": {}
   }
 }
@@ -445,6 +448,7 @@ changes/
 - `chunk_size`：控制新增、更新源文件和导入译文时每个 entries chunk 的最大词条数；旧的单 chunk 项目仍兼容读取。
 - `auto_save`：保留设置，当前编辑仍以显式保存为主。
 - `allow_change_package`：项目级开关字段，当前主要能力仍由权限 action 决定。
+- `collaboration.require_signed_change_packages`：要求普通、任务和维护修改包带有有效成员签名。新项目默认 `true`；旧项目缺失该字段时按 `false` 兼容读取。
 - `enable_tasks`：保存于工作流；为 `false` 时 UI 隐藏任务入口，任务 service 拒绝写入类操作。
 - `role_permissions`：项目可覆盖默认角色权限。
 
@@ -1336,8 +1340,8 @@ manifest 示例：
 
 普通修改包：
 
-- 有私钥且有签名权限时可签名。
-- 没有私钥仍可导出未签名包。
+- 当 `settings.collaboration.require_signed_change_packages` 为 `true` 时，member_changes、task_changes 和 maintenance_changes 必须由当前成员签名；缺少签名权限、公钥已撤销、未生成公钥或私钥未加载都会在 `exportChangePackage()` 中拒绝。
+- 当该设置为 `false` 或旧项目缺失该设置时，有私钥且有签名权限可签名；没有私钥仍可导出未签名包。
 
 项目更新包：
 
@@ -1353,6 +1357,7 @@ manifest 示例：
 - project_id 匹配。
 - content_hash 重新计算。
 - signature 状态计算。
+- 当前项目要求签名时，非 project_update 修改包必须是 valid 签名；危险导入不能绕过签名要求。
 - package 类型和风险。
 - 凭据、owner 提升和项目设置变化检测。
 - 目标路径是否可读取或创建。
@@ -1482,6 +1487,7 @@ ECDSA P-256 + SHA-256
 - 撤销其他成员公钥。
 - 导出和导入私钥文件。
 - 写成员公钥和事件日志。
+- 提供 `getMemberSigningReadiness()` 给修改包导出和 UI 复用，统一区分未生成公钥、密钥已撤销、私钥未加载和可签名状态。
 
 私钥存储：
 

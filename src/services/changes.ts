@@ -45,7 +45,12 @@ import {
   isEntryVersionEvent,
   type EntryVersionEvent,
 } from "./history";
-import { getSigningPrivateKeyForMember } from "./keyManager";
+import {
+  getMemberSigningReadiness,
+  getSigningPrivateKeyForMember,
+  type SigningKeyReadiness,
+} from "./keyManager";
+import { projectRequiresSignedChangePackages } from "./collaboration";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
   shortHash,
@@ -68,6 +73,7 @@ import {
   canImportMemberChangePackage,
   canImportMaintenanceChangePackage,
   canImportProjectUpdatePackage,
+  canSignChangePackage,
   setPermissionProject,
 } from "./permissions";
 
@@ -173,6 +179,7 @@ export interface ChangePackageValidation {
   requiresDangerousImport: boolean;
   requiresMaintenanceConfirmation: boolean;
   requiresOwnerCredentialConfirmation: boolean;
+  requiresSignedPackage: boolean;
 }
 
 export interface ChangeConflict {
@@ -370,6 +377,46 @@ function isMemberChangePackage(packageType: ChangePackageType): boolean {
 
 function isProjectUpdatePackage(packageType: ChangePackageType): boolean {
   return packageType === "project_update";
+}
+
+function isSignableChangePackageMode(mode: ExportChangePackageMode): boolean {
+  return (
+    mode === "member_changes" ||
+    mode === "task_changes" ||
+    mode === "maintenance_changes" ||
+    mode === "project_update"
+  );
+}
+
+function getSigningReadinessMessage(readiness: SigningKeyReadiness): string {
+  if (readiness === "missing_public_key") {
+    return "当前项目要求修改包签名。请先创建身份密钥后再导出修改包。";
+  }
+
+  if (readiness === "revoked_key") {
+    return "当前身份密钥已撤销，不能用于修改包签名。请生成新密钥后再导出。";
+  }
+
+  if (readiness === "private_key_not_loaded") {
+    return "当前项目要求修改包签名。请先导入身份密钥文件后再导出修改包。";
+  }
+
+  return "";
+}
+
+function assertCanCreateRequiredSignature(
+  actor: Member,
+  signer: Member | undefined,
+): void {
+  if (!canSignChangePackage(actor)) {
+    throw new Error("当前项目要求修改包签名，但当前成员没有签名修改包的权限。");
+  }
+
+  const readiness = getMemberSigningReadiness(signer);
+
+  if (readiness !== "ready") {
+    throw new Error(getSigningReadinessMessage(readiness));
+  }
 }
 
 function getProjectRevision(project: ProjectConfig): string {
@@ -587,6 +634,7 @@ function createBaseValidation(
     requiresDangerousImport: false,
     requiresMaintenanceConfirmation: false,
     requiresOwnerCredentialConfirmation: false,
+    requiresSignedPackage: false,
   };
 }
 
@@ -641,6 +689,13 @@ function buildRiskMessages(
 
   if (validation.signatureStatus === "missing_public_key") {
     messages.push("项目成员未配置公钥，无法验证签名。");
+  }
+
+  if (
+    validation.requiresSignedPackage &&
+    validation.signatureStatus !== "valid"
+  ) {
+    messages.push("当前项目要求修改包带有有效成员签名。");
   }
 
   return messages;
@@ -1769,6 +1824,12 @@ export async function exportChangePackage(
     throw new Error("当前范围内没有可导出的修改。");
   }
 
+  const requiresSignature =
+    options.mode === "project_update" ||
+    (
+      projectRequiresSignedChangePackages(project) &&
+      isSignableChangePackageMode(options.mode)
+    );
   const contentHash = await calculateChangePackageContentHash(payload);
   const manifest: ChangePackageManifest = {
     schema_version: 1,
@@ -1794,12 +1855,23 @@ export async function exportChangePackage(
         : [options.mode],
     summary,
   };
-  const members = options.sign ? await loadProjectMembers(storage) : [];
+  const members =
+    options.sign || requiresSignature ? await loadProjectMembers(storage) : [];
   const signer = members.find((member) => member.id === userId);
-  const signature = options.sign ? await createSignature(manifest, signer) : undefined;
+  const shouldSign = options.sign || requiresSignature;
 
-  if (options.mode === "project_update" && !signature) {
-    throw new Error("项目更新包签名失败。请先配置当前负责人的签名私钥。");
+  if (requiresSignature) {
+    assertCanCreateRequiredSignature(actor, signer);
+  }
+
+  const signature = shouldSign ? await createSignature(manifest, signer) : undefined;
+
+  if (requiresSignature && !signature) {
+    throw new Error(
+      options.mode === "project_update"
+        ? "项目更新包签名失败。请先配置当前负责人的签名私钥。"
+        : "修改包签名失败。请先配置当前成员的身份密钥。",
+    );
   }
 
   const files: ZipContent = {
@@ -2071,6 +2143,8 @@ export async function validateChangePackage(
       normalizedSummary.changed_credentials > 0);
   const requiresOwnerCredentialConfirmation =
     !isProjectUpdate && (hasOwnerCredentialChange || hasOwnerPromotion);
+  const requiresSignedPackage =
+    !isProjectUpdate && projectRequiresSignedChangePackages(project);
   const riskLevel: ChangePackageRiskLevel =
     contentIntegrity === "failed" || requiresOwnerCredentialConfirmation
       ? "danger"
@@ -2095,11 +2169,13 @@ export async function validateChangePackage(
     canImportNormally:
       packageProjectId === project.project_id &&
       contentIntegrity !== "failed" &&
-      (!isProjectUpdate || signatureStatus === "valid"),
+      (!isProjectUpdate || signatureStatus === "valid") &&
+      (!requiresSignedPackage || signatureStatus === "valid"),
     requiresDangerousImport:
       packageProjectId === project.project_id && contentIntegrity === "failed",
     requiresMaintenanceConfirmation,
     requiresOwnerCredentialConfirmation,
+    requiresSignedPackage,
   };
   const validation: ChangePackageValidation = {
     ...baseValidation,
@@ -2567,6 +2643,13 @@ export async function applyChangePackage(
     !options.confirmOwnerCredentials
   ) {
     throw new Error("负责人账号或权限变更需要额外确认。");
+  }
+
+  if (
+    validation.requiresSignedPackage &&
+    validation.signatureStatus !== "valid"
+  ) {
+    throw new Error("当前项目要求修改包带有有效成员签名，不能导入未签名或签名无效的修改包。");
   }
 
   if (validation.contentIntegrity === "failed") {

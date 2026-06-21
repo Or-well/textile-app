@@ -31,6 +31,7 @@ async function createChangePackageFixture(options: {
   originalTask?: Task;
   packageTask?: Task;
   packageType?: ChangePackageType;
+  requireSignedChangePackages?: boolean;
   packageOperation?:
     | "translation_edit"
     | "proofread"
@@ -41,7 +42,14 @@ async function createChangePackageFixture(options: {
   originalEntry: Entry;
   changePackage: ReadChangePackage;
 }> {
-  const project = createProject();
+  const project = createProject({
+    settings: {
+      collaboration: {
+        require_signed_change_packages:
+          options.requireSignedChangePackages === true,
+      },
+    },
+  });
   const actor = createMember(["owner"], { id: "owner-1", name: "Owner" });
   const contributor = createMember(["translator"], {
     id: "member-2",
@@ -292,7 +300,137 @@ async function createProjectUpdateFixture() {
   };
 }
 
+async function createExportFixture(options: {
+  requireSignedChangePackages?: boolean;
+} = {}) {
+  const project = createProject({
+    settings: {
+      collaboration: {
+        require_signed_change_packages:
+          options.requireSignedChangePackages === true,
+      },
+    },
+    files: [
+      {
+        id: "file-1",
+        name: "dialog.txt",
+        source_path: "source/dialog.txt",
+        entries_path: "entries/file-1",
+        type: "txt",
+        hidden: false,
+        locked: false,
+      },
+    ],
+  });
+  const owner = createMember(["owner"], { id: "owner-1", name: "Owner" });
+  const contributor = createMember(["translator"], {
+    id: "member-2",
+    name: "Contributor",
+  });
+  const root = createMemoryProjectDirectory(
+    {
+      "project.json": `${JSON.stringify(project, null, 2)}\n`,
+      "members.json": `${JSON.stringify(
+        {
+          schema_version: 1,
+          members: [owner, contributor],
+        },
+        null,
+        2,
+      )}\n`,
+      "entries/file-1/chunk_0001.jsonl": `${JSON.stringify(
+        createEntry({
+          id: "file-1:1",
+          file_id: "file-1",
+          index: 1,
+          target: "Translated",
+          status: "translated",
+          translated_by: contributor.id,
+          updated_by: contributor.id,
+        }),
+      )}\n`,
+      "logs/events.jsonl": "",
+    },
+    "change-package-export-test.hproj",
+  );
+
+  return {
+    root,
+    storage: createProjectStorage(root),
+    members: [owner, contributor],
+    contributor,
+  };
+}
+
 describe("ordinary change-package write plan", () => {
+  it("rejects unsigned member package export when project requires signatures", async () => {
+    const fixture = await createExportFixture({
+      requireSignedChangePackages: true,
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      exportChangePackage(fixture.contributor.id, {
+        mode: "member_changes",
+        sign: false,
+        actor: fixture.contributor,
+      }),
+    ).rejects.toThrow("创建身份密钥");
+  });
+
+  it("exports signed member packages after generating a signing key", async () => {
+    const fixture = await createExportFixture({
+      requireSignedChangePackages: true,
+    });
+    const keyResult = await generateOwnSigningKey(
+      fixture.root,
+      fixture.members,
+      fixture.contributor,
+    );
+
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage(keyResult.member.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: keyResult.member,
+    });
+
+    expect(exported.signature).toMatchObject({
+      user_id: keyResult.member.id,
+      key_id: keyResult.member.key_id,
+    });
+  });
+
+  it("rejects unsigned package import when project requires signatures", async () => {
+    const fixture = await createChangePackageFixture({
+      requireSignedChangePackages: true,
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("有效成员签名");
+  });
+
+  it("keeps accepting unsigned package import when signatures are optional", async () => {
+    const fixture = await createChangePackageFixture();
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).resolves.toMatchObject({
+      appliedEntries: 1,
+    });
+  });
+
   it("commits merged content and one import log entry", async () => {
     const fixture = await createChangePackageFixture();
 

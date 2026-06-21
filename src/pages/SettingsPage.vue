@@ -20,6 +20,9 @@ import {
   normalizeProjectExportSettings,
 } from "../services/exporter";
 import {
+  normalizeProjectCollaborationSettings,
+} from "../services/collaboration";
+import {
   clearSelectedCache,
   type CacheCleanupItemId,
   type CacheCleanupResult,
@@ -40,7 +43,11 @@ import {
   completeProjectPackageExport,
   exportProjectPackage,
 } from "../services/projectPackage";
-import { openProject, saveProject } from "../services/project";
+import {
+  openProject,
+  saveProject,
+  saveProjectCollaborationSettings,
+} from "../services/project";
 import {
   checkForUpdates,
   getAppUpdateState,
@@ -142,6 +149,9 @@ const exportDraft = ref({
   include_report: true,
   include_manifest: true,
 });
+const collaborationDraft = ref({
+  require_signed_change_packages: false,
+});
 const updateState = ref<AppUpdateState>(getAppUpdateState());
 const selectedUpdateChannel = ref<UpdateChannel>(getUpdateChannel());
 const isLoading = ref(false);
@@ -149,6 +159,7 @@ const isSavingProject = ref(false);
 const isSavingWorkflow = ref(false);
 const isSavingWeights = ref(false);
 const isSavingExportSettings = ref(false);
+const isSavingCollaborationSettings = ref(false);
 const isExportingProjectFile = ref(false);
 const isCheckingUpdate = ref(false);
 const isClearingCache = ref(false);
@@ -274,6 +285,9 @@ const hasUnsavedSettings = computed(() => {
   const workflow = normalizeWorkflowSettings(project.settings.workflow);
   const weights = normalizeProgressWeights(project.settings.progress_weights);
   const exportSettings = normalizeProjectExportSettings(project.settings.export);
+  const collaborationSettings = normalizeProjectCollaborationSettings(
+    project.settings.collaboration,
+  );
   const draftProofreadRequired = Math.max(
     0,
     Math.min(3, Math.trunc(Number(workflowDraft.value.proofread_required))),
@@ -299,7 +313,9 @@ const hasUnsavedSettings = computed(() => {
     exportDraft.value.include_source !== exportSettings.include_source ||
     exportDraft.value.include_key !== exportSettings.include_key ||
     exportDraft.value.include_report !== exportSettings.include_report ||
-    exportDraft.value.include_manifest !== exportSettings.include_manifest
+    exportDraft.value.include_manifest !== exportSettings.include_manifest ||
+    collaborationDraft.value.require_signed_change_packages !==
+      collaborationSettings.require_signed_change_packages
   );
 });
 
@@ -324,6 +340,9 @@ function applyProject(project: ProjectConfig): void {
     review: 100 - translationPercent - proofreadPercent,
   };
   exportDraft.value = normalizeProjectExportSettings(project.settings.export);
+  collaborationDraft.value = normalizeProjectCollaborationSettings(
+    project.settings.collaboration,
+  );
   const workflow = normalizeWorkflowSettings(project.settings.workflow);
   workflowDraft.value = {
     enable_tasks: workflow.enable_tasks,
@@ -545,6 +564,39 @@ async function handleSaveExportSettings() {
       error instanceof Error ? error.message : "导出设置保存失败。请稍后再试。";
   } finally {
     isSavingExportSettings.value = false;
+  }
+}
+
+async function handleSaveCollaborationSettings() {
+  if (!localProject.value) {
+    return;
+  }
+
+  if (!canManageProject.value) {
+    errorMessage.value = "当前用户没有管理协作设置的权限。";
+    return;
+  }
+
+  isSavingCollaborationSettings.value = true;
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const nextProject = await saveProjectCollaborationSettings(
+      getWritableRoot(),
+      localProject.value,
+      currentUser.value,
+      collaborationDraft.value,
+    );
+
+    localProject.value = nextProject;
+    emit("projectUpdated", nextProject);
+    message.value = "协作设置已保存。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "协作设置保存失败。请稍后再试。";
+  } finally {
+    isSavingCollaborationSettings.value = false;
   }
 }
 
@@ -1303,6 +1355,40 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="form-stack">
+            <div class="form-row">
+              <div class="row-label">
+                <span>强制使用签名修改包</span>
+                <p>开启后，导出和导入修改包都必须带有有效成员签名。</p>
+              </div>
+              <div class="row-control">
+                <label class="checkbox-control">
+                  <input
+                    v-model="collaborationDraft.require_signed_change_packages"
+                    type="checkbox"
+                    :disabled="!canManageProject || isSavingCollaborationSettings"
+                  />
+                  <span>要求修改包签名</span>
+                </label>
+                <div class="form-actions">
+                  <button
+                    class="primary-button"
+                    type="button"
+                    :disabled="!canManageProject || isSavingCollaborationSettings"
+                    @click="handleSaveCollaborationSettings"
+                  >
+                    {{
+                      isSavingCollaborationSettings
+                        ? "正在保存..."
+                        : "保存协作设置"
+                    }}
+                  </button>
+                </div>
+                <p v-if="!canManageProject" class="notice-text">
+                  当前用户没有管理协作设置的权限。
+                </p>
+              </div>
+            </div>
+
             <div class="form-row">
               <div class="row-label">
                 <span>导出修改包</span>

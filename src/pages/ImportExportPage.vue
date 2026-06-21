@@ -40,6 +40,7 @@ import {
   canExportMaintenanceChangePackage,
   canExportProjectUpdatePackage,
   canExportRelease,
+  canGenerateKey,
   canImportMemberChangePackage,
   canImportMaintenanceChangePackage,
   canImportProjectUpdatePackage,
@@ -49,6 +50,11 @@ import {
   canVerifyChangePackage,
   getCurrentUser,
 } from "../services/permissions";
+import { projectRequiresSignedChangePackages } from "../services/collaboration";
+import {
+  generateOwnSigningKey,
+  getMemberSigningReadiness,
+} from "../services/keyManager";
 import {
   loadMembersFromStorage,
   loadProjectFromStorage,
@@ -77,6 +83,8 @@ const emit = defineEmits<{
 const projectName = ref("");
 const localRoot = ref<ProjectDirectoryHandle | null>(null);
 const localProjectStorage = ref<ProjectStorage | null>(null);
+const localProject = ref<ProjectConfig | null>(null);
+const localMembers = ref<Member[]>([]);
 const tasks = ref<Task[]>([]);
 const selectedTaskId = ref("");
 const exportMode = ref<ExportChangePackageMode>("member_changes");
@@ -104,6 +112,13 @@ const changeImportSection = ref<HTMLElement>();
 const changePackageInput = ref<HTMLInputElement>();
 
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
+const membersForKeys = computed(() => props.members ?? localMembers.value);
+const currentSigningMember = computed(
+  () =>
+    membersForKeys.value.find((member) => member.id === currentUser.value?.id) ??
+    currentUser.value ??
+    null,
+);
 const hasProjectContext = computed(() => Boolean(props.project));
 const canExportChanges = computed(() => canExportMemberChangePackage(currentUser.value));
 const canExportMaintenance = computed(() =>
@@ -127,6 +142,9 @@ const canDangerousImport = computed(() =>
 );
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
 const canExportProjectBackup = computed(() => canProjectBackup(currentUser.value));
+const requiresSignedChangePackage = computed(() =>
+  projectRequiresSignedChangePackages(props.project ?? localProject.value),
+);
 const projectRootForExport = computed(() => props.projectRoot ?? localRoot.value);
 const projectStorageForServices = computed(
   () => props.projectStorage ?? localProjectStorage.value,
@@ -178,6 +196,13 @@ const canApplySelectedPackage = computed(() => {
   }
 
   if (validation.requiresDangerousImport) {
+    if (
+      validation.requiresSignedPackage &&
+      validation.signatureStatus !== "valid"
+    ) {
+      return false;
+    }
+
     return canDangerousImport.value;
   }
 
@@ -211,6 +236,13 @@ const applyDisabledReason = computed(() => {
 
   if (validation.requiresDangerousImport && !canDangerousImport.value) {
     return "内容完整性未通过，当前成员没有危险导入权限。";
+  }
+
+  if (
+    validation.requiresSignedPackage &&
+    validation.signatureStatus !== "valid"
+  ) {
+    return "当前项目要求修改包带有有效成员签名。";
   }
 
   if (
@@ -302,8 +334,10 @@ async function initializeFromProjectContext() {
   }
 
   projectName.value = props.project.name;
+  localProject.value = props.project;
   localRoot.value = props.projectRoot ?? null;
   localProjectStorage.value = props.projectStorage ?? null;
+  localMembers.value = props.members ?? [];
   applyReleaseSettings(props.project);
 
   await loadImportExportState();
@@ -344,8 +378,10 @@ async function handleOpenProject() {
     const project = await openProject();
 
     projectName.value = project.config.name;
+    localProject.value = project.config;
     localRoot.value = project.root;
     localProjectStorage.value = project.storage;
+    localMembers.value = project.members;
     applyReleaseSettings(project.config);
 
     setChangesProjectStorage(project.storage);
@@ -354,8 +390,10 @@ async function handleOpenProject() {
     await loadImportExportState();
   } catch (error) {
     projectName.value = "";
+    localProject.value = null;
     localRoot.value = null;
     localProjectStorage.value = null;
+    localMembers.value = [];
     tasks.value = [];
     selectedTaskId.value = "";
     changePackage.value = undefined;
@@ -374,6 +412,68 @@ async function handleOpenProject() {
   }
 }
 
+async function ensureRequiredSigningKey(): Promise<boolean> {
+  if (
+    exportMode.value !== "project_update" &&
+    !requiresSignedChangePackage.value
+  ) {
+    return true;
+  }
+
+  if (!currentUser.value) {
+    errorMessage.value = "请先登录。";
+    return false;
+  }
+
+  if (!canSignPackages.value) {
+    errorMessage.value = "当前项目要求修改包签名，但当前成员没有签名修改包的权限。";
+    return false;
+  }
+
+  const readiness = getMemberSigningReadiness(currentSigningMember.value);
+
+  if (readiness === "ready") {
+    return true;
+  }
+
+  if (readiness === "private_key_not_loaded") {
+    errorMessage.value = "当前成员已有公钥，但本次运行没有加载身份密钥。请到“我的身份密钥”导入身份密钥文件后再导出。";
+    return false;
+  }
+
+  if (!canGenerateKey(currentUser.value)) {
+    errorMessage.value = "当前项目要求修改包签名，但当前成员没有生成身份密钥的权限。";
+    return false;
+  }
+
+  const prompt =
+    readiness === "revoked_key"
+      ? "当前身份密钥已撤销，不能用于签名。是否现在生成新身份密钥并继续导出？"
+      : "当前项目要求修改包签名，但当前成员还没有身份密钥。是否现在创建身份密钥并继续导出？";
+
+  if (!window.confirm(prompt)) {
+    errorMessage.value = "已取消导出。请先创建或导入身份密钥。";
+    return false;
+  }
+
+  if (!projectRootForExport.value) {
+    errorMessage.value = "请先打开项目，再创建身份密钥。";
+    return false;
+  }
+
+  const result = await generateOwnSigningKey(
+    projectRootForExport.value,
+    membersForKeys.value,
+    currentUser.value,
+  );
+
+  localMembers.value = result.members;
+  emit("membersUpdated", result.members);
+  message.value = "身份密钥已创建。请稍后到“我的身份密钥”导出密钥文件并妥善保存。";
+
+  return true;
+}
+
 async function handleExportChanges() {
   if (!currentUser.value) {
     errorMessage.value = "请先登录。";
@@ -390,6 +490,10 @@ async function handleExportChanges() {
       exportMode.value === "maintenance_changes"
         ? "当前成员没有导出项目维护修改的权限。"
         : "当前成员没有导出修改包的权限。";
+    return;
+  }
+
+  if (!(await ensureRequiredSigningKey())) {
     return;
   }
 
@@ -425,6 +529,7 @@ async function handleExportChanges() {
 
     if (exportMode.value === "project_update") {
       if (updatedProject) {
+        localProject.value = updatedProject;
         emit("projectUpdated", updatedProject);
       }
 
@@ -580,6 +685,8 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
         loadMembersFromStorage(projectStorageForServices.value),
       ]);
 
+      localProject.value = project;
+      localMembers.value = members;
       emit("projectUpdated", project);
       emit("membersUpdated", members);
     }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
 import { loadProjectFromStorage } from "../../src/services/project";
+import { projectRequiresSignedChangePackages } from "../../src/services/collaboration";
 import { createProject } from "./factories";
 
 describe("project schema compatibility", () => {
@@ -22,6 +23,7 @@ describe("project schema compatibility", () => {
     expect(loaded.schema_version).toBe(1);
     expect(loaded.settings.auto_save).toBe(true);
     expect(loaded.settings.allow_change_package).toBe(true);
+    expect(projectRequiresSignedChangePackages(loaded)).toBe(false);
   });
 
   it("rejects projects from unsupported future schemas", async () => {

@@ -29,6 +29,12 @@ export interface MemberKeyResult {
   member: Member;
 }
 
+export type SigningKeyReadiness =
+  | "ready"
+  | "missing_public_key"
+  | "revoked_key"
+  | "private_key_not_loaded";
+
 const privateKeys = new Map<string, string>();
 
 function findMember(members: Member[], memberId: string): Member {
@@ -105,6 +111,28 @@ export function getSigningPrivateKeyForMember(memberId: string): string | null {
 
 export function hasLoadedPrivateKey(member: Member | null | undefined): boolean {
   return Boolean(member?.id && privateKeys.has(member.id));
+}
+
+export function getMemberSigningReadiness(
+  member: Member | null | undefined,
+): SigningKeyReadiness {
+  if (!member?.public_key || !member.key_id) {
+    return "missing_public_key";
+  }
+
+  if (member.key_revoked_at) {
+    return "revoked_key";
+  }
+
+  if (!hasLoadedPrivateKey(member)) {
+    return "private_key_not_loaded";
+  }
+
+  return "ready";
+}
+
+export function hasUsableSigningKey(member: Member | null | undefined): boolean {
+  return getMemberSigningReadiness(member) === "ready";
 }
 
 export async function generateOwnSigningKey(

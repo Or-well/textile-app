@@ -37,6 +37,11 @@ describe("createProjectInStorage", () => {
     await expect(storage.readJson("project.json")).resolves.toMatchObject({
       project_id: result.project.config.project_id,
       name: input.name,
+      settings: {
+        collaboration: {
+          require_signed_change_packages: true,
+        },
+      },
     });
     await expect(storage.readJson("members.json")).resolves.toMatchObject({
       members: [{ id: result.owner.id, roles: ["owner"] }],
@@ -65,5 +70,22 @@ describe("createProjectInStorage", () => {
     ]) {
       await expect(baseStorage.fileExists(path)).resolves.toBe(false);
     }
+  });
+
+  it("can create a project that allows unsigned change packages", async () => {
+    const storage = createEmptyStorage();
+
+    await createProjectInStorage(storage, {
+      ...input,
+      requireSignedChangePackages: false,
+    });
+
+    await expect(storage.readJson("project.json")).resolves.toMatchObject({
+      settings: {
+        collaboration: {
+          require_signed_change_packages: false,
+        },
+      },
+    });
   });
 });

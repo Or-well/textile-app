@@ -1,4 +1,10 @@
-import type { Member, ProjectConfig, ProjectFile, ProofreadRequired } from "../model/types";
+import type {
+  Member,
+  ProjectCollaborationSettings,
+  ProjectConfig,
+  ProjectFile,
+  ProofreadRequired,
+} from "../model/types";
 import type { RolePermissions } from "../model/types";
 import { PERMISSION_ACTIONS, type PermissionAction } from "../model/permissions";
 import { createId } from "../utils/id";
@@ -37,6 +43,10 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import {
+  DEFAULT_NEW_PROJECT_COLLABORATION_SETTINGS,
+  normalizeProjectCollaborationSettings,
+} from "./collaboration";
 
 interface MembersFile {
   schema_version: number;
@@ -73,6 +83,7 @@ export interface CreateProjectInput {
     proofread: number;
     review: number;
   };
+  requireSignedChangePackages?: boolean;
   ownerName: string;
   ownerPassword: string;
 }
@@ -279,6 +290,9 @@ function normalizeProjectConfig(config: ProjectConfig): ProjectConfig {
       workflow: config.settings?.workflow,
       progress_weights: config.settings?.progress_weights,
       export: config.settings?.export,
+      collaboration: config.settings?.collaboration
+        ? normalizeProjectCollaborationSettings(config.settings.collaboration)
+        : undefined,
       role_permissions: config.settings?.role_permissions,
     },
   };
@@ -477,6 +491,42 @@ export async function saveMemberPermissionOverrides(
   });
 
   return nextMembers;
+}
+
+export async function saveProjectCollaborationSettings(
+  root: ProjectDirectoryHandle,
+  project: ProjectConfig,
+  actor: Member | null | undefined,
+  collaboration: ProjectCollaborationSettings,
+): Promise<ProjectConfig> {
+  const writeActor = resolveProjectActor(actor);
+
+  assertCan(writeActor, PERMISSION_ACTIONS.PROJECT_MANAGE, project);
+
+  const nextCollaboration: ProjectCollaborationSettings = {
+    ...normalizeProjectCollaborationSettings(collaboration),
+  };
+  const nextProject: ProjectConfig = {
+    ...project,
+    settings: {
+      ...project.settings,
+      collaboration: nextCollaboration,
+    },
+    updated_at: nowIso(),
+  };
+  const storage = createProjectStorage(root);
+
+  await saveProjectToStorage(storage, nextProject);
+  await appendEventToStorage(storage, {
+    type: "project.collaboration_settings.updated",
+    user_id: writeActor.id,
+    detail: {
+      require_signed_change_packages:
+        nextCollaboration.require_signed_change_packages ?? false,
+    },
+  });
+
+  return nextProject;
 }
 
 export function getProjectFiles(config: ProjectConfig): ProjectFile[] {
@@ -1022,6 +1072,11 @@ export async function createProjectInStorage(
         translation: input.progressWeights.translation,
         proofread: input.progressWeights.proofread,
         review: input.progressWeights.review,
+      },
+      collaboration: {
+        require_signed_change_packages:
+          input.requireSignedChangePackages ??
+          DEFAULT_NEW_PROJECT_COLLABORATION_SETTINGS.require_signed_change_packages,
       },
       role_permissions: getDefaultRolePermissions(),
     },
