@@ -24,6 +24,7 @@ import {
   compareInstants,
   formatDateTime,
 } from "../utils/time";
+import { saveBlob } from "../utils/saveBlob";
 
 type SortMode = "alphabetical" | "created_at" | "updated_at";
 
@@ -118,18 +119,6 @@ const filteredTerms = computed(() => {
 
 function getCurrentUserId(): string {
   return currentUser.value?.id ?? "unknown_user";
-}
-
-function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 async function loadTermRows() {
@@ -280,9 +269,13 @@ async function handleExportTerms() {
 
   try {
     const result = await exportTermsFile();
+    const saved = await saveBlob(result.blob, result.fileName);
 
-    downloadBlob(result.blob, result.fileName);
-    message.value = `已导出术语：${result.fileName}`;
+    message.value = saved.saved
+      ? saved.method === "file-picker"
+        ? `术语文件已保存为 ${saved.fileName}。`
+        : "术语文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。"
+      : "术语文件保存已取消。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "术语导出失败。";

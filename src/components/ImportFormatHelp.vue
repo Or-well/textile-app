@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { saveBlob } from "../utils/saveBlob";
 
 interface ImportFormatSample {
   title: string;
@@ -17,18 +18,28 @@ defineProps<{
 }>();
 
 const previewItem = ref<ImportFormatSample | null>(null);
+const saveMessage = ref("");
+const saveError = ref("");
 
 async function downloadSample(item: ImportFormatSample) {
-  const blob = item.buildBlob
-    ? await item.buildBlob()
-    : new Blob([item.sampleText ?? ""], { type: item.mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+  saveMessage.value = "";
+  saveError.value = "";
 
-  link.href = url;
-  link.download = item.fileName;
-  link.click();
-  URL.revokeObjectURL(url);
+  try {
+    const blob = item.buildBlob
+      ? await item.buildBlob()
+      : new Blob([item.sampleText ?? ""], { type: item.mimeType });
+    const saved = await saveBlob(blob, item.fileName);
+
+    saveMessage.value = saved.saved
+      ? saved.method === "file-picker"
+        ? `示例文件已保存为 ${saved.fileName}。`
+        : "示例文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。"
+      : "示例文件保存已取消。";
+  } catch (error) {
+    saveError.value =
+      error instanceof Error ? error.message : "示例文件保存失败。";
+  }
 }
 
 function openPreview(item: ImportFormatSample) {
@@ -45,6 +56,8 @@ function closePreview() {
 <template>
   <section class="import-format-help" aria-label="导入格式说明">
     <p>当前支持导入：</p>
+    <p v-if="saveMessage" class="sample-save-message">{{ saveMessage }}</p>
+    <p v-if="saveError" class="sample-save-error">{{ saveError }}</p>
     <ul>
       <li v-for="note in notes" :key="note">{{ note }}</li>
     </ul>
@@ -117,6 +130,23 @@ function closePreview() {
 
 p {
   margin: 0;
+}
+
+.sample-save-message,
+.sample-save-error {
+  padding: 8px 10px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+.sample-save-message {
+  border: 1px solid #b7dfc2;
+  color: #166534;
+}
+
+.sample-save-error {
+  border: 1px solid #f0b8aa;
+  color: #b42318;
 }
 
 ul {

@@ -65,7 +65,7 @@ import type { ProjectDirectoryHandle } from "../services/projectFs";
 import type { ProjectStorage } from "../services/projectStorage";
 import { withAppOperation } from "../services/appOperation";
 import { loadTasks, setTasksProjectStorage } from "../services/tasks";
-import { saveBlobWithConfirmation } from "../utils/saveBlob";
+import { saveBlob, saveBlobWithConfirmation } from "../utils/saveBlob";
 
 const props = defineProps<{
   project?: ProjectConfig;
@@ -275,18 +275,6 @@ const releaseOptionPayload = computed(() => ({
   include_report: releaseIncludeReport.value,
   include_manifest: releaseIncludeManifest.value,
 }));
-
-function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
 
 function applyReleaseSettings(project: ProjectConfig) {
   const options = normalizeReleaseExportOptions(project);
@@ -608,10 +596,14 @@ async function handleExportRelease() {
         exportedBy: currentUser.value?.id ?? "",
       }),
     );
+    const saved = await saveBlob(result.blob, result.fileName);
 
-    downloadBlob(result.blob, result.fileName);
     releaseSummary.value = result.summary;
-    message.value = `已导出成品：${result.fileName}`;
+    message.value = saved.saved
+      ? saved.method === "file-picker"
+        ? `成品文件已保存为 ${saved.fileName}。`
+        : "成品文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。"
+      : "成品文件保存已取消。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导出成品失败。请稍后再试。";
