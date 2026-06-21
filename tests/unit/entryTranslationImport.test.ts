@@ -7,6 +7,7 @@ import {
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
 import { createEntry } from "./factories";
+import { FailingProjectStorage } from "./failingProjectStorage";
 
 async function createImportStorage(entries: Entry[]) {
   const root = createMemoryProjectDirectory({}, "translation-import.hproj");
@@ -57,6 +58,21 @@ describe("translation import workflow", () => {
         disputed: true,
       },
     ]);
+    await expect(
+      storage.readJsonl("logs/events.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        type: "entry.updated",
+        user_id: "importer-1",
+        detail: {
+          operation: "translation_import",
+          before_target: "Reviewed",
+          after_target: "Changed",
+          after_proofread_by: [],
+          after_reviewed_by: "",
+        },
+      },
+    ]);
   });
 
   it("skips locked and hidden entries", async () => {
@@ -98,5 +114,35 @@ describe("translation import workflow", () => {
       { target: "Locked" },
       { target: "Hidden" },
     ]);
+  });
+
+  it("rolls back imported entries when history writing fails", async () => {
+    const baseStorage = await createImportStorage([
+      createEntry({
+        id: "file-1:1",
+        file_id: "file-1",
+        index: 1,
+        key: "line_000001",
+        target: "Original",
+        status: "translated",
+        translated_by: "translator-1",
+      }),
+    ]);
+    const failingStorage = new FailingProjectStorage(baseStorage, 2);
+
+    setEntriesProjectStorage(failingStorage);
+
+    await expect(
+      importEntryTranslations(
+        "file-1",
+        "translations.json",
+        JSON.stringify([{ key: "line_000001", target: "Changed" }]),
+        "importer-1",
+      ),
+    ).rejects.toThrow("已尝试恢复原数据");
+    await expect(
+      baseStorage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([{ target: "Original" }]);
+    await expect(baseStorage.fileExists("logs/events.jsonl")).resolves.toBe(false);
   });
 });

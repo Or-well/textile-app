@@ -6,6 +6,7 @@ import type {
   Entry,
   Member,
   ProjectConfig,
+  ProjectEvent,
   Task,
 } from "../../src/model/types";
 import { generateOwnSigningKey } from "../../src/services/keyManager";
@@ -30,6 +31,10 @@ async function createChangePackageFixture(options: {
   originalTask?: Task;
   packageTask?: Task;
   packageType?: ChangePackageType;
+  packageOperation?:
+    | "translation_edit"
+    | "proofread"
+    | "review";
 } = {}): Promise<{
   storage: ReturnType<typeof createProjectStorage>;
   actor: Member;
@@ -77,6 +82,33 @@ async function createChangePackageFixture(options: {
         "tasks/tasks.jsonl": [options.packageTask],
       }
     : {};
+  const events = options.packageOperation
+    ? [
+        {
+          id: "source-entry-event",
+          type: "entry.updated",
+          user_id: contributor.id,
+          entry_id: originalEntry.id,
+          file_id: originalEntry.file_id,
+          created_at: packageEntry.updated_at,
+          detail: {
+            before_target: originalEntry.target,
+            after_target: packageEntry.target,
+            before_status: originalEntry.status,
+            after_status: packageEntry.status,
+            before_translated_by: originalEntry.translated_by,
+            after_translated_by: packageEntry.translated_by,
+            before_proofread_by: originalEntry.proofread_by,
+            after_proofread_by: packageEntry.proofread_by,
+            before_proofread_count: originalEntry.proofread_count,
+            after_proofread_count: packageEntry.proofread_count,
+            before_reviewed_by: originalEntry.reviewed_by,
+            after_reviewed_by: packageEntry.reviewed_by,
+            operation: options.packageOperation,
+          },
+        } satisfies ProjectEvent,
+      ]
+    : [];
   const payload: ChangePackagePayload = {
     entries,
     comments,
@@ -86,7 +118,7 @@ async function createChangePackageFixture(options: {
     tasks,
     projectFiles: {},
     memberFiles: {},
-    events: [],
+    events,
   };
   const manifest: ChangePackageManifest = {
     schema_version: 1,
@@ -137,7 +169,7 @@ async function createChangePackageFixture(options: {
       tasks,
       projectFiles: {},
       memberFiles: {},
-      events: [],
+      events,
     },
   };
 }
@@ -352,6 +384,70 @@ describe("ordinary change-package write plan", () => {
         reviewed_by: "",
       },
     ]);
+  });
+
+  it("preserves proofread progress when package history identifies a proofread edit", async () => {
+    const fixture = await createChangePackageFixture({
+      packageOperation: "proofread",
+      packageEntry: {
+        target: "Proofread package edit",
+        status: "proofread",
+        translated_by: "member-2",
+        proofread_by: ["member-2"],
+        proofread_count: 1,
+        reviewed_by: "",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            entryId: fixture.originalEntry.id,
+            action: "use_package",
+          },
+        ],
+        {
+          actor: fixture.actor,
+        },
+      ),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        target: "Proofread package edit",
+        status: "proofread",
+        translated_by: "member-2",
+        proofread_by: ["member-2"],
+        proofread_count: 1,
+        reviewed_by: "",
+      },
+    ]);
+
+    const events = await fixture.storage.readJsonl<ProjectEvent>(
+      "logs/events.jsonl",
+    );
+    const localVersionEvent = events.find(
+      (event) =>
+        event.type === "entry.updated" &&
+        event.detail?.source_event_id === "source-entry-event",
+    );
+
+    expect(localVersionEvent).toMatchObject({
+      user_id: "member-2",
+      detail: {
+        operation: "proofread",
+        package_id: "change-1",
+        source_event_id: "source-entry-event",
+        after_target: "Proofread package edit",
+        after_proofread_by: ["member-2"],
+      },
+    });
+    expect(events.filter((event) => event.id === "source-entry-event")).toHaveLength(0);
   });
 
   it("rejects protected entry field changes in ordinary packages", async () => {

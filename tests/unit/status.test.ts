@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyEntryTargetChange,
+  applyEntryWorkflowOperation,
   applyEntryWorkflowStatus,
   getLatestProofreader,
   getLatestTranslator,
@@ -204,6 +205,65 @@ describe("applyEntryWorkflowStatus", () => {
     expect(result).toMatchObject({
       status: "reviewed",
       proofread_by: [],
+      proofread_count: 1,
+      reviewed_by: "reviewer-1",
+    });
+  });
+});
+
+describe("applyEntryWorkflowOperation", () => {
+  it("keeps and advances workflow when proofread changes the target", () => {
+    expect(
+      applyEntryWorkflowOperation(
+        createEntry({
+          target: "Before",
+          status: "translated",
+          translated_by: "translator-1",
+          proofread_by: ["proofreader-1"],
+          proofread_count: 1,
+        }),
+        {
+          userId: "proofreader-2",
+          target: "After",
+          operation: "proofread",
+          workflow: { proofread_required: 2 },
+        },
+      ),
+    ).toMatchObject({
+      target: "After",
+      status: "proofread",
+      translated_by: "proofreader-2",
+      proofread_by: ["proofreader-1", "proofreader-2"],
+      proofread_count: 2,
+      reviewed_by: "",
+    });
+  });
+
+  it("keeps proofread records when review changes the target", () => {
+    expect(
+      applyEntryWorkflowOperation(
+        createEntry({
+          target: "Before",
+          status: "proofread",
+          translated_by: "translator-1",
+          proofread_by: ["proofreader-1"],
+          proofread_count: 1,
+        }),
+        {
+          userId: "reviewer-1",
+          target: "After",
+          operation: "review",
+          workflow: {
+            proofread_required: 1,
+            review_required: true,
+          },
+        },
+      ),
+    ).toMatchObject({
+      target: "After",
+      status: "reviewed",
+      translated_by: "reviewer-1",
+      proofread_by: ["proofreader-1"],
       proofread_count: 1,
       reviewed_by: "reviewer-1",
     });

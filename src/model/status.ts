@@ -250,6 +250,118 @@ export interface EntryTargetChangeOptions {
   updatedAt: string;
 }
 
+export type EntryWorkflowOperation =
+  | "translation_edit"
+  | "proofread"
+  | "review"
+  | "rollback_to_translated"
+  | "rollback_to_proofread";
+
+export interface EntryWorkflowOperationOptions {
+  userId: string;
+  target: string;
+  operation: EntryWorkflowOperation;
+  workflow?: ProjectWorkflowSettings;
+  updatedAt?: string;
+}
+
+export function applyEntryWorkflowOperation(
+  entry: Entry,
+  options: EntryWorkflowOperationOptions,
+): Entry {
+  const settings = normalizeWorkflowSettings(options.workflow);
+  const targetChanged = options.target !== entry.target;
+  const hasTarget = hasText(options.target);
+  const currentProofreadBy = normalizeProofreadUsers(entry.proofread_by);
+  const currentProofreadCount = getEntryProofreadCount(entry);
+  const auditFields = options.updatedAt
+    ? {
+        updated_at: options.updatedAt,
+        updated_by: options.userId,
+      }
+    : {};
+
+  if (options.operation === "translation_edit") {
+    return normalizeEntry({
+      ...entry,
+      target: options.target,
+      status: hasTarget ? "translated" : "untranslated",
+      translated_by: hasTarget
+        ? targetChanged || !entry.translated_by
+          ? options.userId
+          : entry.translated_by
+        : "",
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
+      ...auditFields,
+    });
+  }
+
+  if (options.operation === "proofread") {
+    const nextProofreadBy = [...currentProofreadBy, options.userId];
+    const nextProofreadCount = Math.max(
+      currentProofreadCount + 1,
+      nextProofreadBy.length,
+    );
+
+    return normalizeEntry({
+      ...entry,
+      target: options.target,
+      status:
+        nextProofreadCount >= settings.proofread_required
+          ? "proofread"
+          : "translated",
+      translated_by: targetChanged
+        ? options.userId
+        : entry.translated_by || options.userId,
+      proofread_by: nextProofreadBy,
+      proofread_count: nextProofreadCount,
+      reviewed_by: "",
+      ...auditFields,
+    });
+  }
+
+  if (options.operation === "review") {
+    return normalizeEntry({
+      ...entry,
+      target: options.target,
+      status: "reviewed",
+      translated_by: targetChanged
+        ? options.userId
+        : entry.translated_by || options.userId,
+      proofread_by: currentProofreadBy,
+      proofread_count: Math.max(
+        currentProofreadCount,
+        settings.proofread_required,
+        currentProofreadBy.length,
+      ),
+      reviewed_by: options.userId,
+      ...auditFields,
+    });
+  }
+
+  if (options.operation === "rollback_to_proofread") {
+    return normalizeEntry({
+      ...entry,
+      target: options.target,
+      status: "proofread",
+      reviewed_by: "",
+      ...auditFields,
+    });
+  }
+
+  return normalizeEntry({
+    ...entry,
+    target: options.target,
+    status: hasTarget ? "translated" : "untranslated",
+    proofread_by: [],
+    proofread_count: 0,
+    reviewed_by: "",
+    ...auditFields,
+  });
+}
+
 export function applyEntryTargetChange(
   entry: Entry,
   target: string,
@@ -259,18 +371,11 @@ export function applyEntryTargetChange(
     return entry;
   }
 
-  const hasTarget = hasText(target);
-
-  return normalizeEntry({
-    ...entry,
+  return applyEntryWorkflowOperation(entry, {
+    userId: options.userId,
     target,
-    status: hasTarget ? "translated" : "untranslated",
-    translated_by: hasTarget ? options.userId : "",
-    proofread_by: [],
-    proofread_count: 0,
-    reviewed_by: "",
-    updated_at: options.updatedAt,
-    updated_by: options.userId,
+    operation: "translation_edit",
+    updatedAt: options.updatedAt,
   });
 }
 
@@ -280,52 +385,52 @@ export function applyEntryWorkflowStatus(
   userId: string,
   workflow?: ProjectWorkflowSettings,
 ): Entry {
-  const settings = normalizeWorkflowSettings(workflow);
-  const currentProofreadBy = normalizeProofreadUsers(entry.proofread_by);
-  const nextEntry: Entry = {
-    ...entry,
-    status,
-    proofread_by: currentProofreadBy,
-    proofread_count: getEntryProofreadCount(entry),
-  };
-
   if (status === "translated") {
-    nextEntry.translated_by = entry.translated_by || userId;
-    nextEntry.proofread_by = [];
-    nextEntry.proofread_count = 0;
-    nextEntry.reviewed_by = "";
+    return applyEntryWorkflowOperation(entry, {
+      userId,
+      target: entry.target,
+      operation: "rollback_to_translated",
+      workflow,
+    });
   }
 
   if (status === "proofread") {
-    const nextProofreadBy =
-      userId && (settings.allow_same_user_multi_proofread || !currentProofreadBy.includes(userId))
-        ? [...currentProofreadBy, userId]
-        : currentProofreadBy;
-    const nextProofreadCount = Math.max(
-      getEntryProofreadCount(entry) + (nextProofreadBy.length > currentProofreadBy.length ? 1 : 0),
-      nextProofreadBy.length,
-    );
+    if (entry.status === "reviewed") {
+      return applyEntryWorkflowOperation(entry, {
+        userId,
+        target: entry.target,
+        operation: "rollback_to_proofread",
+        workflow,
+      });
+    }
 
-    nextEntry.translated_by = entry.translated_by || userId;
-    nextEntry.proofread_by = nextProofreadBy;
-    nextEntry.proofread_count = nextProofreadCount;
-    nextEntry.status =
-      nextProofreadCount >= settings.proofread_required ? "proofread" : "translated";
-    nextEntry.reviewed_by = "";
+    const settings = normalizeWorkflowSettings(workflow);
+
+    if (
+      !settings.allow_same_user_multi_proofread &&
+      normalizeProofreadUsers(entry.proofread_by).includes(userId)
+    ) {
+      return entry;
+    }
+
+    return applyEntryWorkflowOperation(entry, {
+      userId,
+      target: entry.target,
+      operation: "proofread",
+      workflow,
+    });
   }
 
   if (status === "reviewed") {
-    nextEntry.translated_by = entry.translated_by || userId;
-    nextEntry.proofread_by = currentProofreadBy;
-    nextEntry.proofread_count = Math.max(
-      getEntryProofreadCount(entry),
-      settings.proofread_required,
-      currentProofreadBy.length,
-    );
-    nextEntry.reviewed_by = userId;
+    return applyEntryWorkflowOperation(entry, {
+      userId,
+      target: entry.target,
+      operation: "review",
+      workflow,
+    });
   }
 
-  return nextEntry;
+  return entry;
 }
 
 export function getEntryWorkflowLabel(

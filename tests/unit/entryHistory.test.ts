@@ -6,6 +6,7 @@ import {
   setEntriesProjectStorage,
 } from "../../src/services/entries";
 import {
+  deriveEntryWorkflowAudit,
   isEntryVersionEvent,
 } from "../../src/services/history";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
@@ -210,6 +211,195 @@ describe("entry version history", () => {
       translated_by: actor.id,
       proofread_by: ["proofreader-1"],
       reviewed_by: actor.id,
+    });
+  });
+
+  it("treats a normal edit during partial proofread as a new translation", async () => {
+    const { storage, entry } = await createEntryStorage({
+      status: "translated",
+      proofread_by: ["proofreader-1"],
+      proofread_count: 1,
+    });
+    const actor = createMember(["owner"], { id: "owner-1" });
+
+    setEntriesProjectStorage(storage);
+
+    await expect(
+      saveEntry(
+        {
+          ...entry,
+          target: "Ordinary edit",
+        },
+        {
+          actor,
+          workflow: { proofread_required: 2 },
+        },
+      ),
+    ).resolves.toMatchObject({
+      target: "Ordinary edit",
+      status: "translated",
+      translated_by: actor.id,
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
+    });
+  });
+
+  it("records proofread target edits without resetting workflow", async () => {
+    const actor = createMember(["proofreader"], { id: "proofreader-1" });
+    const { storage, entry } = await createEntryStorage();
+
+    setEntriesProjectStorage(storage);
+
+    const saved = await saveEntry(
+      {
+        ...entry,
+        target: "Proofread edit",
+        status: "proofread",
+        proofread_by: [actor.id],
+        proofread_count: 1,
+      },
+      {
+        actor,
+        workflow: { proofread_required: 1 },
+      },
+    );
+    const events = await storage.readJsonl<ProjectEvent>("logs/events.jsonl");
+
+    expect(saved).toMatchObject({
+      target: "Proofread edit",
+      status: "proofread",
+      translated_by: actor.id,
+      proofread_by: [actor.id],
+      proofread_count: 1,
+      reviewed_by: "",
+    });
+    expect(events).toMatchObject([
+      {
+        type: "entry.updated",
+        detail: {
+          operation: "proofread",
+          before_target: "Original",
+          after_target: "Proofread edit",
+          after_translated_by: actor.id,
+          after_proofread_by: [actor.id],
+          after_proofread_count: 1,
+        },
+      },
+    ]);
+  });
+
+  it("records review target edits without resetting proofread records", async () => {
+    const actor = createMember(["reviewer"], { id: "reviewer-1" });
+    const { storage, entry } = await createEntryStorage({
+      status: "proofread",
+      proofread_by: ["proofreader-1"],
+      proofread_count: 1,
+    });
+
+    setEntriesProjectStorage(storage);
+
+    const saved = await saveEntry(
+      {
+        ...entry,
+        target: "Review edit",
+        status: "reviewed",
+        reviewed_by: actor.id,
+      },
+      {
+        actor,
+        workflow: {
+          proofread_required: 1,
+          review_required: true,
+        },
+      },
+    );
+
+    expect(saved).toMatchObject({
+      target: "Review edit",
+      status: "reviewed",
+      translated_by: actor.id,
+      proofread_by: ["proofreader-1"],
+      proofread_count: 1,
+      reviewed_by: actor.id,
+    });
+    await expect(
+      storage.readJsonl<ProjectEvent>("logs/events.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        detail: {
+          operation: "review",
+          after_proofread_by: ["proofreader-1"],
+          after_reviewed_by: actor.id,
+        },
+      },
+    ]);
+  });
+
+  it("records partial proofread progress even when the main status is unchanged", async () => {
+    const actor = createMember(["proofreader"], { id: "proofreader-1" });
+    const { storage, entry } = await createEntryStorage();
+
+    setEntriesProjectStorage(storage);
+
+    await saveEntry(
+      {
+        ...entry,
+        status: "translated",
+        proofread_by: [actor.id],
+        proofread_count: 1,
+      },
+      {
+        actor,
+        workflow: { proofread_required: 2 },
+      },
+    );
+
+    const events = await storage.readJsonl<ProjectEvent>("logs/events.jsonl");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      detail: {
+        operation: "proofread",
+        before_status: "translated",
+        after_status: "translated",
+        after_proofread_count: 1,
+      },
+    });
+  });
+
+  it("derives current audit fields from the matching latest history event", () => {
+    const entry = createEntry({
+      id: "entry-1",
+      updated_at: "2026-02-01T00:00:00.000Z",
+      translated_by: "stale-translator",
+      proofread_by: [],
+      proofread_count: 0,
+    });
+    const event: ProjectEvent = {
+      id: "event-1",
+      type: "entry.updated",
+      user_id: "proofreader-1",
+      entry_id: entry.id,
+      file_id: entry.file_id,
+      created_at: entry.updated_at,
+      detail: {
+        before_target: "Before",
+        after_target: entry.target,
+        before_status: "translated",
+        after_status: "proofread",
+        after_translated_by: "translator-1",
+        after_proofread_by: ["proofreader-1"],
+        after_proofread_count: 1,
+        after_reviewed_by: "",
+      },
+    };
+
+    expect(deriveEntryWorkflowAudit(entry, [event])).toEqual({
+      translatedBy: "translator-1",
+      proofreadBy: ["proofreader-1"],
+      proofreadCount: 1,
+      reviewedBy: "",
     });
   });
 

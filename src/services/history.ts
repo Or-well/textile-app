@@ -3,7 +3,11 @@ import type {
   EntryStatus,
   ProjectEvent,
 } from "../model/types";
-import { ENTRY_STATUSES } from "../model/status";
+import {
+  ENTRY_STATUSES,
+  normalizeProofreadUsers,
+  type EntryWorkflowOperation,
+} from "../model/status";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import type { ProjectDirectoryHandle } from "./projectFs";
@@ -22,9 +26,24 @@ export interface EntryVersionDetail {
   after_status: EntryStatus;
   before_translated_by?: string;
   after_translated_by?: string;
+  before_proofread_by?: string[];
+  after_proofread_by?: string[];
+  before_proofread_count?: number;
+  after_proofread_count?: number;
+  before_reviewed_by?: string;
+  after_reviewed_by?: string;
+  operation?: EntryHistoryOperation;
+  source_event_id?: string;
+  package_id?: string;
   restored_from_event_id?: string;
   restored_from_snapshot?: EntryVersionSnapshot;
 }
+
+export type EntryHistoryOperation =
+  | EntryWorkflowOperation
+  | "translation_import"
+  | "package_merge"
+  | "restore";
 
 export type EntryVersionSnapshot = "before" | "after";
 
@@ -40,6 +59,13 @@ export interface ProjectEventFilter {
   taskId?: string;
   userId?: string;
   type?: string;
+}
+
+export interface EntryWorkflowAudit {
+  translatedBy: string;
+  proofreadBy: string[];
+  proofreadCount: number;
+  reviewedBy: string;
 }
 
 let currentProjectStorage: ProjectStorage | null = null;
@@ -126,12 +152,47 @@ export async function getEntryHistory(entryId: string): Promise<ProjectEvent[]> 
   return loadEvents({ entryId });
 }
 
+export function deriveEntryWorkflowAudit(
+  entry: Entry,
+  events: ProjectEvent[],
+): EntryWorkflowAudit {
+  const latestEvent = [...events].reverse().find(
+    (event): event is EntryVersionEvent =>
+      isEntryVersionEvent(event) &&
+      event.entry_id === entry.id &&
+      event.created_at === entry.updated_at &&
+      event.detail.after_proofread_by !== undefined &&
+      event.detail.after_proofread_count !== undefined &&
+      event.detail.after_reviewed_by !== undefined,
+  );
+
+  if (!latestEvent) {
+    return {
+      translatedBy: entry.translated_by,
+      proofreadBy: normalizeProofreadUsers(entry.proofread_by),
+      proofreadCount: entry.proofread_count ?? 0,
+      reviewedBy: entry.reviewed_by,
+    };
+  }
+
+  return {
+    translatedBy:
+      latestEvent.detail.after_translated_by ?? entry.translated_by,
+    proofreadBy: latestEvent.detail.after_proofread_by ?? [],
+    proofreadCount: latestEvent.detail.after_proofread_count ?? 0,
+    reviewedBy: latestEvent.detail.after_reviewed_by ?? "",
+  };
+}
+
 export function createEntryVersionEvent(
   before: Entry,
   after: Entry,
   userId: string,
   options: {
     type?: EntryVersionEvent["type"];
+    operation?: EntryHistoryOperation;
+    sourceEventId?: string;
+    packageId?: string;
     restoredFromEventId?: string;
     restoredFromSnapshot?: EntryVersionSnapshot;
   } = {},
@@ -150,6 +211,17 @@ export function createEntryVersionEvent(
       after_status: after.status,
       before_translated_by: before.translated_by,
       after_translated_by: after.translated_by,
+      before_proofread_by: normalizeProofreadUsers(before.proofread_by),
+      after_proofread_by: normalizeProofreadUsers(after.proofread_by),
+      before_proofread_count: before.proofread_count ?? 0,
+      after_proofread_count: after.proofread_count ?? 0,
+      before_reviewed_by: before.reviewed_by,
+      after_reviewed_by: after.reviewed_by,
+      operation: options.operation ?? "translation_edit",
+      ...(options.sourceEventId
+        ? { source_event_id: options.sourceEventId }
+        : {}),
+      ...(options.packageId ? { package_id: options.packageId } : {}),
       ...(options.restoredFromEventId
         ? { restored_from_event_id: options.restoredFromEventId }
         : {}),
@@ -177,6 +249,20 @@ export function isEntryVersionEvent(
       (detail.before_translated_by === undefined ||
         typeof detail.before_translated_by === "string") &&
       (detail.after_translated_by === undefined ||
-        typeof detail.after_translated_by === "string"),
+        typeof detail.after_translated_by === "string") &&
+      (detail.before_proofread_by === undefined ||
+        (Array.isArray(detail.before_proofread_by) &&
+          detail.before_proofread_by.every((value) => typeof value === "string"))) &&
+      (detail.after_proofread_by === undefined ||
+        (Array.isArray(detail.after_proofread_by) &&
+          detail.after_proofread_by.every((value) => typeof value === "string"))) &&
+      (detail.before_proofread_count === undefined ||
+        typeof detail.before_proofread_count === "number") &&
+      (detail.after_proofread_count === undefined ||
+        typeof detail.after_proofread_count === "number") &&
+      (detail.before_reviewed_by === undefined ||
+        typeof detail.before_reviewed_by === "string") &&
+      (detail.after_reviewed_by === undefined ||
+        typeof detail.after_reviewed_by === "string"),
   );
 }

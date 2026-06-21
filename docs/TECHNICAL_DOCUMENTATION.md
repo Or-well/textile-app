@@ -613,7 +613,7 @@ comments/<file_id>/<6位entry index>.jsonl
 示例：
 
 ```json
-{"id":"event_xxx","type":"entry.updated","user_id":"user_a","created_at":"2026-06-19T00:00:00.000Z","entry_id":"script_001:000001","file_id":"script_001","detail":{"before_target":"旧译文","after_target":"新译文","before_status":"translated","after_status":"translated"}}
+{"id":"event_xxx","type":"entry.updated","user_id":"user_a","created_at":"2026-06-19T00:00:00.000Z","entry_id":"script_001:000001","file_id":"script_001","detail":{"operation":"proofread","before_target":"旧译文","after_target":"新译文","before_status":"translated","after_status":"proofread","before_translated_by":"translator_a","after_translated_by":"proofreader_a","before_proofread_by":[],"after_proofread_by":["proofreader_a"],"before_proofread_count":0,"after_proofread_count":1,"before_reviewed_by":"","after_reviewed_by":""}}
 ```
 
 字段：
@@ -625,9 +625,11 @@ comments/<file_id>/<6位entry index>.jsonl
 
 词条版本事件：
 
-- `entry.updated`：手工保存导致译文或主状态变化。
+- `entry.updated`：手工保存、批量译文导入或修改包合并导致译文、状态或工作流审计变化。
 - `entry.restored`：恢复某个历史译文版本。
-- `detail` 保存 `before_target`、`after_target`、`before_status`、`after_status`，新事件还保存 `before_translated_by` 和 `after_translated_by`。
+- `detail.operation` 区分 `translation_edit`、`proofread`、`review`、流程回退、`translation_import`、`package_merge` 和 `restore`。
+- `detail` 保存译文、状态、译者、校对成员、校对次数和审核成员的完整前后快照。
+- 修改包合并生成本地权威版本事件，并通过 `source_event_id`、`package_id` 关联来源；普通包的源词条版本事件不直接复制为本地版本。
 - 恢复事件额外保存 `restored_from_event_id` 和 `restored_from_snapshot`，明确恢复的是该事件的修改前或修改后快照。
 - 旧日志缺少译文或状态快照时继续作为普通审计事件读取，但不能恢复；仅缺少译者快照时仍可恢复，译者按未知处理。
 
@@ -821,12 +823,14 @@ comments/<file_id>/<6位entry index>.jsonl
 - service 内再次检查权限。
 - 普通保存不能顺带修改 `locked`、`hidden`、`assignee` 等管理字段；上下文必须走 `updateEntryContext()`。
 - 保存者写入 `updated_by` 和 `updated_at`。
-- 译文变化统一走 `applyEntryTargetChange()`：非空译文回到 `translated`，空译文回到 `untranslated`，清空校对和审核审计字段，保留争议标记。
+- `applyEntryWorkflowOperation()` 按操作类型计算投影：普通翻译编辑修改译文时重置后续流程；校对修改译文时保留既有校对并追加本轮；审核修改译文时保留校对并完成审核。
 - 已审核词条不能直接普通编辑译文，必须先退回到校对阶段。
 - 校对增加 proofread user/count。
 - 审核写 `reviewed_by`。
-- 译文或状态真正变化时创建 `entry.updated` 版本事件；无变化保存不写事件。
+- 译文、状态或工作流审计真正变化时创建 `entry.updated` 版本事件；无变化保存不写事件。
 - entries chunk 与追加后的 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交，任一写入失败都会恢复两者。
+- 保存前若当前 `updated_at` 对应完整版本事件，译者、校对和审核审计以该事件投影为准；旧项目或旧事件缺少完整快照时回退到 Entry 字段。
+- 批量译文导入同样通过一个写入计划提交全部 entries chunk 和版本事件。
 
 历史恢复：
 
@@ -1374,12 +1378,13 @@ manifest 示例：
 4. 检查危险导入权限。
 5. 检测冲突；普通包会比较译文、状态、译者、校对成员、校对次数和审核成员。
 6. 要求每个冲突有 resolution。
-7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；包内译文改变时同样走 `applyEntryTargetChange()`，清空后续校对和审核状态。
-8. 普通包词条只合并允许的译文和工作流字段，`updated_by` 使用包 manifest 用户；普通包任务只合并执行状态。
-9. 维护包在内存中准备 project/members 最终内容。
-10. 去重合并包内 events，并生成导入日志事件。
-11. 将所有目标文件加入同一个补偿式写入计划。
-12. 提交成功后更新 entries 缓存。
+7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；普通包根据匹配的词条版本事件决定翻译、校对或审核语义，缺少操作记录的旧包才按普通翻译编辑重置流程。
+8. 对负责人最终采用的词条结果生成本地版本事件，记录来源事件和 package ID；普通包的源词条版本事件不直接写成本地权威版本。
+9. 普通包词条只合并允许的译文和工作流字段，`updated_by` 使用包 manifest 用户；普通包任务只合并执行状态。
+10. 维护包在内存中准备 project/members 最终内容。
+11. 去重合并其余包内 events，并生成导入日志事件。
+12. 将所有目标文件加入同一个补偿式写入计划。
+13. 提交成功后更新 entries 缓存。
 
 当前回滚边界：
 

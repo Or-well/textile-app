@@ -12,9 +12,11 @@ import type {
   Term,
 } from "../model/types";
 import {
+  applyEntryWorkflowOperation,
   applyEntryTargetChange,
   normalizeEntries,
   normalizeEntry,
+  type EntryWorkflowOperation,
 } from "../model/status";
 import { cacheEntriesForFile } from "./entries";
 import {
@@ -38,6 +40,11 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import {
+  createEntryVersionEvent,
+  isEntryVersionEvent,
+  type EntryVersionEvent,
+} from "./history";
 import { getSigningPrivateKeyForMember } from "./keyManager";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
@@ -1190,6 +1197,7 @@ function mergeOrdinaryPackageEntry(
   currentEntry: Entry,
   packageEntry: Entry,
   userId: string,
+  operation: EntryWorkflowOperation,
   updatedAt = nowIso(),
 ): Entry {
   const normalizedPackageEntry = normalizeEntry(packageEntry);
@@ -1197,9 +1205,29 @@ function mergeOrdinaryPackageEntry(
   assertOrdinaryEntryPackageFields(currentEntry, packageEntry);
 
   if (normalizedPackageEntry.target !== currentEntry.target) {
-    return applyEntryTargetChange(currentEntry, normalizedPackageEntry.target, {
-      userId,
-      updatedAt,
+    if (operation === "translation_edit") {
+      return applyEntryWorkflowOperation(currentEntry, {
+        userId,
+        target: normalizedPackageEntry.target,
+        operation,
+        updatedAt,
+      });
+    }
+
+    if (!normalizedPackageEntry.target.trim()) {
+      throw new Error("校对或审核记录不能把空译文标记为流程通过。");
+    }
+
+    return normalizeEntry({
+      ...currentEntry,
+      target: normalizedPackageEntry.target,
+      status: normalizedPackageEntry.status,
+      translated_by: normalizedPackageEntry.translated_by || userId,
+      proofread_by: normalizedPackageEntry.proofread_by,
+      proofread_count: normalizedPackageEntry.proofread_count,
+      reviewed_by: normalizedPackageEntry.reviewed_by,
+      updated_at: updatedAt,
+      updated_by: userId,
     });
   }
 
@@ -1213,6 +1241,97 @@ function mergeOrdinaryPackageEntry(
     updated_at: updatedAt,
     updated_by: userId,
   });
+}
+
+function inferEntryOperationFromEvent(
+  event: EntryVersionEvent | undefined,
+): EntryWorkflowOperation {
+  if (!event) {
+    return "translation_edit";
+  }
+
+  const operation = event.detail.operation;
+
+  if (
+    operation === "proofread" ||
+    operation === "review" ||
+    operation === "rollback_to_translated" ||
+    operation === "rollback_to_proofread" ||
+    operation === "translation_edit"
+  ) {
+    return operation;
+  }
+
+  const beforeProofreadCount = event.detail.before_proofread_count ?? 0;
+  const afterProofreadCount = event.detail.after_proofread_count ?? 0;
+
+  if (
+    event.detail.after_status === "reviewed" &&
+    (event.detail.before_status !== "reviewed" ||
+      event.detail.after_reviewed_by !== event.detail.before_reviewed_by)
+  ) {
+    return "review";
+  }
+
+  if (
+    afterProofreadCount > beforeProofreadCount ||
+    (event.detail.after_status === "proofread" &&
+      event.detail.before_status !== "proofread")
+  ) {
+    return "proofread";
+  }
+
+  if (
+    event.detail.before_status === "reviewed" &&
+    event.detail.after_status === "proofread"
+  ) {
+    return "rollback_to_proofread";
+  }
+
+  if (
+    event.detail.before_status === "proofread" &&
+    event.detail.after_status === "translated"
+  ) {
+    return "rollback_to_translated";
+  }
+
+  return "translation_edit";
+}
+
+function findPackageEntryVersionEvent(
+  events: ProjectEvent[],
+  packageEntry: Entry,
+): EntryVersionEvent | undefined {
+  return [...events].reverse().find(
+    (event): event is EntryVersionEvent =>
+      isEntryVersionEvent(event) &&
+      event.entry_id === packageEntry.id &&
+      event.detail.after_target === packageEntry.target &&
+      event.detail.after_status === packageEntry.status &&
+      (event.detail.after_translated_by === undefined ||
+        event.detail.after_translated_by === packageEntry.translated_by) &&
+      (event.detail.after_proofread_by === undefined ||
+        samePackageValue(
+          event.detail.after_proofread_by,
+          packageEntry.proofread_by,
+        )) &&
+      (event.detail.after_proofread_count === undefined ||
+        event.detail.after_proofread_count === packageEntry.proofread_count) &&
+      (event.detail.after_reviewed_by === undefined ||
+        event.detail.after_reviewed_by === packageEntry.reviewed_by),
+  );
+}
+
+function entryWorkflowChanged(before: Entry, after: Entry): boolean {
+  return (
+    before.target !== after.target ||
+    before.status !== after.status ||
+    before.translated_by !== after.translated_by ||
+    before.proofread_count !== after.proofread_count ||
+    before.reviewed_by !== after.reviewed_by ||
+    stableStringify(before.proofread_by ?? []) !==
+      stableStringify(after.proofread_by ?? [])
+  );
 }
 
 function mergeOrdinaryPackageTasks(
@@ -2488,6 +2607,7 @@ export async function applyChangePackage(
     fileId: string;
     entries: Entry[];
   }> = [];
+  const localEntryEvents: ProjectEvent[] = [];
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
     const currentEntries = await loadCurrentEntries(path);
@@ -2513,12 +2633,19 @@ export async function applyChangePackage(
         continue;
       }
 
+      const sourceEvent = findPackageEntryVersionEvent(
+        changePackage.events,
+        normalizeEntry(packageEntry),
+      );
+      const operation = inferEntryOperationFromEvent(sourceEvent);
+      const currentEntry = currentEntries[entryIndex];
+      let nextEntry: Entry;
+
       if (resolution?.action === "manual_merge") {
-        const currentEntry = currentEntries[entryIndex];
         const target = resolution.target ?? currentEntry.target;
         const updatedAt = nowIso();
 
-        currentEntries[entryIndex] = target !== currentEntry.target
+        nextEntry = target !== currentEntry.target
           ? applyEntryTargetChange(currentEntry, target, {
               userId: changePackage.manifest.user_id,
               updatedAt,
@@ -2530,15 +2657,37 @@ export async function applyChangePackage(
               updated_by: changePackage.manifest.user_id,
             });
       } else {
-        const currentEntry = currentEntries[entryIndex];
-
-        currentEntries[entryIndex] = useOrdinarySafeguards
+        nextEntry = useOrdinarySafeguards
           ? mergeOrdinaryPackageEntry(
               currentEntry,
               packageEntry,
               changePackage.manifest.user_id,
+              operation,
             )
           : normalizeEntry(packageEntry);
+      }
+
+      currentEntries[entryIndex] = nextEntry;
+
+      if (
+        useOrdinarySafeguards &&
+        entryWorkflowChanged(currentEntry, nextEntry)
+      ) {
+        localEntryEvents.push(
+          createEntryVersionEvent(
+            currentEntry,
+            nextEntry,
+            changePackage.manifest.user_id,
+            {
+              operation:
+                resolution?.action === "manual_merge"
+                  ? "package_merge"
+                  : operation,
+              sourceEventId: sourceEvent?.id,
+              packageId: changePackage.manifest.package_id,
+            },
+          ),
+        );
       }
 
       changed = true;
@@ -2628,9 +2777,10 @@ export async function applyChangePackage(
     ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
     : [];
   const existingIds = new Set(existingEvents.map((event) => event.id));
-  const newEvents = changePackage.events.filter(
-    (event) => !existingIds.has(event.id),
-  );
+  const sourceEvents = useOrdinarySafeguards
+    ? changePackage.events.filter((event) => !isEntryVersionEvent(event))
+    : changePackage.events;
+  const newEvents = sourceEvents.filter((event) => !existingIds.has(event.id));
 
   importedEvents = newEvents.length;
 
@@ -2655,6 +2805,7 @@ export async function applyChangePackage(
   writePlan.writeJsonl("logs/events.jsonl", [
     ...existingEvents,
     ...newEvents,
+    ...localEntryEvents,
     importEvent,
   ]);
 

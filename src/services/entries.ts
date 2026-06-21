@@ -6,17 +6,20 @@ import type {
   ProjectWorkflowSettings,
 } from "../model/types";
 import {
+  applyEntryWorkflowOperation,
   applyEntryTargetChange,
   getEntryProofreadCount,
   normalizeEntries,
   normalizeEntry,
   normalizeProofreadUsers,
+  type EntryWorkflowOperation,
 } from "../model/status";
 import { parseJsonl } from "../utils/jsonl";
 import { parseCsvRecords } from "../utils/csv";
 import { nowIso } from "../utils/time";
 import {
   createEntryVersionEvent,
+  deriveEntryWorkflowAudit,
   isEntryVersionEvent,
   type EntryVersionSnapshot,
 } from "./history";
@@ -595,42 +598,26 @@ function assertCanWriteEntry(
   actor: Member,
   originalEntry: Entry,
   nextEntry: Entry,
+  operation: EntryWorkflowOperation | null,
   workflow?: ProjectWorkflowSettings,
 ): void {
-  const originalProofreadCount = getEntryProofreadCount(originalEntry);
-  const nextProofreadCount = getEntryProofreadCount(nextEntry);
-  const targetChanged = nextEntry.target !== originalEntry.target;
   const contextChanged = nextEntry.context !== originalEntry.context;
-  const isProofreadAction = nextProofreadCount > originalProofreadCount;
-  const isReviewAction =
-    nextEntry.status === "reviewed" &&
-    (originalEntry.status !== "reviewed" || nextEntry.reviewed_by !== originalEntry.reviewed_by);
-  const isRollbackAction =
-    (originalEntry.status === "reviewed" && nextEntry.status === "proofread") ||
-    (originalEntry.status === "proofread" && nextEntry.status === "translated");
-  const isTranslateAction =
-    targetChanged ||
-    (nextEntry.status === "translated" && originalEntry.status === "untranslated");
 
-  if (targetChanged) {
-    if (!canTranslateEntry(actor, originalEntry)) {
-      throw new Error(
-        originalEntry.status === "reviewed"
-          ? "已审核词条必须先退回校对，才能修改译文。"
-          : "当前成员没有修改译文的权限。",
-      );
-    }
-    return;
-  }
-
-  if (isRollbackAction) {
+  if (
+    operation === "rollback_to_proofread" ||
+    operation === "rollback_to_translated"
+  ) {
     if (!canRollbackEntry(actor, originalEntry)) {
       throw new Error("Permission denied.");
     }
     return;
   }
 
-  if (isReviewAction) {
+  if (operation === "review") {
+    if (!nextEntry.target.trim()) {
+      throw new Error("译文为空，不能审核通过。");
+    }
+
     const reason = getReviewBlockReason(actor, originalEntry, workflow);
 
     if (reason) {
@@ -641,16 +628,24 @@ function assertCanWriteEntry(
     return;
   }
 
-  if (isProofreadAction) {
+  if (operation === "proofread") {
+    if (!nextEntry.target.trim()) {
+      throw new Error("译文为空，不能校对通过。");
+    }
+
     if (!canProofreadEntry(actor, originalEntry, workflow)) {
       throw new Error("Permission denied.");
     }
     return;
   }
 
-  if (isTranslateAction) {
+  if (operation === "translation_edit") {
     if (!canTranslateEntry(actor, originalEntry)) {
-      throw new Error("Permission denied.");
+      throw new Error(
+        originalEntry.status === "reviewed"
+          ? "已审核词条必须先退回校对，才能修改译文。"
+          : "当前成员没有修改译文的权限。",
+      );
     }
     return;
   }
@@ -664,62 +659,89 @@ function assertCanWriteEntry(
   }
 }
 
+function getRequestedEntryOperation(
+  originalEntry: Entry,
+  nextEntry: Entry,
+): EntryWorkflowOperation | null {
+  const originalProofreadCount = getEntryProofreadCount(originalEntry);
+  const nextProofreadCount = getEntryProofreadCount(nextEntry);
+
+  if (
+    nextEntry.status === "reviewed" &&
+    (originalEntry.status !== "reviewed" ||
+      nextEntry.reviewed_by !== originalEntry.reviewed_by)
+  ) {
+    return "review";
+  }
+
+  if (nextProofreadCount > originalProofreadCount) {
+    return "proofread";
+  }
+
+  if (nextEntry.target !== originalEntry.target) {
+    return "translation_edit";
+  }
+
+  if (originalEntry.status === "reviewed" && nextEntry.status === "proofread") {
+    return "rollback_to_proofread";
+  }
+
+  if (
+    (originalEntry.status === "proofread" ||
+      originalProofreadCount > 0) &&
+    nextEntry.status === "translated"
+  ) {
+    return "rollback_to_translated";
+  }
+
+  if (
+    nextEntry.status === "translated" &&
+    originalEntry.status === "untranslated"
+  ) {
+    return "translation_edit";
+  }
+
+  return null;
+}
+
 function applyEntryAuditFields(
   originalEntry: Entry,
   entry: Entry,
   actor: Member,
+  operation: EntryWorkflowOperation | null,
+  workflow?: ProjectWorkflowSettings,
 ): Entry {
   const now = nowIso();
-  const targetChanged = entry.target !== originalEntry.target;
 
-  if (targetChanged) {
-    return applyEntryTargetChange(originalEntry, entry.target, {
+  if (operation) {
+    return applyEntryWorkflowOperation(originalEntry, {
       userId: actor.id,
+      target: entry.target,
+      operation,
+      workflow,
       updatedAt: now,
     });
   }
 
-  const statusBecameTranslated =
-    entry.status === "translated" && originalEntry.status === "untranslated";
-  const originalProofreadCount = getEntryProofreadCount(originalEntry);
-  const nextProofreadCount = getEntryProofreadCount(entry);
-  const proofreadAction = nextProofreadCount > originalProofreadCount;
-  const reviewAction = entry.status === "reviewed";
-  const savedEntry: Entry = normalizeEntry({
+  return normalizeEntry({
     ...originalEntry,
     ...entry,
     target: originalEntry.target,
     updated_at: now,
     updated_by: actor.id,
   });
-
-  if (statusBecameTranslated) {
-    savedEntry.translated_by = actor.id;
-  }
-
-  if (proofreadAction) {
-    const proofreadBy = normalizeProofreadUsers(savedEntry.proofread_by);
-    const nextProofreadBy = proofreadBy.includes(actor.id)
-      ? proofreadBy
-      : [...proofreadBy, actor.id];
-
-    savedEntry.proofread_by = nextProofreadBy;
-    savedEntry.proofread_count = Math.max(
-      originalProofreadCount + 1,
-      nextProofreadCount,
-      nextProofreadBy.length,
-    );
-  }
-
-  if (reviewAction) {
-    savedEntry.reviewed_by = actor.id;
-  }
-
-  return savedEntry;
 }
 
 function entryVersionChanged(before: Entry, after: Entry): boolean {
-  return before.target !== after.target || before.status !== after.status;
+  return (
+    before.target !== after.target ||
+    before.status !== after.status ||
+    before.translated_by !== after.translated_by ||
+    before.proofread_count !== after.proofread_count ||
+    before.reviewed_by !== after.reviewed_by ||
+    normalizeProofreadUsers(before.proofread_by).join("\0") !==
+      normalizeProofreadUsers(after.proofread_by).join("\0")
+  );
 }
 
 async function loadProjectEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
@@ -832,6 +854,7 @@ export async function importEntryTranslations(
   userId = "",
   options: WriteEntriesOptions = {},
 ): Promise<TranslationImportResult> {
+  const storage = getProjectStorage();
   const entries = await loadEntries(fileId);
   const rows = parseTranslationRows(text, fileName);
   const entriesByKey = new Map(entries.map((entry) => [entry.key, entry]));
@@ -839,6 +862,7 @@ export async function importEntryTranslations(
   let matched = 0;
   let skipped = 0;
   const updatedAt = nowIso();
+  const versionEvents: ProjectEvent[] = [];
 
   for (const row of rows) {
     const entry =
@@ -855,16 +879,48 @@ export async function importEntryTranslations(
       continue;
     }
 
-    const changedEntry = applyEntryTargetChange(entry, row.target, {
-      userId: userId || entry.updated_by,
+    const originalEntry = normalizeEntry({
+      ...entry,
+      proofread_by: [...normalizeProofreadUsers(entry.proofread_by)],
+    });
+    const changeUserId = userId || entry.updated_by;
+    const changedEntry = applyEntryTargetChange(originalEntry, row.target, {
+      userId: changeUserId,
       updatedAt,
     });
+
+    if (entryVersionChanged(originalEntry, changedEntry)) {
+      versionEvents.push(
+        createEntryVersionEvent(originalEntry, changedEntry, changeUserId, {
+          operation: "translation_import",
+        }),
+      );
+    }
 
     Object.assign(entry, changedEntry);
     matched += 1;
   }
 
-  await writeFileEntries(fileId, entries, options);
+  if (versionEvents.length > 0) {
+    const prepared = await prepareEntriesWrite(storage, fileId, entries, options);
+    const existingEvents = await loadProjectEvents(storage);
+    const writePlan = createProjectWritePlan(storage);
+
+    for (const write of prepared.writes) {
+      writePlan.writeJsonl(write.path, write.rows);
+    }
+
+    for (const path of prepared.deletes) {
+      writePlan.deleteFile(path);
+    }
+
+    writePlan.writeJsonl("logs/events.jsonl", [
+      ...existingEvents,
+      ...versionEvents,
+    ]);
+    await writePlan.execute();
+    cacheEntriesForFile(fileId, entries);
+  }
 
   return { matched, skipped };
 }
@@ -973,7 +1029,16 @@ export async function saveEntry(
       continue;
     }
 
-    const originalEntry = normalizeEntry(entries[entryIndex]);
+    const storedEntry = normalizeEntry(entries[entryIndex]);
+    const existingEvents = await loadProjectEvents(storage);
+    const historyAudit = deriveEntryWorkflowAudit(storedEntry, existingEvents);
+    const originalEntry = normalizeEntry({
+      ...storedEntry,
+      translated_by: historyAudit.translatedBy,
+      proofread_by: historyAudit.proofreadBy,
+      proofread_count: historyAudit.proofreadCount,
+      reviewed_by: historyAudit.reviewedBy,
+    });
 
     if (entry.context !== originalEntry.context) {
       throw new Error("上下文必须通过上下文编辑入口修改。");
@@ -988,11 +1053,27 @@ export async function saveEntry(
       reviewed_by: entry.reviewed_by,
     });
 
-    assertCanWriteEntry(actor, originalEntry, mergedEntry, options.workflow);
+    const operation = getRequestedEntryOperation(originalEntry, mergedEntry);
 
-    const savedEntry = applyEntryAuditFields(originalEntry, mergedEntry, actor);
+    assertCanWriteEntry(
+      actor,
+      originalEntry,
+      mergedEntry,
+      operation,
+      options.workflow,
+    );
+
+    const savedEntry = applyEntryAuditFields(
+      originalEntry,
+      mergedEntry,
+      actor,
+      operation,
+      options.workflow,
+    );
     const versionEvent = entryVersionChanged(originalEntry, savedEntry)
-      ? createEntryVersionEvent(originalEntry, savedEntry, actor.id)
+      ? createEntryVersionEvent(originalEntry, savedEntry, actor.id, {
+          operation: operation ?? "translation_edit",
+        })
       : undefined;
 
     entries[entryIndex] = savedEntry;
@@ -1077,6 +1158,7 @@ export async function restoreEntryVersion(
       actor.id,
       {
         type: "entry.restored",
+        operation: "restore",
         restoredFromEventId: versionEvent.id,
         restoredFromSnapshot: snapshot,
       },

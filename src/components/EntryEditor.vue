@@ -56,9 +56,11 @@ const canSaveAsTranslated = computed(
     props.entry?.status === "untranslated" &&
     canTranslateEntry(currentUser.value, props.entry),
 );
-const canProofread = computed(() =>
-  !hasUnsavedTarget.value &&
+const canProofreadWorkflow = computed(() =>
   canProofreadEntry(currentUser.value, props.entry, props.workflow),
+);
+const canProofread = computed(
+  () => Boolean(target.value.trim()) && canProofreadWorkflow.value,
 );
 const proofreadBlockMessage = computed(() => {
   if (
@@ -77,9 +79,11 @@ const proofreadBlockMessage = computed(() => {
     ),
   );
 });
-const canReview = computed(() =>
-  !hasUnsavedTarget.value &&
+const canReviewWorkflow = computed(() =>
   canReviewEntry(currentUser.value, props.entry, props.workflow),
+);
+const canReview = computed(
+  () => Boolean(target.value.trim()) && canReviewWorkflow.value,
 );
 const reviewBlockMessage = computed(() => {
   const reason = getReviewBlockReason(
@@ -92,6 +96,12 @@ const reviewBlockMessage = computed(() => {
     ? getReviewBlockMessage(reason)
     : "";
 });
+const canEditTarget = computed(
+  () =>
+    canSaveEntry.value ||
+    canProofreadWorkflow.value ||
+    canReviewWorkflow.value,
+);
 const canRollback = computed(() =>
   !hasUnsavedTarget.value &&
   canRollbackEntry(currentUser.value, props.entry),
@@ -121,17 +131,6 @@ const hasWorkflowActions = computed(
 const permissionMessage = computed(() =>
   props.entry && !canSaveEntry.value && !hasWorkflowActions.value
     ? "当前用户没有此操作权限。"
-    : "",
-);
-const workflowDraftMessage = computed(() =>
-  hasUnsavedTarget.value &&
-  props.entry &&
-  (
-    canProofreadEntry(currentUser.value, props.entry, props.workflow) ||
-    canReviewEntry(currentUser.value, props.entry, props.workflow) ||
-    canRollbackEntry(currentUser.value, props.entry)
-  )
-    ? "译文已修改，请先保存；保存后词条会退回已翻译状态，再重新校对或审核。"
     : "",
 );
 const workflowStatusLabel = computed(() =>
@@ -279,7 +278,7 @@ async function copyEntryId() {
         v-model="target"
         rows="6"
         placeholder="请输入译文"
-        :disabled="isSaving || entry.locked || !canSaveEntry"
+        :disabled="isSaving || entry.locked || !canEditTarget"
       />
     </label>
 
@@ -292,10 +291,6 @@ async function copyEntryId() {
     <p v-if="reviewBlockMessage" class="permission-message">
       {{ reviewBlockMessage }}
     </p>
-    <p v-if="workflowDraftMessage" class="permission-message">
-      {{ workflowDraftMessage }}
-    </p>
-
     <footer class="actions">
       <button
         v-if="canSaveEntry"
