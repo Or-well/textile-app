@@ -167,7 +167,7 @@ const historyRows = computed<HistoryRow[]>(() => {
 
 const tabs: Array<{ id: AssistTab; label: string }> = [
   { id: "terms", label: "术语" },
-  { id: "comments", label: "注释" },
+  { id: "comments", label: "批注" },
   { id: "context", label: "上下文" },
   { id: "history", label: "历史" },
 ];

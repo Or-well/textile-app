@@ -111,15 +111,15 @@ function riskLevelText(preview: ChangePackagePreview): string {
         <dd>{{ preview.changedEntries }}</dd>
       </div>
       <div>
-        <dt>新增评论</dt>
+        <dt>新增批注</dt>
         <dd>{{ preview.newCommentCount }}</dd>
       </div>
       <div>
-        <dt>评论状态更新</dt>
+        <dt>批注状态更新</dt>
         <dd>{{ preview.updatedCommentCount }}</dd>
       </div>
       <div>
-        <dt>评论删除事件</dt>
+        <dt>批注删除事件</dt>
         <dd>{{ preview.deletedCommentCount }}</dd>
       </div>
       <div>

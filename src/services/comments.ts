@@ -187,7 +187,7 @@ export async function addComment(
   const text = body.trim();
 
   if (!text) {
-    throw new Error("评论内容不能为空。");
+    throw new Error("批注内容不能为空。");
   }
 
   const actor = getCurrentUser();
@@ -233,7 +233,7 @@ export async function replyComment(
   const comments = await loadComments(entry);
 
   if (!comments.some((comment) => comment.id === parentCommentId)) {
-    throw new Error("没有找到要回复的评论。请刷新后再试。");
+    throw new Error("没有找到要回复的批注。请刷新后再试。");
   }
 
   return addComment(entry, body, { replyTo: parentCommentId });
@@ -255,7 +255,7 @@ async function updateCommentStatus(
   const commentIndex = comments.findIndex((comment) => comment.id === commentId);
 
   if (commentIndex < 0) {
-    throw new Error("没有找到要更新的评论。请刷新后再试。");
+    throw new Error("没有找到要更新的批注。请刷新后再试。");
   }
 
   const updatedAt = nowIso();
@@ -337,7 +337,7 @@ export async function deleteComment(
 
   if (commentsToDelete.some((comment) => !canDeleteComment(actor, comment))) {
     throw new Error(
-      "这条评论包含其他成员的回复，当前成员没有删除整组评论的权限。",
+      "这条批注包含其他成员的回复，当前成员没有删除整组批注的权限。",
     );
   }
 

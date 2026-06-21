@@ -119,7 +119,7 @@ function formatConflictReasons(conflict: ChangeConflict): string {
     context: "上下文",
   };
   const commentLabels: Record<string, string> = {
-    status: "评论状态",
+    status: "批注状态",
     resolved_at: "解决时间",
     resolved_by: "解决人",
   };
@@ -135,7 +135,7 @@ function formatConflictTitle(conflict: ChangeConflict): string {
     return `词条 ${conflict.entryId}`;
   }
 
-  return `评论 ${conflict.commentId}（词条 ${conflict.entryId}）`;
+  return `批注 ${conflict.commentId}（词条 ${conflict.entryId}）`;
 }
 
 function formatTarget(entry: Entry): string {

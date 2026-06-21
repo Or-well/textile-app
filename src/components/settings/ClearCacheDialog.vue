@@ -25,7 +25,7 @@ const forbiddenItems = [
   "词条",
   "译文",
   "任务",
-  "评论",
+  "批注",
   "术语",
   "签名私钥",
 ];
@@ -52,7 +52,7 @@ function toggleItem(itemId: CacheCleanupItemId, checked: boolean): void {
       <header>
         <h2 id="clear-cache-title">清理缓存</h2>
         <p>
-          可以清理程序运行产生的临时数据，不会删除项目词条、译文、术语、任务和评论。
+          可以清理程序运行产生的临时数据，不会删除项目词条、译文、术语、任务和批注。
         </p>
       </header>
 

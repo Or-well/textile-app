@@ -48,7 +48,7 @@ const canSubmit = computed(
         </ul>
         <strong>不会删除</strong>
         <ul>
-          <li>历史译文、评论、任务和审计日志中的成员 ID。</li>
+          <li>历史译文、批注、任务和审计日志中的成员 ID。</li>
           <li>成员自行保存在磁盘或其他设备上的私钥文件。</li>
         </ul>
       </section>

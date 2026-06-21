@@ -64,7 +64,7 @@ const hasUnsavedComment = computed(
     Boolean(disputeReason.value.trim()),
 );
 
-useAppDraft("评论或争议说明", hasUnsavedComment);
+useAppDraft("批注或争议说明", hasUnsavedComment);
 
 async function focusHighlightedComment() {
   if (!props.highlightCommentId || typeof document === "undefined") {
@@ -92,7 +92,7 @@ async function refreshComments() {
     await focusHighlightedComment();
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "评论无法读取。";
+      error instanceof Error ? error.message : "批注无法读取。";
   } finally {
     isLoading.value = false;
   }
@@ -132,10 +132,10 @@ async function handleAddComment() {
 
     comments.value = [...comments.value, comment];
     newComment.value = "";
-    message.value = "评论已添加。";
+    message.value = "批注已添加。";
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "评论添加失败。";
+      error instanceof Error ? error.message : "批注添加失败。";
   } finally {
     isSaving.value = false;
   }
@@ -194,10 +194,10 @@ async function handleResolveComment(comment: Comment) {
     comments.value = comments.value.map((item) =>
       item.id === updatedComment.id ? updatedComment : item,
     );
-    message.value = "评论已解决。";
+    message.value = "批注已解决。";
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "评论解决失败。";
+      error instanceof Error ? error.message : "批注解决失败。";
   } finally {
     isSaving.value = false;
   }
@@ -218,10 +218,10 @@ async function handleReopenComment(comment: Comment) {
     comments.value = comments.value.map((item) =>
       item.id === updatedComment.id ? updatedComment : item,
     );
-    message.value = "评论已重新打开。";
+    message.value = "批注已重新打开。";
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "评论重新打开失败。";
+      error instanceof Error ? error.message : "批注重新打开失败。";
   } finally {
     isSaving.value = false;
   }
@@ -239,7 +239,7 @@ async function handleDeleteComment(comment: Comment) {
 
   if (unauthorizedReply) {
     errorMessage.value =
-      "这条评论包含其他成员的回复，当前成员没有删除整组评论的权限。";
+      "这条批注包含其他成员的回复，当前成员没有删除整组批注的权限。";
     return;
   }
 
@@ -247,7 +247,7 @@ async function handleDeleteComment(comment: Comment) {
   const confirmed = window.confirm(
     replyCount > 0
       ? `删除后将同时删除 ${replyCount} 条回复，且只能从备份或修改包恢复。确认继续？`
-      : "删除后只能从备份或修改包恢复。确认删除这条评论？",
+      : "删除后只能从备份或修改包恢复。确认删除这条批注？",
   );
 
   if (!confirmed) {
@@ -261,10 +261,10 @@ async function handleDeleteComment(comment: Comment) {
   try {
     await deleteComment(props.entry, comment.id);
     await refreshComments();
-    message.value = "评论已删除。";
+    message.value = "批注已删除。";
   } catch (error) {
     errorMessage.value =
-      error instanceof Error ? error.message : "评论删除失败。";
+      error instanceof Error ? error.message : "批注删除失败。";
   } finally {
     isSaving.value = false;
   }
@@ -297,18 +297,18 @@ async function handleMarkDisputed() {
 
 <template>
   <section class="comment-panel">
-    <h3>当前词条评论</h3>
+    <h3>当前词条批注</h3>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="message" class="message">{{ message }}</p>
-    <p v-if="!canViewComments" class="empty-text">当前用户不能查看评论。</p>
+    <p v-if="!canViewComments" class="empty-text">当前用户不能查看批注。</p>
 
     <CommentEditor
       v-if="canCreateComments"
       v-model="newComment"
-      label="新增评论"
-      placeholder="写下评论"
-      submit-label="添加评论"
+      label="新增批注"
+      placeholder="写下批注"
+      submit-label="添加批注"
       :disabled="isSaving"
       @submit="handleAddComment"
     />
@@ -343,9 +343,9 @@ async function handleMarkDisputed() {
       </button>
     </div>
 
-    <p v-if="isLoading" class="empty-text">正在加载评论...</p>
+    <p v-if="isLoading" class="empty-text">正在加载批注...</p>
     <p v-else-if="canViewComments && comments.length === 0" class="empty-text">
-      暂无评论
+      暂无批注
     </p>
 
     <ul v-else-if="canViewComments" class="comment-list">

@@ -729,7 +729,7 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
     }
 
     conflicts.value = [];
-    const detail = `应用 ${result.appliedEntries} 条词条，处理 ${result.importedComments} 条评论、导入 ${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
+    const detail = `应用 ${result.appliedEntries} 条词条，处理 ${result.importedComments} 条批注、导入 ${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
     message.value =
       packageValidation.value?.packageType === "project_update"
         ? `项目更新完成：${detail}`
@@ -872,7 +872,7 @@ watch(
       >
         <h2>导出修改包</h2>
         <p class="section-note">
-          成员把自己的译文、评论、术语或任务修改导出为签名修改包。
+          成员把自己的译文、批注、术语或任务修改导出为签名修改包。
         </p>
 
         <div class="current-user-field">
@@ -1016,7 +1016,7 @@ watch(
         <section class="conflict-section">
           <h2>冲突处理</h2>
           <p class="section-note">
-            如果修改包和当前项目同时改过同一词条或评论状态，请先选择处理方式。
+            如果修改包和当前项目同时改过同一词条或批注状态，请先选择处理方式。
           </p>
 
         <ConflictResolver
@@ -1035,7 +1035,7 @@ watch(
           按当前设置生成成品包、项目清单和检查报告。
         </p>
         <p class="section-note">
-          成品文件用于发布，不用于恢复 Textile 项目，也不会完整保留校对人员、校对次数、评论和项目设置。
+          成品文件用于发布，不用于恢复 Textile 项目，也不会完整保留校对人员、校对次数、批注和项目设置。
         </p>
         <div class="release-settings-grid">
           <label>

@@ -98,7 +98,7 @@ const sectionLabels: Record<ProjectSection, string> = {
   entries: "词条",
   tasks: "任务",
   terms: "术语",
-  comments: "评论",
+  comments: "批注",
   stats: "统计",
   "import-export": "导入导出",
   settings: "设置",
@@ -726,7 +726,7 @@ function handleOpenCommentTarget(comment: Comment) {
   const fileId = comment.file_id || comment.entry_id.split(":")[0] || "";
 
   if (!fileId || !comment.entry_id) {
-    appErrorMessage.value = "这条评论缺少词条位置，无法跳转。";
+    appErrorMessage.value = "这条批注缺少词条位置，无法跳转。";
     return;
   }
 

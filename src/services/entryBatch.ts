@@ -232,7 +232,7 @@ function getOperationBlockReason(
     (operation === "set_disputed" || operation === "clear_disputed") &&
     !canCreateComment(actor)
   ) {
-    return "当前成员没有发表评论的权限";
+    return "当前成员没有发表批注的权限";
   }
 
   if (workflowOperation === "proofread") {

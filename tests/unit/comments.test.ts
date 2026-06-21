@@ -72,7 +72,7 @@ describe("comment deletion", () => {
 
     await expect(
       deleteComment(entry, "comment-parent"),
-    ).rejects.toThrow("没有删除整组评论的权限");
+    ).rejects.toThrow("没有删除整组批注的权限");
     await expect(
       storage.readJsonl<Comment>("comments/file-1/000001.jsonl"),
     ).resolves.toEqual(comments);

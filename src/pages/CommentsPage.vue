@@ -115,8 +115,8 @@ const visibleRows = computed(() => {
 });
 
 const filterTabs: Array<{ id: CommentFilter; label: string }> = [
-  { id: "all", label: "全部评论" },
-  { id: "recent", label: "最近评论" },
+  { id: "all", label: "全部批注" },
+  { id: "recent", label: "最近批注" },
   { id: "open", label: "讨论中" },
   { id: "resolved", label: "已解决" },
   { id: "disputed", label: "有争议" },
@@ -152,7 +152,7 @@ async function refreshComments() {
     comments.value = [];
     entries.value = [];
     errorMessage.value =
-      error instanceof Error ? error.message : "评论列表加载失败。";
+      error instanceof Error ? error.message : "批注列表加载失败。";
   } finally {
     isLoading.value = false;
   }
@@ -177,8 +177,8 @@ watch(
 <template>
   <main class="comments-page">
     <ProjectPageHeader
-      eyebrow="评论协作"
-      title="评论"
+      eyebrow="批注协作"
+      title="批注"
       summary="查看词条讨论、争议记录和成员协作反馈。"
     >
       <template #actions>
@@ -187,10 +187,10 @@ watch(
     </ProjectPageHeader>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
-    <p v-if="!canViewComments" class="empty-state">当前用户不能查看评论。</p>
+    <p v-if="!canViewComments" class="empty-state">当前用户不能查看批注。</p>
 
     <section v-if="project && canViewComments" class="comment-toolbar">
-      <div class="filter-tabs" role="tablist" aria-label="评论筛选">
+      <div class="filter-tabs" role="tablist" aria-label="批注筛选">
         <button
           v-for="tab in filterTabs"
           :key="tab.id"
@@ -230,14 +230,14 @@ watch(
 
         <label class="search-field">
           <span>关键词搜索</span>
-          <input v-model="keyword" type="search" placeholder="搜索评论、词条或成员" />
+          <input v-model="keyword" type="search" placeholder="搜索批注、词条或成员" />
         </label>
       </div>
     </section>
 
-    <p v-if="isLoading" class="empty-state">正在加载评论...</p>
+    <p v-if="isLoading" class="empty-state">正在加载批注...</p>
     <p v-else-if="project && canViewComments && visibleRows.length === 0" class="empty-state">
-      暂无符合条件的评论
+      暂无符合条件的批注
     </p>
 
     <ul v-else-if="project && canViewComments" class="comment-list">

@@ -1372,7 +1372,7 @@ function assertOrdinaryCommentPackageFields(
         normalizedPackageComment[field],
       )
     ) {
-      throw new Error(`普通修改包不能修改评论受保护字段：${field}。`);
+      throw new Error(`普通修改包不能修改批注受保护字段：${field}。`);
     }
   }
 }
@@ -1598,7 +1598,7 @@ async function assertOrdinaryPackageWithinTaskScope(
   for (const comments of Object.values(changePackage.comments)) {
     for (const comment of comments) {
       if (!allowedEntryIds.has(comment.entry_id)) {
-        throw new Error("普通成员修改包包含分配任务范围外的评论，不能导入。");
+        throw new Error("普通成员修改包包含分配任务范围外的批注，不能导入。");
       }
     }
   }
@@ -1608,7 +1608,7 @@ async function assertOrdinaryPackageWithinTaskScope(
       event.type === "comment.deleted" &&
       (!event.entry_id || !allowedEntryIds.has(event.entry_id))
     ) {
-      throw new Error("普通成员修改包包含分配任务范围外的评论删除操作，不能导入。");
+      throw new Error("普通成员修改包包含分配任务范围外的批注删除操作，不能导入。");
     }
   }
 
@@ -1651,7 +1651,7 @@ async function assertOrdinaryPackageComments(
     );
 
     if (packageById.size !== packageComments.length) {
-      throw new Error("普通修改包包含重复评论 ID，不能导入。");
+      throw new Error("普通修改包包含重复批注 ID，不能导入。");
     }
 
     for (const packageComment of packageComments) {
@@ -1666,7 +1666,7 @@ async function assertOrdinaryPackageComments(
           !canSubmitOtherMembersComments
         ) {
           throw new Error(
-            `评论 ${packageComment.id} 的状态修改人不是修改包提交者，不能导入。`,
+            `批注 ${packageComment.id} 的状态修改人不是修改包提交者，不能导入。`,
           );
         }
       } else if (
@@ -1674,7 +1674,7 @@ async function assertOrdinaryPackageComments(
         !canSubmitOtherMembersComments
       ) {
         throw new Error(
-          `新增评论 ${packageComment.id} 的作者不是修改包提交者，不能导入。`,
+          `新增批注 ${packageComment.id} 的作者不是修改包提交者，不能导入。`,
         );
       }
 
@@ -1684,7 +1684,7 @@ async function assertOrdinaryPackageComments(
         !packageById.has(packageComment.reply_to)
       ) {
         throw new Error(
-          `评论 ${packageComment.id} 引用的父评论不存在，不能导入。`,
+          `批注 ${packageComment.id} 引用的父批注不存在，不能导入。`,
         );
       }
     }
@@ -1698,14 +1698,14 @@ async function assertOrdinaryPackageComments(
     const commentId = getCommentIdFromEvent(event);
 
     if (!event.entry_id || !event.file_id || !commentId) {
-      throw new Error("评论删除事件缺少词条、文件或评论 ID，不能导入。");
+      throw new Error("批注删除事件缺少词条、文件或批注 ID，不能导入。");
     }
 
     if (
       event.user_id !== changePackage.manifest.user_id &&
       !canSubmitOtherMembersComments
     ) {
-      throw new Error("评论删除事件的操作人不是修改包提交者，不能导入。");
+      throw new Error("批注删除事件的操作人不是修改包提交者，不能导入。");
     }
   }
 }
@@ -2046,8 +2046,8 @@ async function precheckChangePackageImport(
   }
 
   for (const path of Object.keys(changePackage.comments)) {
-    assertPackagePath(path, "comments/", "评论", ".jsonl");
-    await assertJsonlTargetReadable<Comment>(storage, path, "评论");
+    assertPackagePath(path, "comments/", "批注", ".jsonl");
+    await assertJsonlTargetReadable<Comment>(storage, path, "批注");
   }
 
   for (const path of Object.keys(changePackage.terms)) {
@@ -3110,7 +3110,7 @@ async function findCommentPathForDeletion(
   const commentId = getCommentIdFromEvent(event);
 
   if (!event.file_id || !event.entry_id || !commentId) {
-    throw new Error("评论删除事件缺少词条、文件或评论 ID，不能导入。");
+    throw new Error("批注删除事件缺少词条、文件或批注 ID，不能导入。");
   }
 
   const directory = `comments/${event.file_id}`;
@@ -3536,7 +3536,7 @@ export async function applyChangePackage(
         }
 
         if (resolution?.action === "manual_merge") {
-          throw new Error("评论冲突只能保留当前项目或使用修改包版本。");
+          throw new Error("批注冲突只能保留当前项目或使用修改包版本。");
         }
 
         if (getCommentConflictReasons(currentComment, packageComment).length === 0) {
@@ -3612,7 +3612,7 @@ export async function applyChangePackage(
         )
       ) {
         throw new Error(
-          "普通修改包包含无权删除的评论或回复，不能导入。",
+          "普通修改包包含无权删除的批注或回复，不能导入。",
         );
       }
     }

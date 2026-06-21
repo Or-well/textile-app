@@ -34,7 +34,7 @@ const sectionLabels: Record<ProjectSection, string> = {
   entries: "词条",
   tasks: "任务",
   terms: "术语",
-  comments: "评论",
+  comments: "批注",
   stats: "统计",
   "import-export": "导入导出",
   settings: "设置",

@@ -27,7 +27,7 @@ const navItems: Array<{ section: ProjectSection; label: string }> = [
   { section: "entries", label: "词条" },
   { section: "tasks", label: "任务" },
   { section: "terms", label: "术语" },
-  { section: "comments", label: "评论" },
+  { section: "comments", label: "批注" },
   { section: "stats", label: "统计" },
   { section: "import-export", label: "导入导出" },
   { section: "settings", label: "设置" },

@@ -580,7 +580,7 @@ onMounted(loadPageData);
           v-model="batchNote"
           type="text"
           maxlength="500"
-          placeholder="统一说明（可选，将写入每条词条评论）"
+          placeholder="统一说明（可选，将写入每条词条批注）"
         />
         <button
           type="button"
