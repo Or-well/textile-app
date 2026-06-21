@@ -107,7 +107,7 @@ const emit = defineEmits<{
 
 const sectionItems: Array<{ key: SettingsSection; label: string }> = [
   { key: "project", label: "项目设置" },
-  { key: "keys", label: "我的身份密钥" },
+  { key: "keys", label: "身份密钥" },
   { key: "members", label: "成员管理" },
   { key: "roles", label: "角色与权限" },
   { key: "workflow", label: "工作流" },

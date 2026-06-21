@@ -1401,7 +1401,7 @@ manifest 示例：
 5. 若内容为空，拒绝导出。
 6. 对规范化 payload 计算 SHA-256。
 7. 构建 manifest。
-8. 如果要求签名，从内存 key manager 获取私钥。
+8. 如果要求签名或导出选项显式要求签名，从内存 key manager 获取私钥。
 9. 生成 ZIP Blob。
 10. member_changes 记录本次导出内容哈希。
 11. project_update 推进主项目 revision。
@@ -1409,7 +1409,7 @@ manifest 示例：
 普通修改包：
 
 - 当 `settings.collaboration.require_signed_change_packages` 为 `true` 时，member_changes、task_changes 和 maintenance_changes 必须由当前成员签名；缺少签名权限、公钥已撤销、未生成公钥或私钥未加载都会在 `exportChangePackage()` 中拒绝。
-- 当该设置为 `false` 或旧项目缺失该设置时，有私钥且有签名权限可签名；没有私钥仍可导出未签名包。
+- 当该设置为 `false` 或旧项目缺失该设置时，UI 允许成员选择是否签名；选择签名时 `exportChangePackage({ sign: true })` 仍会要求签名权限、有效公钥和已加载私钥，不能静默降级为未签名包。
 
 项目更新包：
 
@@ -1611,6 +1611,8 @@ const privateKeys = new Map<string, string>();
 公钥登记文件不包含私钥。导入时会检查 project ID、成员 ID、key ID 和持有证明；成员已有不同公钥时必须由 UI 二次确认后以轮换方式导入。已撤销的同一 key ID 不能重新登记，必须使用新密钥。
 
 强制签名项目中新增成员可选择“为该成员生成身份密钥”。service 只把公钥写入 `members.json`，返回一次性私钥文件给 UI 保存；私钥不得进入项目文件、`.hproj`、修改包或项目更新包。
+
+密钥撤销分为两类权限：普通成员可撤销自己的身份密钥，用于停止继续使用旧公钥；撤销其他成员身份密钥仍需要密钥管理权限。撤销只标记 `key_revoked_at` 并卸载本机私钥，不删除历史成员信息。
 
 风险：
 

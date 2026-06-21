@@ -90,6 +90,7 @@ const localMembers = ref<Member[]>([]);
 const tasks = ref<Task[]>([]);
 const selectedTaskIds = ref<string[]>([]);
 const exportMode = ref<ExportChangePackageMode>("member_changes");
+const signChangePackage = ref(true);
 const releaseFormat = ref<ReleaseExportFormat>("json");
 const releaseOnlyReviewed = ref(false);
 const releaseIncludeSource = ref(true);
@@ -157,6 +158,19 @@ const taskExportEmptyText = computed(() =>
 );
 const requiresSignedChangePackage = computed(() =>
   projectRequiresSignedChangePackages(props.project ?? localProject.value),
+);
+const mustSignChangePackage = computed(
+  () => exportMode.value === "project_update" || requiresSignedChangePackage.value,
+);
+const canChooseChangePackageSignature = computed(
+  () => exportMode.value !== "project_update" && !requiresSignedChangePackage.value,
+);
+const shouldSignChangePackage = computed(
+  () =>
+    mustSignChangePackage.value ||
+    (canChooseChangePackageSignature.value &&
+      signChangePackage.value &&
+      canSignPackages.value),
 );
 const projectRootForExport = computed(() => props.projectRoot ?? localRoot.value);
 const projectStorageForServices = computed(
@@ -415,13 +429,15 @@ async function handleOpenProject() {
   }
 }
 
-async function ensureRequiredSigningKey(): Promise<boolean> {
-  if (
-    exportMode.value !== "project_update" &&
-    !requiresSignedChangePackage.value
-  ) {
+async function ensureSigningKeyIfNeeded(shouldSign: boolean): Promise<boolean> {
+  if (!shouldSign) {
     return true;
   }
+
+  const requiredByProject = mustSignChangePackage.value;
+  const signingReason = requiredByProject
+    ? "当前项目要求修改包签名"
+    : "你已选择给本次修改包签名";
 
   if (!currentUser.value) {
     errorMessage.value = "请先登录。";
@@ -430,7 +446,7 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
 
   if (!canSignPackages.value) {
     errorMessage.value =
-      "当前项目要求修改包签名，但当前成员没有签名修改包的权限。请联系负责人调整权限。";
+      `${signingReason}，但当前成员没有签名修改包的权限。请联系负责人调整权限。`;
     return false;
   }
 
@@ -443,13 +459,13 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
   if (readiness === "private_key_not_loaded") {
     window.alert(
       [
-        "当前项目要求修改包带有成员签名。项目里已经登记了你的公钥，但这台设备没有加载对应私钥，无法给修改包签名。",
+        `${signingReason}。项目里已经登记了你的公钥，但这台设备没有加载对应私钥，无法给修改包签名。`,
         "",
-        "请到“设置 > 我的身份密钥”导入你的私钥文件后再导出。私钥文件通常由你自己之前导出，或由负责人创建账号时单独交给你；项目文件和 .hproj 不包含私钥。",
+        "请到“设置 > 身份密钥”导入你的私钥文件后再导出。私钥文件通常由你自己之前导出，或由负责人创建账号时单独交给你；项目文件和 .hproj 不包含私钥。",
       ].join("\n"),
     );
     errorMessage.value =
-      "请先到“我的身份密钥”导入私钥文件，再导出签名修改包。";
+      "请先到“身份密钥”导入私钥文件，再导出签名修改包。";
     return false;
   }
 
@@ -457,7 +473,7 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
     errorMessage.value =
       readiness === "revoked_key"
         ? "当前项目中你的公钥已被撤销，且当前成员没有生成新签名密钥的权限。请联系负责人重新登记公钥。"
-        : "当前项目要求修改包签名，但项目还没有登记你的公钥，且当前成员没有生成签名密钥的权限。请联系负责人登记公钥。";
+        : `${signingReason}，但项目还没有登记你的公钥，且当前成员没有生成签名密钥的权限。请联系负责人登记公钥。`;
     return false;
   }
 
@@ -466,18 +482,18 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
       ? [
           "当前项目中你的公钥已被撤销，不能再用对应私钥签名修改包。",
           "",
-          "如需继续导出，可以现在生成新的签名密钥。生成后新公钥会写入项目，新的私钥只会保存在本机；请稍后到“我的身份密钥”导出私钥文件并妥善保存。",
+          "如需继续导出，可以现在生成新的签名密钥。生成后新公钥会写入项目，新的私钥只会保存在本机；请稍后到“身份密钥”导出私钥文件并妥善保存。",
           "",
           "是否生成新的签名密钥并继续导出？",
         ].join("\n")
       : [
-          "当前项目要求修改包带有成员签名，但项目还没有登记你的公钥。",
+          `${signingReason}，但项目还没有登记你的公钥。`,
           "",
           "签名密钥由公钥和私钥组成：",
           "- 公钥保存在项目成员信息中，负责人用它验证你的修改包。",
           "- 私钥只保存在你的本机或私钥文件中，用来给修改包签名。",
           "",
-          "现在可以为你生成一组签名密钥。生成后公钥会写入项目，私钥只会保存在本机；请稍后到“我的身份密钥”导出私钥文件并妥善保存。",
+          "现在可以为你生成一组签名密钥。生成后公钥会写入项目，私钥只会保存在本机；请稍后到“身份密钥”导出私钥文件并妥善保存。",
           "",
           "是否生成签名密钥并继续导出？",
         ].join("\n");
@@ -501,9 +517,13 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
   localMembers.value = result.members;
   emit("membersUpdated", result.members);
   message.value =
-    "签名密钥已创建，公钥已写入项目。请稍后到“我的身份密钥”导出私钥文件并妥善保存。";
+    "签名密钥已创建，公钥已写入项目。请稍后到“身份密钥”导出私钥文件并妥善保存。";
 
   return true;
+}
+
+function handleSignChangePackageToggle(event: Event): void {
+  signChangePackage.value = (event.target as HTMLInputElement).checked;
 }
 
 async function handleExportChanges() {
@@ -525,7 +545,7 @@ async function handleExportChanges() {
     return;
   }
 
-  if (!(await ensureRequiredSigningKey())) {
+  if (!(await ensureSigningKeyIfNeeded(shouldSignChangePackage.value))) {
     return;
   }
 
@@ -539,7 +559,7 @@ async function handleExportChanges() {
         mode: exportMode.value,
         taskId: exportMode.value === "task_changes" ? selectedTaskIds.value[0] : undefined,
         taskIds: exportMode.value === "task_changes" ? selectedTaskIds.value : undefined,
-        sign: exportMode.value === "project_update" ? true : canSignPackages.value,
+        sign: shouldSignChangePackage.value,
         actor: currentUser.value,
       });
       const saved = await saveBlobWithConfirmation(
@@ -872,7 +892,7 @@ watch(
       >
         <h2>导出修改包</h2>
         <p class="section-note">
-          成员把自己的译文、批注、术语或任务修改导出为签名修改包。
+          成员把自己的译文、批注、术语或任务修改导出为修改包，可按项目设置签名。
         </p>
 
         <div class="current-user-field">
@@ -929,6 +949,33 @@ watch(
             {{ taskExportEmptyText }}
           </small>
         </label>
+
+        <div v-if="exportMode !== 'project_update'" class="signature-option">
+          <label class="checkbox-line">
+            <input
+              type="checkbox"
+              :checked="mustSignChangePackage || (signChangePackage && canSignPackages)"
+              :disabled="mustSignChangePackage || !canSignPackages"
+              @change="handleSignChangePackageToggle"
+            />
+            <span>
+              {{
+                mustSignChangePackage
+                  ? "当前项目要求给修改包签名"
+                  : "给本次修改包签名"
+              }}
+            </span>
+          </label>
+          <small v-if="canChooseChangePackageSignature" class="field-help">
+            不签名也可导出；签名后，导入方可以用项目中的成员公钥验证来源。
+          </small>
+          <small
+            v-if="!mustSignChangePackage && !canSignPackages"
+            class="field-help"
+          >
+            当前成员没有签名修改包权限，只能导出未签名修改包。
+          </small>
+        </div>
 
         <button
           v-if="canExportSelectedMode"
@@ -1256,6 +1303,11 @@ label {
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 10px;
+}
+
+.signature-option {
+  display: grid;
+  gap: 6px;
 }
 
 label span,

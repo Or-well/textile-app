@@ -10,7 +10,7 @@ import {
   verifyTextSignature,
 } from "./crypto";
 import { appendEventToRoot } from "./history";
-import { can } from "./permissions";
+import { can, canRevokeKey, canRevokeOwnKey } from "./permissions";
 import { saveMembers } from "./project";
 import type { ProjectDirectoryHandle } from "./projectFs";
 
@@ -76,6 +76,23 @@ function assertActor(actor: Member | null | undefined): asserts actor is Member 
 function assertPermission(actor: Member, action: string): void {
   if (!can(actor, action)) {
     throw new Error("当前成员没有管理身份密钥的权限。");
+  }
+}
+
+function assertCanRevokeOwnKey(actor: Member): void {
+  if (!canRevokeOwnKey(actor)) {
+    throw new Error("当前成员没有撤销自己身份密钥的权限。");
+  }
+}
+
+function assertCanRevokeMemberKey(actor: Member, memberId: string): void {
+  if (memberId === actor.id) {
+    assertCanRevokeOwnKey(actor);
+    return;
+  }
+
+  if (!canRevokeKey(actor)) {
+    throw new Error("当前成员没有撤销其他成员身份密钥的权限。");
   }
 }
 
@@ -302,7 +319,7 @@ export async function revokeOwnSigningKey(
   actor: Member | null | undefined,
 ): Promise<MemberKeyResult> {
   assertActor(actor);
-  assertPermission(actor, PERMISSION_ACTIONS.KEY_REVOKE);
+  assertCanRevokeOwnKey(actor);
 
   privateKeys.delete(actor.id);
 
@@ -324,7 +341,7 @@ export async function revokeMemberPublicKey(
   memberId: string,
 ): Promise<MemberKeyResult> {
   assertActor(actor);
-  assertPermission(actor, PERMISSION_ACTIONS.KEY_REVOKE);
+  assertCanRevokeMemberKey(actor, memberId);
 
   const target = findMember(members, memberId);
   const updatedMember: Member = {

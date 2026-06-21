@@ -7,6 +7,8 @@ import {
   hasLoadedPrivateKey,
   importMemberPublicKeyRegistrationFile,
   importOwnKeyFile,
+  revokeMemberPublicKey,
+  revokeOwnSigningKey,
   unloadOwnSigningPrivateKey,
 } from "../../src/services/keyManager";
 import { createProjectStorage } from "../../src/services/projectStorage";
@@ -161,6 +163,49 @@ describe("key manager", () => {
         await exported.blob.text(),
       ),
     ).rejects.toThrow("已经撤销");
+  });
+
+  it("allows ordinary members to revoke their own public key", async () => {
+    const root = createMemoryProjectDirectory({}, "self-revoke.hproj");
+    const storage = createProjectStorage(root);
+    const member = createMember(["translator"], {
+      id: "member-1",
+      name: "Translator",
+    });
+    const generated = await generateOwnSigningKey(root, [member], member);
+    const revoked = await revokeOwnSigningKey(
+      root,
+      generated.members,
+      generated.member,
+    );
+
+    expect(revoked.member.key_revoked_at).toBeTruthy();
+    expect(hasLoadedPrivateKey(revoked.member)).toBe(false);
+
+    const membersFile = await storage.readJson<{ members: Member[] }>("members.json");
+    expect(membersFile.members.find((item) => item.id === member.id)).toMatchObject({
+      key_id: generated.member.key_id,
+      key_revoked_at: revoked.member.key_revoked_at,
+    });
+  });
+
+  it("keeps ordinary members from revoking another member's public key", async () => {
+    const root = createMemoryProjectDirectory({}, "other-revoke.hproj");
+    const actor = createMember(["translator"], {
+      id: "member-1",
+      name: "Translator A",
+    });
+    const target = createMember(["translator"], {
+      id: "member-2",
+      name: "Translator B",
+      public_key: "public-key",
+      key_id: "key-1",
+      key_revoked_at: "",
+    });
+
+    await expect(
+      revokeMemberPublicKey(root, [actor, target], actor, target.id),
+    ).rejects.toThrow("撤销其他成员身份密钥");
   });
 
   it("does not reactivate a revoked key by registering the same public key", async () => {

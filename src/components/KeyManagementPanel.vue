@@ -20,6 +20,7 @@ import {
   canImportPrivateKey,
   canRegisterPublicKey,
   canRevokeKey,
+  canRevokeOwnKey,
   canRotateKey,
   canViewKey,
 } from "../services/permissions";
@@ -52,6 +53,7 @@ const canExportPrivate = computed(() => canExportPrivateKey(props.currentUser));
 const canRegisterPublic = computed(() => canRegisterPublicKey(props.currentUser));
 const canRotateKeys = computed(() => canRotateKey(props.currentUser));
 const canRevokeKeys = computed(() => canRevokeKey(props.currentUser));
+const canRevokeOwnKeys = computed(() => canRevokeOwnKey(props.currentUser));
 const ownPrivateLoaded = computed(() => hasLoadedPrivateKey(ownMember.value));
 const hasOwnPublicKey = computed(() =>
   Boolean(ownMember.value?.public_key && ownMember.value.key_id),
@@ -109,6 +111,12 @@ function keyDate(member: Member): string {
   const value = member.key_revoked_at || member.key_created_at || "";
 
   return value ? formatDateTime(value) || "时间无效" : "";
+}
+
+function canRevokeMemberKey(member: Member): boolean {
+  return member.id === props.currentUser?.id
+    ? canRevokeOwnKeys.value
+    : canRevokeKeys.value;
 }
 
 async function runAction(action: () => Promise<string>): Promise<void> {
@@ -419,7 +427,7 @@ async function handleImportPublicKey(event: Event) {
           v-if="hasActiveOwnPublicKey"
           class="danger-button"
           type="button"
-          :disabled="isWorking || !canRevokeKeys"
+          :disabled="isWorking || !canRevokeOwnKeys"
           @click="handleRevokeOwnKey"
         >
           撤销当前公钥
@@ -457,7 +465,7 @@ async function handleImportPublicKey(event: Event) {
             v-if="member.key_id && !member.key_revoked_at"
             class="secondary-button"
             type="button"
-            :disabled="isWorking || !canRevokeKeys"
+            :disabled="isWorking || !canRevokeMemberKey(member)"
             @click="handleRevokeMemberKey(member)"
           >
             撤销公钥

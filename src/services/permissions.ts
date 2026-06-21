@@ -824,6 +824,10 @@ export function canRevokeKey(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.KEY_REVOKE);
 }
 
+export function canRevokeOwnKey(user: Member | null | undefined): boolean {
+  return canRevokeKey(user) || canRotateKey(user);
+}
+
 export function canConfigureStats(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.PROJECT_MANAGE);
 }

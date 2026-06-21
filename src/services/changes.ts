@@ -439,9 +439,16 @@ function isSignableChangePackageMode(mode: ExportChangePackageMode): boolean {
   );
 }
 
-function getSigningReadinessMessage(readiness: SigningKeyReadiness): string {
+function getSigningReadinessMessage(
+  readiness: SigningKeyReadiness,
+  requiredByProject: boolean,
+): string {
+  const prefix = requiredByProject
+    ? "当前项目要求修改包签名"
+    : "已选择给修改包签名";
+
   if (readiness === "missing_public_key") {
-    return "当前项目要求修改包签名。请先创建身份密钥后再导出修改包。";
+    return `${prefix}。请先创建身份密钥后再导出修改包。`;
   }
 
   if (readiness === "revoked_key") {
@@ -449,24 +456,29 @@ function getSigningReadinessMessage(readiness: SigningKeyReadiness): string {
   }
 
   if (readiness === "private_key_not_loaded") {
-    return "当前项目要求修改包签名。请先导入私钥文件后再导出修改包。";
+    return `${prefix}。请先导入私钥文件后再导出修改包。`;
   }
 
   return "";
 }
 
-function assertCanCreateRequiredSignature(
+function assertCanCreateSignature(
   actor: Member,
   signer: Member | undefined,
+  requiredByProject: boolean,
 ): void {
   if (!canSignChangePackage(actor)) {
-    throw new Error("当前项目要求修改包签名，但当前成员没有签名修改包的权限。");
+    throw new Error(
+      requiredByProject
+        ? "当前项目要求修改包签名，但当前成员没有签名修改包的权限。"
+        : "当前成员没有签名修改包的权限，不能导出签名修改包。",
+    );
   }
 
   const readiness = getMemberSigningReadiness(signer);
 
   if (readiness !== "ready") {
-    throw new Error(getSigningReadinessMessage(readiness));
+    throw new Error(getSigningReadinessMessage(readiness, requiredByProject));
   }
 }
 
@@ -2326,13 +2338,13 @@ export async function exportChangePackage(
   const signer = members.find((member) => member.id === userId);
   const shouldSign = options.sign || requiresSignature;
 
-  if (requiresSignature) {
-    assertCanCreateRequiredSignature(actor, signer);
+  if (shouldSign) {
+    assertCanCreateSignature(actor, signer, requiresSignature);
   }
 
   const signature = shouldSign ? await createSignature(manifest, signer) : undefined;
 
-  if (requiresSignature && !signature) {
+  if (shouldSign && !signature) {
     throw new Error(
       options.mode === "project_update"
         ? "项目更新包签名失败。请先配置当前负责人的签名私钥。"

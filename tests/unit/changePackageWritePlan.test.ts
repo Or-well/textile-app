@@ -443,6 +443,20 @@ describe("ordinary change-package write plan", () => {
     ).rejects.toThrow("创建身份密钥");
   });
 
+  it("rejects optional signed package export when the signer key is not ready", async () => {
+    const fixture = await createExportFixture();
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      exportChangePackage(fixture.contributor.id, {
+        mode: "member_changes",
+        sign: true,
+        actor: fixture.contributor,
+      }),
+    ).rejects.toThrow("已选择给修改包签名");
+  });
+
   it("exports signed member packages after generating a signing key", async () => {
     const fixture = await createExportFixture({
       requireSignedChangePackages: true,
