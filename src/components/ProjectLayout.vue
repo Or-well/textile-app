@@ -5,6 +5,7 @@ import type { Member, ProjectConfig } from "../model/types";
 type ProjectSection =
   | "overview"
   | "files"
+  | "entries"
   | "tasks"
   | "terms"
   | "comments"
@@ -30,6 +31,7 @@ const emit = defineEmits<{
 const sectionLabels: Record<ProjectSection, string> = {
   overview: "概览",
   files: "文件",
+  entries: "词条",
   tasks: "任务",
   terms: "术语",
   comments: "评论",

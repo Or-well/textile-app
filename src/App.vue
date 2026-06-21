@@ -4,6 +4,7 @@ import ProjectLayout from "./components/ProjectLayout.vue";
 import UpdateNotice from "./components/UpdateNotice.vue";
 import CommentsPage from "./pages/CommentsPage.vue";
 import CreateProjectPage from "./pages/CreateProjectPage.vue";
+import EntriesPage from "./pages/EntriesPage.vue";
 import EntryPage from "./pages/EntryPage.vue";
 import FilesPage from "./pages/FilesPage.vue";
 import HomePage from "./pages/HomePage.vue";
@@ -19,6 +20,7 @@ import type { Comment, Member, ProjectConfig } from "./model/types";
 import { setChangesProjectStorage } from "./services/changes";
 import { setCommentsProjectStorage } from "./services/comments";
 import { setEntriesProjectStorage } from "./services/entries";
+import { setEntryBatchProjectStorage } from "./services/entryBatch";
 import { setExporterProjectStorage } from "./services/exporter";
 import { setHistoryProjectStorage } from "./services/history";
 import { loginMember } from "./services/auth";
@@ -62,6 +64,7 @@ import { setAppUpdateSafety } from "./services/updateSafety";
 type ProjectSection =
   | "overview"
   | "files"
+  | "entries"
   | "tasks"
   | "terms"
   | "comments"
@@ -88,6 +91,7 @@ interface ProjectSummary {
 const sectionLabels: Record<ProjectSection, string> = {
   overview: "概览",
   files: "文件",
+  entries: "词条",
   tasks: "任务",
   terms: "术语",
   comments: "评论",
@@ -167,6 +171,7 @@ function parseRoute(path: string) {
   const importExportPanel = ["export", "import"].includes(panel)
     ? (panel as ImportExportPanel)
     : undefined;
+  const entriesFileId = section === "entries" ? query.get("file") ?? "" : "";
 
   return {
     page: "project" as const,
@@ -177,6 +182,7 @@ function parseRoute(path: string) {
     entryIndex,
     assistTab,
     importExportPanel,
+    entriesFileId,
     commentId: query.get("comment") ?? "",
   };
 }
@@ -225,6 +231,7 @@ function updatePackedProjectNotice(project: OpenedProject | null) {
 
 function configureProjectServices(project: OpenedProject) {
   setEntriesProjectStorage(project.storage);
+  setEntryBatchProjectStorage(project.storage);
   setTermsProjectStorage(project.storage);
   setTasksProjectStorage(project.storage);
   setCommentsProjectStorage(project.storage);
@@ -669,6 +676,19 @@ function handleOpenFile(fileId: string) {
   );
 }
 
+function handleOpenEntries(fileId = "") {
+  if (!currentProject.value) {
+    navigate("/projects");
+    return;
+  }
+
+  const query = fileId ? `?file=${encodeURIComponent(fileId)}` : "";
+
+  navigate(
+    `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/entries${query}`,
+  );
+}
+
 function handleOpenTaskTarget(fileId: string, entryId: string, entryIndex: number) {
   if (!currentProject.value || !fileId) {
     return;
@@ -886,7 +906,18 @@ onBeforeUnmount(() => {
         :project-storage="currentProject.storage"
         :current-user="currentUser"
         @open-file="handleOpenFile"
+        @manage-entries="handleOpenEntries"
         @project-updated="handleProjectUpdated"
+      />
+
+      <EntriesPage
+        v-else-if="route.section === 'entries'"
+        :project="currentProject.config"
+        :members="currentProject.members"
+        :current-user="currentUser"
+        :initial-file-id="route.entriesFileId"
+        @open-entry="handleOpenTaskTarget"
+        @entries-changed="refreshProjectSummary"
       />
 
       <EntryPage

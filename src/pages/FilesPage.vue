@@ -60,6 +60,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   openFile: [fileId: string];
+  manageEntries: [fileId?: string];
   projectUpdated: [config: ProjectConfig];
 }>();
 
@@ -512,7 +513,16 @@ onMounted(loadFileSummaries);
         <p class="eyebrow">项目文件</p>
         <h1>文件</h1>
       </div>
-      <span class="file-count">{{ visibleFiles.length }} 个文件</span>
+      <div class="title-actions">
+        <span class="file-count">{{ visibleFiles.length }} 个文件</span>
+        <button
+          class="secondary-button"
+          type="button"
+          @click="emit('manageEntries')"
+        >
+          管理全部词条
+        </button>
+      </div>
     </div>
 
     <FileToolbar
@@ -588,6 +598,7 @@ onMounted(loadFileSummaries);
         :can-hide="canHide"
         :can-delete="canDelete"
         @open="emit('openFile', $event)"
+        @manage-entries="emit('manageEntries', $event)"
         @update-source="openDialog('update', $event)"
         @import-translation="openDialog('import-translation', $event)"
         @rename="handleRename"
@@ -618,6 +629,12 @@ onMounted(loadFileSummaries);
 .files-page {
   display: grid;
   gap: 16px;
+}
+
+.title-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .page-title {

@@ -2,6 +2,7 @@
 type ProjectSection =
   | "overview"
   | "files"
+  | "entries"
   | "tasks"
   | "terms"
   | "comments"
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 const navItems: Array<{ section: ProjectSection; label: string }> = [
   { section: "overview", label: "概览" },
   { section: "files", label: "文件" },
+  { section: "entries", label: "词条" },
   { section: "tasks", label: "任务" },
   { section: "terms", label: "术语" },
   { section: "comments", label: "评论" },

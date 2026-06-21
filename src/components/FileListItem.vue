@@ -20,6 +20,7 @@ defineProps<{
 
 const emit = defineEmits<{
   open: [fileId: string];
+  manageEntries: [fileId: string];
   updateSource: [fileId: string];
   importTranslation: [fileId: string];
   rename: [fileId: string];
@@ -54,6 +55,13 @@ const emit = defineEmits<{
     <span class="updated-at">{{ updatedAt }}</span>
 
     <div class="row-actions">
+      <button
+        class="text-button"
+        type="button"
+        @click="emit('manageEntries', file.id)"
+      >
+        管理词条
+      </button>
       <button
         class="text-button"
         type="button"

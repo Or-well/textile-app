@@ -175,6 +175,7 @@ const route = computed(() => parseRoute(routePath.value));
 | `/projects/:projectId` | 项目登录或概览 |
 | `/projects/:projectId/overview` | 概览 |
 | `/projects/:projectId/files` | 文件 |
+| `/projects/:projectId/entries` | 跨文件词条管理 |
 | `/projects/:projectId/files/:fileId` | 词条编辑 |
 | `/projects/:projectId/tasks` | 任务 |
 | `/projects/:projectId/terms` | 术语 |
@@ -185,6 +186,7 @@ const route = computed(() => parseRoute(routePath.value));
 
 词条路由 query：
 
+- 词条管理页使用 `file` 预选文件筛选。
 - `entry`：目标词条 ID。
 - `index`：目标词条序号。
 - `tab`：`terms`、`comments`、`context`、`history`。
@@ -261,6 +263,7 @@ const route = computed(() => parseRoute(routePath.value));
 多个 service 使用模块级当前项目根目录：
 
 - `setEntriesProjectRoot`
+- `setEntryBatchProjectRoot`
 - `setTermsProjectRoot`
 - `setTasksProjectRoot`
 - `setCommentsProjectRoot`
@@ -859,6 +862,29 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - service 内有模块级词条缓存，写入后必须同步更新。
 - 某些错误信息仍是英文 `Login required.`、`Permission denied.`。
+
+### `entryBatch.ts`
+
+`entryBatch.ts` 属于词条工作流的批量编排边界，不定义新的主状态，也不复制 `status.ts` 的状态转换。
+
+公开入口：
+
+- `previewEntryBatch()`：先校验磁盘 `project.json` 的项目 ID，再重新读取词条、历史事件和任务，逐条检查文件锁定/隐藏、任务范围、权限和工作流前置条件，返回可处理词条及跳过原因。
+- `executeEntryBatch()`：不信任旧预览，重新完成同一套预检后生成写入计划。
+
+当前操作包括校对、审核、退回已翻译、撤销审核、标记争议和解决争议。校对与审核继续使用首位翻译者、最近一轮首位校对者、多轮校对和争议阻断规则；回退继续使用既有审计清理语义。
+
+任务启用时，普通成员只允许处理分配给自己且状态为 `assigned` 或 `in_progress` 的任务范围；拥有 `task.manage` 的成员可以跨任务处理。任务关闭时只按词条操作权限判断。
+
+提交时：
+
+1. 按受影响文件生成完整 entries chunk 写入。
+2. 为工作流变化生成带同一 `batch_id` 的独立词条版本事件。
+3. 争议说明按词条写入评论文件，并生成评论和争议事件。
+4. 全部 entries、comments 和 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交。
+5. 计划成功后才更新 entries 缓存。
+
+该写入计划提供进程内补偿回滚，但不宣称具备断电事务能力。
 
 ## 23. `terms.ts`
 
@@ -1755,6 +1781,7 @@ store: projectHandles
 | `LoginPage` | auth 间接由 App 处理 |
 | `ProjectPage` | permissions、stats 数据由 App 提供 |
 | `FilesPage` | project、entries、permissions、stats |
+| `EntriesPage` | entries、entryBatch、tasks、permissions |
 | `EntryPage` | entries、comments、permissions |
 | `EntryAssistPanel` | terms、history、comments/context 子组件 |
 | `TasksPage` | tasks、permissions |
@@ -1786,6 +1813,8 @@ store: projectHandles
 - 新增词条页提示、工具栏或面板时，不能破坏 `height -> min-height: 0 -> overflow` 的高度链。
 - 搜索和筛选不引入分页；列表底部文案只表示匹配数量和总数。
 - 右侧术语、评论、上下文和历史面板与左侧列表共享同一桌面高度约束。
+
+词条管理页使用独立的全宽紧凑表格：筛选和批量工具栏保持在表格外，表头在表格滚动区内固定，分页区保持可见。桌面端默认每页 50 条，可切换 100 或 200 条；窄屏保留横向表格滚动，不把批量操作塞进原有三栏编辑侧栏。
 
 ## 47. PWA 与更新机制
 

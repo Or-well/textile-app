@@ -37,6 +37,7 @@ export interface EntryVersionDetail {
   package_id?: string;
   restored_from_event_id?: string;
   restored_from_snapshot?: EntryVersionSnapshot;
+  batch_id?: string;
 }
 
 export type EntryHistoryOperation =
@@ -195,6 +196,7 @@ export function createEntryVersionEvent(
     packageId?: string;
     restoredFromEventId?: string;
     restoredFromSnapshot?: EntryVersionSnapshot;
+    batchId?: string;
   } = {},
 ): EntryVersionEvent {
   return {
@@ -228,6 +230,7 @@ export function createEntryVersionEvent(
       ...(options.restoredFromSnapshot
         ? { restored_from_snapshot: options.restoredFromSnapshot }
         : {}),
+      ...(options.batchId ? { batch_id: options.batchId } : {}),
     },
   };
 }
