@@ -12,6 +12,7 @@ import {
   revokeMemberPublicKey,
   revokeOwnSigningKey,
   rotateOwnSigningKey,
+  unloadOwnSigningPrivateKey,
 } from "../services/keyManager";
 import {
   canExportPrivateKey,
@@ -276,6 +277,16 @@ async function handleImportKey(event: Event) {
   input.value = "";
 }
 
+function handleUnloadPrivateKey() {
+  if (!props.currentUser) {
+    return;
+  }
+
+  unloadOwnSigningPrivateKey(props.currentUser);
+  message.value = "本机内存中的私钥已卸载。再次签名时需要重新导入私钥文件。";
+  errorMessage.value = "";
+}
+
 async function handleImportPublicKey(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
@@ -379,6 +390,16 @@ async function handleImportPublicKey(event: Event) {
           @click="handleExportPublicKey"
         >
           导出公钥登记文件
+        </button>
+
+        <button
+          v-if="ownPrivateLoaded"
+          class="secondary-button"
+          type="button"
+          :disabled="isWorking"
+          @click="handleUnloadPrivateKey"
+        >
+          卸载本机私钥
         </button>
 
         <label

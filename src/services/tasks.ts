@@ -8,6 +8,10 @@ import type {
   TaskType,
 } from "../model/types";
 import { normalizeEntries } from "../model/status";
+import {
+  canTransitionTaskStatus,
+  type TaskStatusAction,
+} from "../model/taskStatus";
 import { createId } from "../utils/id";
 import {
   compareInstants,
@@ -98,37 +102,6 @@ const SUBMIT_METHODS: readonly TaskSubmitMethod[] = [
   "change_package",
   "owner_manual",
 ];
-const TASK_STATUS_TRANSITIONS: Record<string, Partial<Record<TaskStatus, readonly TaskStatus[]>>> = {
-  assign: {
-    unassigned: ["assigned"],
-    assigned: ["assigned", "unassigned"],
-    in_progress: ["assigned", "unassigned"],
-    submitted: ["assigned", "unassigned"],
-  },
-  claim: {
-    unassigned: ["in_progress"],
-  },
-  submit: {
-    assigned: ["submitted"],
-    in_progress: ["submitted"],
-  },
-  complete: {
-    submitted: ["completed"],
-  },
-  reclaim: {
-    assigned: ["unassigned"],
-    in_progress: ["unassigned"],
-    submitted: ["unassigned"],
-  },
-  reopen: {
-    submitted: ["assigned", "in_progress", "unassigned"],
-    completed: ["assigned", "in_progress", "unassigned"],
-  },
-  cancel_submit: {
-    submitted: ["assigned", "in_progress"],
-  },
-};
-
 let currentProjectStorage: ProjectStorage | null = null;
 let cachedTasks: Task[] | null = null;
 
@@ -180,7 +153,7 @@ async function assertTasksEnabled(): Promise<ProjectConfig> {
 }
 
 function assertTaskStatusTransition(
-  action: keyof typeof TASK_STATUS_TRANSITIONS,
+  action: TaskStatusAction,
   from: TaskStatus,
   to: TaskStatus,
 ): void {
@@ -188,9 +161,7 @@ function assertTaskStatusTransition(
     return;
   }
 
-  const allowed = TASK_STATUS_TRANSITIONS[action]?.[from] ?? [];
-
-  if (!allowed.includes(to)) {
+  if (!canTransitionTaskStatus(action, from, to)) {
     throw new Error(`任务状态不能从 ${from} 直接变为 ${to}。`);
   }
 }
@@ -707,28 +678,6 @@ export async function assignTask(
       status,
     });
   });
-}
-
-export async function claimTask(taskId: string, userId: string): Promise<Task> {
-  const actor = getTaskActor();
-
-  assertTaskWritePermission(canAssignTask(actor) || canManageTask(actor));
-  await assertTasksEnabled();
-
-  return updateTaskById(taskId, (task) =>
-    {
-      if (task.assignee) {
-        throw new Error("Task already assigned.");
-      }
-
-      assertTaskStatusTransition("claim", task.status, "in_progress");
-
-      return mergeTaskPatch(task, {
-        assignee: actor.id || userId,
-        status: "in_progress",
-      });
-    },
-  );
 }
 
 export async function submitTask(taskId: string): Promise<Task> {

@@ -4,6 +4,8 @@ import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import TaskEditDialog from "../components/TaskEditDialog.vue";
 import TaskListItem from "../components/TaskListItem.vue";
 import TaskPanel from "../components/TaskPanel.vue";
+import { buildMemberOptions } from "../model/memberOptions";
+import { canTransitionTaskStatus } from "../model/taskStatus";
 import type { Member, ProjectConfig, Task, TaskStatus } from "../model/types";
 import {
   canAssignTask,
@@ -21,7 +23,6 @@ import {
 import {
   assignTask,
   cancelTaskSubmission,
-  claimTask,
   completeTask,
   createTask,
   deleteTask,
@@ -65,6 +66,12 @@ const editingTask = ref<Task>();
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const canView = computed(() => canViewTask(currentUser.value));
 const canCreate = computed(() => canCreateTask(currentUser.value));
+const memberFilterOptions = computed(() =>
+  buildMemberOptions(
+    props.members,
+    tasks.value.map((task) => task.assignee),
+  ),
+);
 
 const filters: Array<{ value: TaskFilter; label: string }> = [
   { value: "mine", label: "我的任务" },
@@ -109,36 +116,33 @@ const selectedTaskActions = computed(() => {
   return {
     update: Boolean(task && canUpdateTask(currentUser.value)),
     assign: Boolean(task && canAssignTask(currentUser.value)),
-    claim: false,
     submit: Boolean(
       task &&
         canSubmitTask(currentUser.value) &&
         (isAssignee || canManageTask(currentUser.value)) &&
-        (task.status === "assigned" ||
-          task.status === "in_progress"),
+        canTransitionTaskStatus("submit", task.status),
     ),
     cancelSubmit: Boolean(
       task &&
         canSubmitTask(currentUser.value) &&
         (isAssignee || canManageTask(currentUser.value)) &&
-        task.status === "submitted",
+        canTransitionTaskStatus("cancel_submit", task.status),
     ),
     complete: Boolean(
       task &&
         canCompleteTask(currentUser.value) &&
-        task.status !== "completed",
+        canTransitionTaskStatus("complete", task.status),
     ),
     reclaim: Boolean(
       task &&
         canReclaimTask(currentUser.value) &&
-        task.status !== "completed",
+        canTransitionTaskStatus("reclaim", task.status),
     ),
     delete: Boolean(task && canDeleteTask(currentUser.value)),
     reopen: Boolean(
       task &&
         canReopenTask(currentUser.value) &&
-        (task.status === "submitted" ||
-          task.status === "completed"),
+        canTransitionTaskStatus("reopen", task.status),
     ),
   };
 });
@@ -258,17 +262,6 @@ function handleAssignTask(taskId: string, assignee: string) {
   void runTaskAction(() => assignTask(taskId, assignee), "任务已分配。");
 }
 
-function handleClaimTask(taskId: string) {
-  const userId = currentUser.value?.id;
-
-  if (!userId) {
-    errorMessage.value = "请先登录成员。";
-    return;
-  }
-
-  void runTaskAction(() => claimTask(taskId, userId), "任务已领取。");
-}
-
 function handleSubmitTask(taskId: string) {
   void runTaskAction(() => submitTask(taskId), "任务已提交。");
 }
@@ -375,11 +368,11 @@ watch(visibleTasks, (nextTasks) => {
             <option value="all">全部成员</option>
             <option value="">未分配</option>
             <option
-              v-for="member in members.filter((item) => item.active)"
+              v-for="member in memberFilterOptions"
               :key="member.id"
               :value="member.id"
             >
-              {{ member.name }}
+              {{ member.label }}
             </option>
           </select>
         </label>
@@ -428,7 +421,6 @@ watch(visibleTasks, (nextTasks) => {
         @edit-task="openEditDialog"
         @delete-task="handleDeleteTask"
         @assign-task="handleAssignTask"
-        @claim-task="handleClaimTask"
         @submit-task="handleSubmitTask"
         @cancel-task-submission="handleCancelTaskSubmission"
         @complete-task="handleCompleteTask"

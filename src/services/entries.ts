@@ -6,6 +6,7 @@ import {
 import type {
   Entry,
   Member,
+  ProjectConfig,
   ProjectEvent,
   ProjectWorkflowSettings,
 } from "../model/types";
@@ -21,6 +22,7 @@ import {
 } from "../model/status";
 import { parseJsonl } from "../utils/jsonl";
 import { parseCsvRecords } from "../utils/csv";
+import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import {
   createEntryVersionEvent,
@@ -34,6 +36,7 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import { assertEntryContentWritable } from "./entryAccess";
 import {
   assertCan,
   canEditEntry,
@@ -903,6 +906,20 @@ export async function importEntryTranslations(
   options: WriteEntriesOptions = {},
 ): Promise<TranslationImportResult> {
   const storage = getProjectStorage();
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const projectFile = project.files.find((file) => file.id === fileId);
+
+  if (!projectFile) {
+    throw new Error("没有找到要导入译文的文件。");
+  }
+
+  if (projectFile.locked || projectFile.hidden) {
+    throw new Error(
+      projectFile.locked
+        ? "当前文件已锁定，不能导入译文。"
+        : "当前文件已隐藏，不能导入译文。",
+    );
+  }
   const entries = await loadEntries(fileId);
   const rows = parseTranslationRows(text, fileName);
   const entriesByKey = new Map(entries.map((entry) => [entry.key, entry]));
@@ -1038,6 +1055,7 @@ export async function updateEntryContext(
       : PERMISSION_ACTIONS.CONTEXT_DELETE;
 
     assertCan(actor, action);
+    await assertEntryContentWritable(storage, originalEntry);
 
     const savedEntry: Entry = {
       ...originalEntry,
@@ -1087,6 +1105,8 @@ export async function saveEntry(
       proofread_count: historyAudit.proofreadCount,
       reviewed_by: historyAudit.reviewedBy,
     });
+
+    await assertEntryContentWritable(storage, originalEntry);
 
     if (entry.context !== originalEntry.context) {
       throw new Error("上下文必须通过上下文编辑入口修改。");
@@ -1174,6 +1194,8 @@ export async function restoreEntryVersion(
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
 
+    await assertEntryContentWritable(storage, originalEntry);
+
     if (!canRestoreEntryVersion(actor, originalEntry)) {
       throw new Error("当前成员没有恢复译文历史版本的权限。");
     }
@@ -1228,4 +1250,93 @@ export async function restoreEntryVersion(
   }
 
   throw new Error("没有找到要恢复的词条。请重新打开项目后再试。");
+}
+
+export interface EntryAccessUpdate {
+  locked?: boolean;
+  hidden?: boolean;
+}
+
+export async function updateEntryAccess(
+  entryId: string,
+  patch: EntryAccessUpdate,
+  actor: Member | null | undefined = getCurrentUser(),
+): Promise<Entry> {
+  const storage = getProjectStorage();
+  const writeActor = resolveActor(actor);
+  const fileId = getFileIdFromEntryId(entryId);
+  const entryDirectory = `entries/${fileId}`;
+  const chunkFiles = await listEntryChunkFiles(storage, fileId);
+  const project = await storage.readJson<ProjectConfig>("project.json");
+
+  if (!project.files.some((file) => file.id === fileId)) {
+    throw new Error("词条所属文件不存在，无法更新管理状态。");
+  }
+
+  if (patch.locked === undefined && patch.hidden === undefined) {
+    throw new Error("没有提供要更新的词条管理状态。");
+  }
+
+  if (patch.locked !== undefined) {
+    assertCan(writeActor, PERMISSION_ACTIONS.ENTRY_LOCK, project);
+  }
+
+  if (patch.hidden !== undefined) {
+    assertCan(writeActor, PERMISSION_ACTIONS.ENTRY_HIDE, project);
+  }
+
+  for (const chunkFile of chunkFiles) {
+    const chunkPath = `${entryDirectory}/${chunkFile}`;
+    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
+    const entryIndex = entries.findIndex((entry) => entry.id === entryId);
+
+    if (entryIndex < 0) {
+      continue;
+    }
+
+    const originalEntry = normalizeEntry(entries[entryIndex]);
+    const updatedEntry: Entry = {
+      ...originalEntry,
+      ...patch,
+      updated_at: nowIso(),
+      updated_by: writeActor.id,
+    };
+    const events = await loadProjectEvents(storage);
+    const changedFields = Object.entries(patch)
+      .filter(([key, value]) => originalEntry[key as keyof Entry] !== value)
+      .map(([key]) => key);
+
+    if (changedFields.length === 0) {
+      return originalEntry;
+    }
+
+    entries[entryIndex] = updatedEntry;
+    const writePlan = createProjectWritePlan(storage);
+
+    writePlan.writeJsonl(chunkPath, entries);
+    writePlan.writeJsonl("logs/events.jsonl", [
+      ...events,
+      {
+        id: createId("event"),
+        type: "entry.access_updated",
+        user_id: writeActor.id,
+        created_at: nowIso(),
+        entry_id: entryId,
+        file_id: fileId,
+        detail: {
+          before_locked: originalEntry.locked,
+          after_locked: updatedEntry.locked,
+          before_hidden: originalEntry.hidden,
+          after_hidden: updatedEntry.hidden,
+          changed_fields: changedFields,
+        },
+      },
+    ]);
+    await writePlan.execute();
+    cacheEntry(updatedEntry);
+
+    return updatedEntry;
+  }
+
+  throw new Error("没有找到要更新管理状态的词条。请重新打开项目后再试。");
 }

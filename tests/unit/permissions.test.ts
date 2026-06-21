@@ -38,6 +38,33 @@ describe("effective permissions", () => {
     expect(can(translator, PERMISSION_ACTIONS.ENTRY_REVIEW)).toBe(false);
   });
 
+  it("adds entry management defaults only for legacy permission configs", () => {
+    const owner = createMember(["owner"]);
+    const legacyProject = createProject({
+      settings: {
+        role_permissions: {
+          owner: [PERMISSION_ACTIONS.PROJECT_MANAGE],
+        },
+      },
+    });
+    const currentProject = createProject({
+      settings: {
+        role_permissions: {
+          owner: [
+            PERMISSION_ACTIONS.PROJECT_MANAGE,
+            PERMISSION_ACTIONS.MEMBER_MANAGE,
+            PERMISSION_ACTIONS.ROLE_MANAGE,
+            PERMISSION_ACTIONS.PROJECT_BACKUP,
+          ],
+        },
+        permission_schema_version: 2,
+      },
+    });
+
+    expect(can(owner, PERMISSION_ACTIONS.ENTRY_LOCK, legacyProject)).toBe(true);
+    expect(can(owner, PERMISSION_ACTIONS.ENTRY_LOCK, currentProject)).toBe(false);
+  });
+
   it("applies explicit allows and gives denies precedence", () => {
     const allowed = createMember(["readonly"], {
       allow_permissions: [PERMISSION_ACTIONS.ENTRY_EDIT],

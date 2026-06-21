@@ -18,6 +18,7 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { appendEvent } from "./history";
+import { assertEntryContentWritable } from "./entryAccess";
 
 let currentProjectStorage: ProjectStorage | null = null;
 
@@ -125,8 +126,12 @@ async function updateEntry(
       continue;
     }
 
+    const originalEntry = normalizeEntry(chunk.entries[entryIndex]);
+
+    await assertEntryContentWritable(storage, originalEntry);
+
     const updatedEntry: Entry = {
-      ...normalizeEntry(chunk.entries[entryIndex]),
+      ...originalEntry,
       ...patch,
       updated_at: nowIso(),
       updated_by: userId,

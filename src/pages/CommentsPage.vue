@@ -2,6 +2,10 @@
 import { computed, ref, watch } from "vue";
 import CommentListItem from "../components/CommentListItem.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
+import {
+  buildMemberOptions,
+  getMemberDisplayName,
+} from "../model/memberOptions";
 import type { Comment, Entry, Member, ProjectConfig } from "../model/types";
 import { loadAllComments } from "../services/comments";
 import { loadAllEntries } from "../services/entries";
@@ -39,6 +43,12 @@ const errorMessage = ref("");
 
 const currentUser = computed(() => getCurrentUser());
 const canViewComments = computed(() => canViewComment(currentUser.value));
+const memberFilterOptions = computed(() =>
+  buildMemberOptions(
+    props.members,
+    comments.value.map((comment) => comment.user_id),
+  ),
+);
 const entryById = computed(
   () => new Map(entries.value.map((entry) => [entry.id, entry])),
 );
@@ -117,7 +127,7 @@ function getFileName(fileId: string): string {
 }
 
 function getMemberName(memberId: string): string {
-  return props.members.find((member) => member.id === memberId)?.name || memberId;
+  return getMemberDisplayName(props.members, memberId);
 }
 
 async function refreshComments() {
@@ -208,8 +218,12 @@ watch(
           <span>按成员筛选</span>
           <select v-model="selectedMemberId">
             <option value="all">全部成员</option>
-            <option v-for="member in members" :key="member.id" :value="member.id">
-              {{ member.name }}
+            <option
+              v-for="member in memberFilterOptions"
+              :key="member.id"
+              :value="member.id"
+            >
+              {{ member.label }}
             </option>
           </select>
         </label>

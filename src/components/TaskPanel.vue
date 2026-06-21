@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import {
+  buildMemberOptions,
+  getMemberDisplayName,
+} from "../model/memberOptions";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
 import {
@@ -17,7 +21,6 @@ const props = defineProps<{
   actions: {
     update: boolean;
     assign: boolean;
-    claim: boolean;
     submit: boolean;
     cancelSubmit: boolean;
     complete: boolean;
@@ -31,7 +34,6 @@ const emit = defineEmits<{
   editTask: [task: Task];
   deleteTask: [taskId: string];
   assignTask: [taskId: string, assignee: string];
-  claimTask: [taskId: string];
   submitTask: [taskId: string];
   cancelTaskSubmission: [taskId: string];
   completeTask: [taskId: string];
@@ -64,15 +66,14 @@ const submitMethodLabels: Record<Task["submit_method"], string> = {
 };
 
 const assigneeName = computed(() => {
-  if (!props.task?.assignee) {
-    return "未分配";
-  }
-
-  return (
-    props.members.find((member) => member.id === props.task?.assignee)?.name ||
-    props.task.assignee
-  );
+  return getMemberDisplayName(props.members, props.task?.assignee ?? "");
 });
+const assignmentOptions = computed(() =>
+  buildMemberOptions(
+    props.members,
+    props.task?.assignee ? [props.task.assignee] : [],
+  ),
+);
 
 const fileName = computed(() => {
   if (props.task?.file_ids?.length) {
@@ -241,11 +242,12 @@ watch(
           <select v-model="selectedAssignee" :disabled="isBusy">
             <option value="">未分配</option>
             <option
-              v-for="member in members.filter((item) => item.active)"
+              v-for="member in assignmentOptions"
               :key="member.id"
               :value="member.id"
+              :disabled="!member.active"
             >
-              {{ member.name }}
+              {{ member.label }}
             </option>
           </select>
           <button
@@ -259,15 +261,6 @@ watch(
         </div>
 
         <div class="action-buttons">
-          <button
-            v-if="actions.claim"
-            class="primary-button"
-            type="button"
-            :disabled="isBusy"
-            @click="emit('claimTask', task.id)"
-          >
-            领取任务
-          </button>
           <button
             v-if="actions.submit"
             class="primary-button"

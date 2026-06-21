@@ -79,6 +79,12 @@ function assertPermission(actor: Member, action: string): void {
   }
 }
 
+function assertRevokedKeyIsNotReactivated(member: Member, keyId: string): void {
+  if (member.key_revoked_at && member.key_id === keyId) {
+    throw new Error("这把身份密钥已经撤销，不能重新启用。请生成或登记一把新密钥。");
+  }
+}
+
 function createPrivateKeyFile(member: Member, privateKey: string): MemberKeyFile {
   if (!member.public_key || !member.key_id) {
     throw new Error("成员尚未登记公钥，无法生成私钥文件。");
@@ -166,6 +172,21 @@ async function updateOwnPublicKey(
 
 export function getSigningPrivateKeyForMember(memberId: string): string | null {
   return privateKeys.get(memberId) ?? null;
+}
+
+export function unloadSigningPrivateKeyForMember(memberId: string): void {
+  privateKeys.delete(memberId);
+}
+
+export function unloadOwnSigningPrivateKey(
+  actor: Member | null | undefined,
+): void {
+  assertActor(actor);
+  privateKeys.delete(actor.id);
+}
+
+export function clearLoadedSigningPrivateKeys(): void {
+  privateKeys.clear();
 }
 
 export function hasLoadedPrivateKey(member: Member | null | undefined): boolean {
@@ -475,6 +496,7 @@ export async function importMemberPublicKeyRegistrationFile(
   }
 
   const target = findMember(members, file.member_id);
+  assertRevokedKeyIsNotReactivated(target, file.key_id);
   const hasDifferentPublicKey =
     Boolean(target.public_key && target.key_id) &&
     (target.public_key !== file.public_key || target.key_id !== file.key_id);
@@ -539,6 +561,9 @@ export async function importOwnKeyFile(
   }
 
   await assertKeyFileMatches(keyFile);
+  const member = findMember(members, actor.id);
+
+  assertRevokedKeyIsNotReactivated(member, keyFile.key_id);
   privateKeys.set(actor.id, keyFile.private_key);
 
   return updateOwnPublicKey(

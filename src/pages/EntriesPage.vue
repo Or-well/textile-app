@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
+import {
+  buildMemberOptions,
+  getMemberDisplayName,
+} from "../model/memberOptions";
 import { PERMISSION_ACTIONS } from "../model/permissions";
 import {
   getEntryWorkflowLabel,
@@ -108,8 +112,11 @@ const noticeMessage = ref("");
 const fileById = computed(
   () => new Map(props.project.files.map((file) => [file.id, file])),
 );
-const memberById = computed(
-  () => new Map(props.members.map((member) => [member.id, member])),
+const assigneeFilterOptions = computed(() =>
+  buildMemberOptions(
+    props.members,
+    entries.value.map((entry) => entry.assignee),
+  ),
 );
 const availableBatchActions = computed(() =>
   batchActionOptions.filter((option) =>
@@ -227,11 +234,7 @@ const batchNeedsNote = computed(
 );
 
 function getMemberName(memberId: string): string {
-  if (!memberId) {
-    return "未分配";
-  }
-
-  return memberById.value.get(memberId)?.name ?? memberId;
+  return getMemberDisplayName(props.members, memberId);
 }
 
 function getFileName(fileId: string): string {
@@ -496,11 +499,11 @@ onMounted(loadPageData);
           <option value="all">全部负责人</option>
           <option value="">未分配</option>
           <option
-            v-for="member in members.filter((item) => item.active)"
+            v-for="member in assigneeFilterOptions"
             :key="member.id"
             :value="member.id"
           >
-            {{ member.name }}
+            {{ member.label }}
           </option>
         </select>
       </label>

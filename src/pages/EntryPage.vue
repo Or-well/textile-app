@@ -6,7 +6,12 @@ import EntrySideList from "../components/EntrySideList.vue";
 import { useAppDraft } from "../composables/useAppDraft";
 import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
-import { getEntryById, loadEntries, saveEntry } from "../services/entries";
+import {
+  getEntryById,
+  loadEntries,
+  saveEntry,
+  updateEntryAccess,
+} from "../services/entries";
 import { getCurrentUser } from "../services/permissions";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
@@ -38,6 +43,17 @@ const savedMessage = ref("");
 
 const currentFile = computed(() =>
   props.project.files.find((file) => file.id === props.fileId),
+);
+const selectedEffectiveEntry = computed(() =>
+  selectedEntry.value
+    ? {
+        ...selectedEntry.value,
+        locked:
+          selectedEntry.value.locked || currentFile.value?.locked === true,
+        hidden:
+          selectedEntry.value.hidden || currentFile.value?.hidden === true,
+      }
+    : undefined,
 );
 
 const filteredEntries = computed(() => {
@@ -121,13 +137,8 @@ async function loadFileEntries() {
   draftTarget.value = "";
 
   try {
-    const file = currentFile.value;
     const loadedEntries = await loadEntries(props.fileId);
-    entries.value = loadedEntries.map((entry) => ({
-      ...entry,
-      locked: entry.locked || Boolean(file?.locked),
-      hidden: entry.hidden || Boolean(file?.hidden),
-    }));
+    entries.value = loadedEntries;
     selectedEntry.value = getRequestedEntry(entries.value) ?? entries.value[0];
     draftTarget.value = selectedEntry.value?.target ?? "";
     if (props.targetAssistTab) {
@@ -242,6 +253,46 @@ async function handleResolveDispute(entry: Entry) {
   }
 }
 
+async function handleToggleEntryLocked(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const updatedEntry = await updateEntryAccess(entry.id, {
+      locked: !entry.locked,
+    });
+
+    replaceEntry(updatedEntry);
+    savedMessage.value = updatedEntry.locked ? "词条已锁定。" : "词条已解锁。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "更新词条锁定状态失败。";
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+async function handleToggleEntryHidden(entry: Entry) {
+  isSaving.value = true;
+  errorMessage.value = "";
+  savedMessage.value = "";
+
+  try {
+    const updatedEntry = await updateEntryAccess(entry.id, {
+      hidden: !entry.hidden,
+    });
+
+    replaceEntry(updatedEntry);
+    savedMessage.value = updatedEntry.hidden ? "词条已隐藏。" : "词条已取消隐藏。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "更新词条隐藏状态失败。";
+  } finally {
+    isSaving.value = false;
+  }
+}
+
 async function handleSaveAndNext(entry: Entry) {
   isSaving.value = true;
   errorMessage.value = "";
@@ -343,6 +394,8 @@ onMounted(loadFileEntries);
           :status-filter="statusFilter"
           :total-count="entries.length"
           :workflow="project.settings.workflow"
+          :file-locked="currentFile?.locked"
+          :file-hidden="currentFile?.hidden"
           @select="handleSelectEntry"
           @update-search-text="searchText = $event"
           @update-status-filter="statusFilter = $event"
@@ -355,6 +408,8 @@ onMounted(loadFileEntries);
           :can-go-previous="canGoPrevious"
           :can-go-next="canGoNext"
           :workflow="project.settings.workflow"
+          :file-locked="currentFile?.locked"
+          :file-hidden="currentFile?.hidden"
           @save="handleSaveEntry"
           @save-next="handleSaveAndNext"
           @previous="selectEntryByOffset(-1)"
@@ -363,11 +418,13 @@ onMounted(loadFileEntries);
           @workflow-status="handleWorkflowStatus"
           @mark-disputed="handleMarkDisputed"
           @resolve-dispute="handleResolveDispute"
+          @toggle-locked="handleToggleEntryLocked"
+          @toggle-hidden="handleToggleEntryHidden"
           @open-context="handleOpenContext"
         />
 
         <EntryAssistPanel
-          :entry="selectedEntry"
+          :entry="selectedEffectiveEntry"
           :draft-target="draftTarget"
           :active-tab="assistTab"
           :highlight-comment-id="targetCommentId"

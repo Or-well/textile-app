@@ -90,6 +90,7 @@ export interface ProjectConfig {
     export?: ReleaseExportSettings;
     collaboration?: ProjectCollaborationSettings;
     role_permissions?: RolePermissions;
+    permission_schema_version?: number;
   };
 }
 

@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { addMemberWithGeneratedKey } from "../../src/services/auth";
 import {
+  exportOwnKeyFile,
   exportOwnPublicKeyRegistrationFile,
   generateOwnSigningKey,
+  hasLoadedPrivateKey,
   importMemberPublicKeyRegistrationFile,
+  importOwnKeyFile,
+  unloadOwnSigningPrivateKey,
 } from "../../src/services/keyManager";
 import { createProjectStorage } from "../../src/services/projectStorage";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
@@ -134,5 +138,71 @@ describe("key manager", () => {
         key_id: secondKey.member.key_id,
       },
     });
+  });
+
+  it("does not reactivate a revoked key by importing the same private key", async () => {
+    const root = createMemoryProjectDirectory({}, "revoked-private.hproj");
+    const member = createMember(["translator"], {
+      id: "member-1",
+      name: "Translator",
+    });
+    const generated = await generateOwnSigningKey(root, [member], member);
+    const exported = exportOwnKeyFile(generated.members, generated.member);
+    const revokedMember = {
+      ...generated.member,
+      key_revoked_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    await expect(
+      importOwnKeyFile(
+        root,
+        [revokedMember],
+        revokedMember,
+        await exported.blob.text(),
+      ),
+    ).rejects.toThrow("已经撤销");
+  });
+
+  it("does not reactivate a revoked key by registering the same public key", async () => {
+    const sourceRoot = createMemoryProjectDirectory({}, "revoked-public-source.hproj");
+    const targetRoot = createMemoryProjectDirectory({}, "revoked-public-target.hproj");
+    const member = createMember(["translator"], {
+      id: "member-1",
+      name: "Translator",
+    });
+    const owner = createMember(["owner"], { id: "owner-1", name: "Owner" });
+    const generated = await generateOwnSigningKey(sourceRoot, [member], member);
+    const registration = await exportOwnPublicKeyRegistrationFile(
+      generated.members,
+      generated.member,
+      "project-1",
+    );
+    const revokedMember = {
+      ...generated.member,
+      key_revoked_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    await expect(
+      importMemberPublicKeyRegistrationFile(
+        targetRoot,
+        [owner, revokedMember],
+        owner,
+        "project-1",
+        await registration.blob.text(),
+      ),
+    ).rejects.toThrow("已经撤销");
+  });
+
+  it("unloads an imported private key from application memory", async () => {
+    const root = createMemoryProjectDirectory({}, "unload-private.hproj");
+    const member = createMember(["translator"], {
+      id: "member-1",
+      name: "Translator",
+    });
+    const generated = await generateOwnSigningKey(root, [member], member);
+
+    expect(hasLoadedPrivateKey(generated.member)).toBe(true);
+    unloadOwnSigningPrivateKey(generated.member);
+    expect(hasLoadedPrivateKey(generated.member)).toBe(false);
   });
 });

@@ -5,6 +5,7 @@ import { nowIso } from "../utils/time";
 import { appendEventToRoot } from "./history";
 import {
   generateMemberSigningKey,
+  unloadSigningPrivateKeyForMember,
   type MemberKeyFile,
 } from "./keyManager";
 import { can, hasRole } from "./permissions";
@@ -484,6 +485,73 @@ export async function disableMember(
   return writeMembersAndEvent(root, nextMembers, actor.id, "member.disabled", {
     member_id: targetId,
   });
+}
+
+export async function enableMember(
+  root: ProjectDirectoryHandle,
+  members: Member[],
+  actor: Member,
+  targetId: string,
+): Promise<Member[]> {
+  assertCanManageMembers(actor);
+
+  const target = findMember(members, targetId);
+
+  assertCanManageTarget(actor, target);
+
+  if (target.active) {
+    throw new Error("当前成员已经启用。");
+  }
+
+  const nextMembers = updateMember(members, targetId, (member) => ({
+    ...member,
+    active: true,
+    updated_at: nowIso(),
+  }));
+
+  return writeMembersAndEvent(root, nextMembers, actor.id, "member.enabled", {
+    member_id: targetId,
+  });
+}
+
+export async function deleteMember(
+  root: ProjectDirectoryHandle,
+  members: Member[],
+  actor: Member,
+  targetId: string,
+): Promise<Member[]> {
+  assertCanManageMembers(actor);
+
+  const target = findMember(members, targetId);
+
+  assertCanManageTarget(actor, target);
+
+  if (target.id === actor.id) {
+    throw new Error("不能删除当前登录的成员。");
+  }
+
+  if (isOwner(target)) {
+    throw new Error("不能删除当前负责人。请先转让负责人。");
+  }
+
+  if (target.active) {
+    throw new Error("请先禁用该成员，再执行永久删除。");
+  }
+
+  const nextMembers = members.filter((member) => member.id !== targetId);
+  const savedMembers = await writeMembersAndEvent(
+    root,
+    nextMembers,
+    actor.id,
+    "member.deleted",
+    {
+      member_id: target.id,
+    },
+  );
+
+  unloadSigningPrivateKeyForMember(target.id);
+
+  return savedMembers;
 }
 
 export async function transferOwner(

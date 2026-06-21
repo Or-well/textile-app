@@ -39,6 +39,10 @@ import {
   type OpenedProject,
 } from "./services/project";
 import { openUserManual } from "./services/helpManual";
+import {
+  clearLoadedSigningPrivateKeys,
+  unloadSigningPrivateKeyForMember,
+} from "./services/keyManager";
 import type { ProjectPackagePreview } from "./services/projectPackage";
 import { deleteCurrentProjectSource } from "./services/projectDeletion";
 import {
@@ -230,6 +234,7 @@ function updatePackedProjectNotice(project: OpenedProject | null) {
 }
 
 function configureProjectServices(project: OpenedProject) {
+  clearLoadedSigningPrivateKeys();
   setEntriesProjectStorage(project.storage);
   setEntryBatchProjectStorage(project.storage);
   setTermsProjectStorage(project.storage);
@@ -551,6 +556,10 @@ async function handleLogin(memberName: string, password: string) {
 }
 
 function handleLogout() {
+  if (currentUser.value?.id) {
+    unloadSigningPrivateKeyForMember(currentUser.value.id);
+  }
+
   if (currentProject.value) {
     clearProjectSession(currentProject.value.config.project_id);
   }
@@ -561,6 +570,8 @@ function handleLogout() {
 }
 
 function handleCurrentSessionCleared() {
+  clearLoadedSigningPrivateKeys();
+
   if (currentProject.value) {
     clearProjectSession(currentProject.value.config.project_id);
   }
@@ -648,6 +659,7 @@ async function handleDeleteProjectRequested() {
       currentRecentRecordId.value || project.config.project_id,
     );
     clearProjectSession(project.config.project_id);
+    clearLoadedSigningPrivateKeys();
     setCurrentUser(null);
     currentUser.value = null;
     currentProject.value = null;

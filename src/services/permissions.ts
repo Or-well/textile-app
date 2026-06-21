@@ -34,6 +34,8 @@ const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 
 let currentUser: Member | null = readStoredUser();
 let currentRolePermissions: RolePermissions | undefined;
+let currentPermissionSchemaVersion = 1;
+const CURRENT_PERMISSION_SCHEMA_VERSION = 2;
 
 function toSessionMember(user: Member): Member {
   const sessionMember = { ...user };
@@ -118,6 +120,13 @@ function getRolePermissionsSource(project?: ProjectConfig): RolePermissions | un
   return project?.settings.role_permissions ?? currentRolePermissions;
 }
 
+function getPermissionSchemaVersion(project?: ProjectConfig): number {
+  return (
+    project?.settings.permission_schema_version ??
+    (project ? 1 : currentPermissionSchemaVersion)
+  );
+}
+
 const CHANGE_PACKAGE_PROTOCOL_PERMISSIONS = [
   PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES,
   PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MEMBER_CHANGES,
@@ -125,8 +134,14 @@ const CHANGE_PACKAGE_PROTOCOL_PERMISSIONS = [
   PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
 ] as const;
 
+const ENTRY_MANAGEMENT_COMPATIBILITY_PERMISSIONS = [
+  PERMISSION_ACTIONS.ENTRY_LOCK,
+  PERMISSION_ACTIONS.ENTRY_HIDE,
+] as const;
+
 function getConfiguredRolePermissions(project?: ProjectConfig): RolePermissions {
   const configured = getRolePermissionsSource(project);
+  const permissionSchemaVersion = getPermissionSchemaVersion(project);
   const defaults = getDefaultRolePermissions();
   const rolePermissions: RolePermissions = {};
   const hasProtocolPermissions = ROLE_ORDER.some((role) =>
@@ -147,10 +162,19 @@ function getConfiguredRolePermissions(project?: ProjectConfig): RolePermissions 
             ),
           )
         : [];
+    const entryManagementCompatibilityPermissions =
+      configured && permissionSchemaVersion < CURRENT_PERMISSION_SCHEMA_VERSION
+        ? (defaults[role] ?? []).filter((permission) =>
+            ENTRY_MANAGEMENT_COMPATIBILITY_PERMISSIONS.includes(
+              permission as (typeof ENTRY_MANAGEMENT_COMPATIBILITY_PERMISSIONS)[number],
+            ),
+          )
+        : [];
 
     rolePermissions[role] = uniquePermissions([
       ...configuredPermissions,
       ...compatibilityPermissions,
+      ...entryManagementCompatibilityPermissions,
     ]);
   }
 
@@ -180,6 +204,8 @@ function applySystemSafetyPermissions(
 
 export function setPermissionProject(project: ProjectConfig | null | undefined): void {
   currentRolePermissions = project?.settings.role_permissions;
+  currentPermissionSchemaVersion =
+    project?.settings.permission_schema_version ?? 1;
 }
 
 export function getDefaultRolePermissions(): RolePermissions {
@@ -601,6 +627,14 @@ export function canRestoreEntryVersion(
   );
 }
 
+export function canLockEntry(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.ENTRY_LOCK);
+}
+
+export function canHideEntry(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.ENTRY_HIDE);
+}
+
 export function canMarkDisputed(
   user: Member | null | undefined,
   entry: Entry | null | undefined,
@@ -644,10 +678,6 @@ export function canUpdateTask(user: Member | null | undefined): boolean {
 
 export function canAssignTask(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.TASK_ASSIGN) || canManageTask(user);
-}
-
-export function canClaimTask(user: Member | null | undefined): boolean {
-  return can(user, PERMISSION_ACTIONS.TASK_CLAIM);
 }
 
 export function canSubmitTask(user: Member | null | undefined): boolean {

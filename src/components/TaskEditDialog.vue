@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useAppDraft } from "../composables/useAppDraft";
+import { buildMemberOptions } from "../model/memberOptions";
 import type {
   Member,
   ProjectConfig,
@@ -85,6 +86,12 @@ const dueErrorMessage = ref("");
 const hasLegacyDueAt = ref(false);
 const initialFormSnapshot = ref("");
 const isInitializingForm = ref(false);
+const assignmentOptions = computed(() =>
+  buildMemberOptions(
+    props.members,
+    props.task?.assignee ? [props.task.assignee] : [],
+  ),
+);
 
 const proofreadRoundOptions = computed(() => {
   const required = props.project.settings.workflow?.proofread_required ?? 1;
@@ -352,11 +359,12 @@ watch(
             <select v-model="form.assignee">
               <option value="">未分配</option>
               <option
-                v-for="member in members.filter((item) => item.active)"
+                v-for="member in assignmentOptions"
                 :key="member.id"
                 :value="member.id"
+                :disabled="!member.active"
               >
-                {{ member.name }}
+                {{ member.label }}
               </option>
             </select>
           </label>

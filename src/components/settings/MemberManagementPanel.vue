@@ -8,7 +8,9 @@ import {
   canManageMember,
   canTransferOwner,
   changeOwnPassword,
+  deleteMember,
   disableMember,
+  enableMember,
   resetMemberPassword,
   transferOwner,
   updateMemberRoles,
@@ -17,6 +19,7 @@ import { memberKeyFileToBlob } from "../../services/keyManager";
 import { can, isOwnerMember } from "../../services/permissions";
 import type { ProjectDirectoryHandle } from "../../services/projectFs";
 import { saveBlob } from "../../utils/saveBlob";
+import MemberDeletionDialog from "./MemberDeletionDialog.vue";
 
 const props = defineProps<{
   members: Member[];
@@ -61,6 +64,7 @@ const newPassword = ref("");
 const ownerTargetId = ref("");
 const roleDrafts = reactive<Record<string, Role[]>>({});
 const resetDrafts = reactive<Record<string, string>>({});
+const memberPendingDeletion = ref<Member | null>(null);
 const isWorking = ref(false);
 const message = ref("");
 const errorMessage = ref("");
@@ -143,7 +147,10 @@ function toggleMemberRole(memberId: string, role: Role): void {
   roleDrafts[memberId] = toggleRole(roleDrafts[memberId] ?? [], role);
 }
 
-async function runMemberAction(action: () => Promise<Member[]>, success: string) {
+async function runMemberAction(
+  action: () => Promise<Member[]>,
+  success: string,
+): Promise<boolean> {
   isWorking.value = true;
   clearAlerts();
 
@@ -152,9 +159,11 @@ async function runMemberAction(action: () => Promise<Member[]>, success: string)
 
     emit("membersUpdated", members);
     message.value = success;
+    return true;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "成员管理操作失败。请稍后再试。";
+    return false;
   } finally {
     isWorking.value = false;
   }
@@ -243,6 +252,50 @@ async function handleDisableMember(member: Member) {
     () => disableMember(getRoot(), props.members, getActor(), member.id),
     "成员已禁用。",
   );
+}
+
+async function handleEnableMember(member: Member) {
+  if (
+    !window.confirm(
+      `确认要重新启用成员“${member.name}”吗？启用后，该成员可使用原密码重新登录。`,
+    )
+  ) {
+    return;
+  }
+
+  await runMemberAction(
+    () => enableMember(getRoot(), props.members, getActor(), member.id),
+    "成员已重新启用。",
+  );
+}
+
+function requestDeleteMember(member: Member): void {
+  clearAlerts();
+  memberPendingDeletion.value = member;
+}
+
+function cancelDeleteMember(): void {
+  if (!isWorking.value) {
+    memberPendingDeletion.value = null;
+    clearAlerts();
+  }
+}
+
+async function handleDeleteMember(): Promise<void> {
+  const member = memberPendingDeletion.value;
+
+  if (!member) {
+    return;
+  }
+
+  const deleted = await runMemberAction(
+    () => deleteMember(getRoot(), props.members, getActor(), member.id),
+    "成员账户已永久删除。历史译文、评论、任务和审计记录仍保留原成员 ID。",
+  );
+
+  if (deleted) {
+    memberPendingDeletion.value = null;
+  }
 }
 
 async function handleChangeOwnPassword() {
@@ -412,17 +465,35 @@ watch(
             </button>
 
             <button
+              v-if="member.active"
               class="danger-button"
               type="button"
               :disabled="
                 isWorking ||
-                !member.active ||
                 !canManageMember(props.currentUser, member) ||
                 isOwnerMember(member)
               "
               @click="handleDisableMember(member)"
             >
               禁用成员
+            </button>
+            <button
+              v-else
+              class="secondary-button"
+              type="button"
+              :disabled="isWorking || !canManageMember(props.currentUser, member)"
+              @click="handleEnableMember(member)"
+            >
+              重新启用
+            </button>
+            <button
+              v-if="!member.active"
+              class="danger-button"
+              type="button"
+              :disabled="isWorking || !canManageMember(props.currentUser, member)"
+              @click="requestDeleteMember(member)"
+            >
+              永久删除
             </button>
           </div>
         </article>
@@ -521,6 +592,16 @@ watch(
         </button>
       </div>
     </section>
+
+    <MemberDeletionDialog
+      v-if="memberPendingDeletion"
+      :key="memberPendingDeletion.id"
+      :member-name="memberPendingDeletion.name"
+      :busy="isWorking"
+      :error-message="errorMessage"
+      @cancel="cancelDeleteMember"
+      @confirm="handleDeleteMember"
+    />
   </div>
 </template>
 

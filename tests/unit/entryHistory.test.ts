@@ -11,7 +11,7 @@ import {
 } from "../../src/services/history";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
-import { createEntry, createMember } from "./factories";
+import { createEntry, createMember, createProject } from "./factories";
 import { FailingProjectStorage } from "./failingProjectStorage";
 
 async function createEntryStorage(entryOverrides: Partial<Entry> = {}) {
@@ -27,6 +27,21 @@ async function createEntryStorage(entryOverrides: Partial<Entry> = {}) {
   const root = createMemoryProjectDirectory(
     {
       "logs/events.jsonl": "\n",
+      "project.json": JSON.stringify(
+        createProject({
+          files: [
+            {
+              id: "file-1",
+              name: "File",
+              source_path: "source/file.txt",
+              entries_path: "entries/file-1",
+              type: "txt",
+              hidden: false,
+              locked: false,
+            },
+          ],
+        }),
+      ),
     },
     "entry-history.hproj",
   );

@@ -9,6 +9,8 @@ import {
 } from "../model/status";
 import {
   canEditEntry,
+  canHideEntry,
+  canLockEntry,
   canMarkDisputed,
   canProofreadEntry,
   canResolveDispute,
@@ -29,6 +31,8 @@ const props = defineProps<{
   canGoPrevious?: boolean;
   canGoNext?: boolean;
   workflow?: ProjectWorkflowSettings;
+  fileLocked?: boolean;
+  fileHidden?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -38,6 +42,8 @@ const emit = defineEmits<{
   markDisputed: [entry: Entry];
   resolveDispute: [entry: Entry];
   openContext: [];
+  toggleLocked: [entry: Entry];
+  toggleHidden: [entry: Entry];
   previous: [];
   next: [];
   draftTargetChanged: [target: string];
@@ -47,6 +53,15 @@ const target = ref("");
 const copyMessage = ref("");
 
 const currentUser = computed(() => getCurrentUser());
+const effectiveEntry = computed(() =>
+  props.entry
+    ? {
+        ...props.entry,
+        locked: props.entry.locked || props.fileLocked === true,
+        hidden: props.entry.hidden || props.fileHidden === true,
+      }
+    : undefined,
+);
 const hasUnsavedTarget = computed(
   () => Boolean(props.entry) && target.value !== props.entry?.target,
 );
@@ -56,15 +71,15 @@ const draftHasWorkflowTarget = computed(() =>
       hasWorkflowTarget({ source: props.entry.source, target: target.value }),
   ),
 );
-const canSaveEntry = computed(() => canEditEntry(currentUser.value, props.entry));
+const canSaveEntry = computed(() => canEditEntry(currentUser.value, effectiveEntry.value));
 const canSaveAsTranslated = computed(
   () =>
     draftHasWorkflowTarget.value &&
     props.entry?.status === "untranslated" &&
-    canTranslateEntry(currentUser.value, props.entry),
+    canTranslateEntry(currentUser.value, effectiveEntry.value),
 );
 const canProofreadWorkflow = computed(() =>
-  canProofreadEntry(currentUser.value, props.entry, props.workflow),
+  canProofreadEntry(currentUser.value, effectiveEntry.value, props.workflow),
 );
 const canProofread = computed(
   () => draftHasWorkflowTarget.value && canProofreadWorkflow.value,
@@ -81,13 +96,13 @@ const proofreadBlockMessage = computed(() => {
   return getProofreadBlockMessage(
     getProofreadBlockReason(
       currentUser.value,
-      props.entry,
+      effectiveEntry.value,
       props.workflow,
     ),
   );
 });
 const canReviewWorkflow = computed(() =>
-  canReviewEntry(currentUser.value, props.entry, props.workflow),
+  canReviewEntry(currentUser.value, effectiveEntry.value, props.workflow),
 );
 const canReview = computed(
   () => draftHasWorkflowTarget.value && canReviewWorkflow.value,
@@ -95,7 +110,7 @@ const canReview = computed(
 const reviewBlockMessage = computed(() => {
   const reason = getReviewBlockReason(
     currentUser.value,
-    props.entry,
+    effectiveEntry.value,
     props.workflow,
   );
 
@@ -111,7 +126,7 @@ const canEditTarget = computed(
 );
 const canRollback = computed(() =>
   !hasUnsavedTarget.value &&
-  canRollbackEntry(currentUser.value, props.entry),
+  canRollbackEntry(currentUser.value, effectiveEntry.value),
 );
 const canRollbackToTranslated = computed(
   () => props.entry?.status === "proofread" && canRollback.value,
@@ -120,11 +135,13 @@ const canRollbackToProofread = computed(
   () => props.entry?.status === "reviewed" && canRollback.value,
 );
 const canMarkEntryDisputed = computed(() =>
-  canMarkDisputed(currentUser.value, props.entry),
+  canMarkDisputed(currentUser.value, effectiveEntry.value),
 );
 const canResolveEntryDispute = computed(() =>
-  canResolveDispute(currentUser.value, props.entry),
+  canResolveDispute(currentUser.value, effectiveEntry.value),
 );
+const canManageLock = computed(() => canLockEntry(currentUser.value));
+const canManageHidden = computed(() => canHideEntry(currentUser.value));
 const hasWorkflowActions = computed(
   () =>
     canSaveAsTranslated.value ||
@@ -277,6 +294,49 @@ async function copyEntryId() {
     <section class="source-panel">
       <span class="field-label">原文</span>
       <p>{{ entry.source }}</p>
+    </section>
+
+    <section class="entry-access-panel">
+      <div>
+        <strong>词条管理状态</strong>
+        <p>
+          {{
+            fileLocked
+              ? "所属文件已锁定"
+              : entry.locked
+                ? "词条已锁定"
+                : "未锁定"
+          }}
+          ·
+          {{
+            fileHidden
+              ? "所属文件已隐藏"
+              : entry.hidden
+                ? "词条已隐藏"
+                : "正常显示"
+          }}
+        </p>
+      </div>
+      <div class="entry-access-actions">
+        <button
+          v-if="canManageLock"
+          class="secondary-button"
+          type="button"
+          :disabled="isSaving"
+          @click="emit('toggleLocked', entry)"
+        >
+          {{ entry.locked ? "解锁词条" : "锁定词条" }}
+        </button>
+        <button
+          v-if="canManageHidden"
+          class="secondary-button"
+          type="button"
+          :disabled="isSaving"
+          @click="emit('toggleHidden', entry)"
+        >
+          {{ entry.hidden ? "取消隐藏词条" : "隐藏词条" }}
+        </button>
+      </div>
     </section>
 
     <label class="target-panel">
@@ -513,6 +573,29 @@ h1 {
   padding: 16px;
   border-radius: 8px;
   background: #f8fafb;
+}
+
+.entry-access-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #d7dde5;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.entry-access-panel p {
+  margin: 3px 0 0;
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.entry-access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .field-label,

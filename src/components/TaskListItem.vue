@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { getMemberDisplayName } from "../model/memberOptions";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
 
@@ -31,7 +32,7 @@ const typeLabels: Record<Task["type"], string> = {
 };
 
 function getMemberName(memberId: string): string {
-  return props.members.find((member) => member.id === memberId)?.name || "未分配";
+  return getMemberDisplayName(props.members, memberId);
 }
 
 function getFileName(fileId: string): string {

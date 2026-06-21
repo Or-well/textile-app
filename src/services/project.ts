@@ -297,6 +297,8 @@ function normalizeProjectConfig(config: ProjectConfig): ProjectConfig {
         ? normalizeProjectCollaborationSettings(config.settings.collaboration)
         : undefined,
       role_permissions: config.settings?.role_permissions,
+      permission_schema_version:
+        config.settings?.permission_schema_version ?? 1,
     },
   };
 }
@@ -395,6 +397,7 @@ export async function saveRolePermissions(
     settings: {
       ...project.settings,
       role_permissions: nextRolePermissions,
+      permission_schema_version: 2,
     },
   };
   const nextActor = members.find((member) => member.id === actor.id) ?? actor;
@@ -1083,6 +1086,7 @@ export async function createProjectInStorage(
           DEFAULT_NEW_PROJECT_COLLABORATION_SETTINGS.require_signed_change_packages,
       },
       role_permissions: getDefaultRolePermissions(),
+      permission_schema_version: 2,
     },
   };
   const members = [owner];

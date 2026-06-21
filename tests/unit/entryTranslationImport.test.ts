@@ -6,11 +6,30 @@ import {
 } from "../../src/services/entries";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
-import { createEntry } from "./factories";
+import { createEntry, createProject } from "./factories";
 import { FailingProjectStorage } from "./failingProjectStorage";
 
 async function createImportStorage(entries: Entry[]) {
-  const root = createMemoryProjectDirectory({}, "translation-import.hproj");
+  const root = createMemoryProjectDirectory(
+    {
+      "project.json": JSON.stringify(
+        createProject({
+          files: [
+            {
+              id: "file-1",
+              name: "File",
+              source_path: "source/file.txt",
+              entries_path: "entries/file-1",
+              type: "txt",
+              hidden: false,
+              locked: false,
+            },
+          ],
+        }),
+      ),
+    },
+    "translation-import.hproj",
+  );
   const storage = createProjectStorage(root);
 
   await storage.writeJsonl("entries/file-1/chunk_0001.jsonl", entries);
