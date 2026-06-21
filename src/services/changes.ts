@@ -402,7 +402,7 @@ function getSigningReadinessMessage(readiness: SigningKeyReadiness): string {
   }
 
   if (readiness === "private_key_not_loaded") {
-    return "当前项目要求修改包签名。请先导入身份密钥文件后再导出修改包。";
+    return "当前项目要求修改包签名。请先导入私钥文件后再导出修改包。";
   }
 
   return "";

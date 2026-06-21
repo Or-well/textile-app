@@ -1495,6 +1495,7 @@ ECDSA P-256 + SHA-256
 - 生成、轮换和撤销当前成员密钥。
 - 撤销其他成员公钥。
 - 导出和导入私钥文件。
+- 导出和导入公钥登记文件。
 - 写成员公钥和事件日志。
 - 提供 `getMemberSigningReadiness()` 给修改包导出和 UI 复用，统一区分未生成公钥、密钥已撤销、私钥未加载和可签名状态。
 
@@ -1528,6 +1529,27 @@ const privateKeys = new Map<string, string>();
 3. 用私钥签名测试 payload。
 4. 用公钥验签。
 5. 验证通过后放入内存。
+
+`member-public-key.json`：
+
+```json
+{
+  "schema_version": 1,
+  "kind": "textile.member_public_key",
+  "project_id": "project_xxx",
+  "member_id": "user_xxx",
+  "member_name": "翻译A",
+  "key_id": "key_xxx",
+  "public_key": "{...}",
+  "created_at": "2026-06-19T00:00:00.000Z",
+  "algorithm": "ECDSA-P256-SHA256",
+  "proof_signature": "..."
+}
+```
+
+公钥登记文件不包含私钥。导入时会检查 project ID、成员 ID、key ID 和持有证明；成员已有不同公钥时必须由 UI 二次确认后以轮换方式导入。
+
+强制签名项目中新增成员可选择“为该成员生成身份密钥”。service 只把公钥写入 `members.json`，返回一次性私钥文件给 UI 保存；私钥不得进入项目文件、`.hproj`、修改包或项目更新包。
 
 风险：
 

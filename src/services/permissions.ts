@@ -781,6 +781,10 @@ export function canExportPrivateKey(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE);
 }
 
+export function canRegisterPublicKey(user: Member | null | undefined): boolean {
+  return can(user, PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC);
+}
+
 export function canRotateKey(user: Member | null | undefined): boolean {
   return can(user, PERMISSION_ACTIONS.KEY_ROTATE);
 }

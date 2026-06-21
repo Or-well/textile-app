@@ -2,6 +2,7 @@ import { PERMISSION_ACTIONS } from "../model/permissions";
 import type { Member } from "../model/types";
 import { nowIso } from "../utils/time";
 import {
+  CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
   createKeyId,
   generateSigningKeyPair,
   signTextWithPrivateKey,
@@ -24,9 +25,28 @@ export interface MemberKeyFile {
   created_at: string;
 }
 
+export interface MemberPublicKeyRegistrationFile {
+  schema_version: 1;
+  kind: "textile.member_public_key";
+  project_id: string;
+  member_id: string;
+  member_name?: string;
+  key_id: string;
+  public_key: string;
+  created_at: string;
+  algorithm: typeof CHANGE_PACKAGE_SIGNATURE_ALGORITHM;
+  proof_signature: string;
+}
+
 export interface MemberKeyResult {
   members: Member[];
   member: Member;
+}
+
+export interface GeneratedMemberKey {
+  member: Member;
+  privateKey: string;
+  keyFile: MemberKeyFile;
 }
 
 export type SigningKeyReadiness =
@@ -57,6 +77,45 @@ function assertPermission(actor: Member, action: string): void {
   if (!can(actor, action)) {
     throw new Error("当前成员没有管理身份密钥的权限。");
   }
+}
+
+function createPrivateKeyFile(member: Member, privateKey: string): MemberKeyFile {
+  if (!member.public_key || !member.key_id) {
+    throw new Error("成员尚未登记公钥，无法生成私钥文件。");
+  }
+
+  return {
+    schema_version: 1,
+    kind: "textile.member_key",
+    member_id: member.id,
+    member_name: member.name,
+    key_id: member.key_id,
+    public_key: member.public_key,
+    private_key: privateKey,
+    created_at: member.key_created_at || nowIso(),
+  };
+}
+
+function createKeyFileBlob(keyFile: MemberKeyFile): { blob: Blob; fileName: string } {
+  return {
+    blob: new Blob([`${JSON.stringify(keyFile, null, 2)}\n`], {
+      type: "application/json",
+    }),
+    fileName: "member-key.json",
+  };
+}
+
+function createPublicKeyProofPayload(
+  file: Omit<MemberPublicKeyRegistrationFile, "proof_signature">,
+): string {
+  return stableStringify({
+    kind: file.kind,
+    project_id: file.project_id,
+    member_id: file.member_id,
+    key_id: file.key_id,
+    public_key: file.public_key,
+    algorithm: file.algorithm,
+  });
 }
 
 async function writeMembers(
@@ -133,6 +192,33 @@ export function getMemberSigningReadiness(
 
 export function hasUsableSigningKey(member: Member | null | undefined): boolean {
   return getMemberSigningReadiness(member) === "ready";
+}
+
+export async function generateMemberSigningKey(
+  member: Member,
+): Promise<GeneratedMemberKey> {
+  const keyPair = await generateSigningKeyPair();
+  const createdAt = nowIso();
+  const nextMember: Member = {
+    ...member,
+    public_key: keyPair.publicKey,
+    key_id: keyPair.keyId,
+    key_created_at: createdAt,
+    key_revoked_at: "",
+    updated_at: createdAt,
+  };
+
+  return {
+    member: nextMember,
+    privateKey: keyPair.privateKey,
+    keyFile: createPrivateKeyFile(nextMember, keyPair.privateKey),
+  };
+}
+
+export function memberKeyFileToBlob(
+  keyFile: MemberKeyFile,
+): { blob: Blob; fileName: string } {
+  return createKeyFileBlob(keyFile);
 }
 
 export async function generateOwnSigningKey(
@@ -255,26 +341,10 @@ export function exportOwnKeyFile(
   const privateKey = getSigningPrivateKeyForMember(actor.id);
 
   if (!member.public_key || !member.key_id || !privateKey || member.key_revoked_at) {
-    throw new Error("当前没有可导出的有效身份密钥。请先生成或导入身份密钥。");
+    throw new Error("当前没有可导出的有效私钥文件。请先生成签名密钥或导入私钥文件。");
   }
 
-  const keyFile: MemberKeyFile = {
-    schema_version: 1,
-    kind: "textile.member_key",
-    member_id: member.id,
-    member_name: member.name,
-    key_id: member.key_id,
-    public_key: member.public_key,
-    private_key: privateKey,
-    created_at: member.key_created_at || nowIso(),
-  };
-
-  return {
-    blob: new Blob([`${JSON.stringify(keyFile, null, 2)}\n`], {
-      type: "application/json",
-    }),
-    fileName: "member-key.json",
-  };
+  return createKeyFileBlob(createPrivateKeyFile(member, privateKey));
 }
 
 async function assertKeyFileMatches(keyFile: MemberKeyFile): Promise<void> {
@@ -291,8 +361,156 @@ async function assertKeyFileMatches(keyFile: MemberKeyFile): Promise<void> {
   );
 
   if (keyId !== keyFile.key_id || !verified) {
-    throw new Error("身份密钥文件和公钥不匹配。");
+    throw new Error("私钥文件和公钥不匹配。");
   }
+}
+
+export async function exportOwnPublicKeyRegistrationFile(
+  members: Member[],
+  actor: Member | null | undefined,
+  projectId: string,
+): Promise<{ blob: Blob; fileName: string }> {
+  assertActor(actor);
+  assertPermission(actor, PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE);
+
+  const member = findMember(members, actor.id);
+  const privateKey = getSigningPrivateKeyForMember(actor.id);
+
+  if (!member.public_key || !member.key_id || !privateKey || member.key_revoked_at) {
+    throw new Error("当前没有可导出的有效公钥登记文件。请先生成或导入私钥文件。");
+  }
+
+  const fileWithoutProof: Omit<MemberPublicKeyRegistrationFile, "proof_signature"> = {
+    schema_version: 1,
+    kind: "textile.member_public_key",
+    project_id: projectId,
+    member_id: member.id,
+    member_name: member.name,
+    key_id: member.key_id,
+    public_key: member.public_key,
+    created_at: member.key_created_at || nowIso(),
+    algorithm: CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
+  };
+  const file: MemberPublicKeyRegistrationFile = {
+    ...fileWithoutProof,
+    proof_signature: await signTextWithPrivateKey(
+      privateKey,
+      createPublicKeyProofPayload(fileWithoutProof),
+    ),
+  };
+
+  return {
+    blob: new Blob([`${JSON.stringify(file, null, 2)}\n`], {
+      type: "application/json",
+    }),
+    fileName: "member-public-key.json",
+  };
+}
+
+async function parsePublicKeyRegistrationFile(
+  text: string,
+): Promise<MemberPublicKeyRegistrationFile> {
+  let file: MemberPublicKeyRegistrationFile;
+
+  try {
+    file = JSON.parse(text) as MemberPublicKeyRegistrationFile;
+  } catch {
+    throw new Error("公钥登记文件格式不正确。");
+  }
+
+  if (file.kind !== "textile.member_public_key" || file.schema_version !== 1) {
+    throw new Error("这不是可识别的公钥登记文件。");
+  }
+
+  if (file.algorithm !== CHANGE_PACKAGE_SIGNATURE_ALGORITHM) {
+    throw new Error("公钥登记文件的签名算法不受支持。");
+  }
+
+  const keyId = await createKeyId(file.public_key);
+  const payload = createPublicKeyProofPayload({
+    schema_version: file.schema_version,
+    kind: file.kind,
+    project_id: file.project_id,
+    member_id: file.member_id,
+    member_name: file.member_name,
+    key_id: file.key_id,
+    public_key: file.public_key,
+    created_at: file.created_at,
+    algorithm: file.algorithm,
+  });
+  const verified = await verifyTextSignature(
+    file.public_key,
+    payload,
+    file.proof_signature,
+  );
+
+  if (keyId !== file.key_id || !verified) {
+    throw new Error("公钥登记文件的持有证明无效。");
+  }
+
+  return file;
+}
+
+export async function previewMemberPublicKeyRegistrationFile(
+  text: string,
+): Promise<MemberPublicKeyRegistrationFile> {
+  return parsePublicKeyRegistrationFile(text);
+}
+
+export async function importMemberPublicKeyRegistrationFile(
+  root: ProjectDirectoryHandle,
+  members: Member[],
+  actor: Member | null | undefined,
+  projectId: string,
+  text: string,
+  options: { allowReplace?: boolean } = {},
+): Promise<MemberKeyResult> {
+  assertActor(actor);
+  assertPermission(actor, PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC);
+
+  const file = await parsePublicKeyRegistrationFile(text);
+
+  if (file.project_id !== projectId) {
+    throw new Error("公钥登记文件不属于当前项目。");
+  }
+
+  const target = findMember(members, file.member_id);
+  const hasDifferentPublicKey =
+    Boolean(target.public_key && target.key_id) &&
+    (target.public_key !== file.public_key || target.key_id !== file.key_id);
+
+  if (hasDifferentPublicKey && !options.allowReplace) {
+    throw new Error("该成员已有不同公钥。请确认轮换后再导入。");
+  }
+
+  const updatedAt = nowIso();
+  const nextMember: Member = {
+    ...target,
+    public_key: file.public_key,
+    key_id: file.key_id,
+    key_created_at: file.created_at || updatedAt,
+    key_revoked_at: "",
+    updated_at: updatedAt,
+  };
+  const nextMembers = members.map((member) =>
+    member.id === target.id ? nextMember : member,
+  );
+
+  await writeMembers(
+    root,
+    nextMembers,
+    actor,
+    hasDifferentPublicKey ? "member.public_key_rotated" : "member.public_key_registered",
+    {
+      member_id: target.id,
+      key_id: file.key_id,
+    },
+  );
+
+  return {
+    members: nextMembers,
+    member: nextMember,
+  };
 }
 
 export async function importOwnKeyFile(
@@ -309,15 +527,15 @@ export async function importOwnKeyFile(
   try {
     keyFile = JSON.parse(text) as MemberKeyFile;
   } catch {
-    throw new Error("身份密钥文件格式不正确。");
+    throw new Error("私钥文件格式不正确。");
   }
 
   if (keyFile.kind !== "textile.member_key" || keyFile.schema_version !== 1) {
-    throw new Error("这不是可识别的身份密钥文件。");
+    throw new Error("这不是可识别的私钥文件。");
   }
 
   if (keyFile.member_id !== actor.id) {
-    throw new Error("身份密钥文件不属于当前成员。");
+    throw new Error("私钥文件不属于当前成员。");
   }
 
   await assertKeyFileMatches(keyFile);

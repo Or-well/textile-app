@@ -4,6 +4,7 @@ import { PERMISSION_ACTIONS } from "../../model/permissions";
 import type { Member, Role } from "../../model/types";
 import {
   addMember,
+  addMemberWithGeneratedKey,
   canManageMember,
   canTransferOwner,
   changeOwnPassword,
@@ -12,13 +13,16 @@ import {
   transferOwner,
   updateMemberRoles,
 } from "../../services/auth";
+import { memberKeyFileToBlob } from "../../services/keyManager";
 import { can, isOwnerMember } from "../../services/permissions";
 import type { ProjectDirectoryHandle } from "../../services/projectFs";
+import { saveBlob } from "../../utils/saveBlob";
 
 const props = defineProps<{
   members: Member[];
   currentUser: Member | null;
   projectRoot?: ProjectDirectoryHandle;
+  requireSignedChangePackages: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -51,6 +55,7 @@ const roleLabels: Record<Role, string> = {
 const newMemberName = ref("");
 const newMemberPassword = ref("");
 const newMemberRoles = ref<Role[]>(["translator"]);
+const generateKeyForNewMember = ref(false);
 const oldPassword = ref("");
 const newPassword = ref("");
 const ownerTargetId = ref("");
@@ -156,20 +161,52 @@ async function runMemberAction(action: () => Promise<Member[]>, success: string)
 }
 
 async function handleAddMember() {
-  await runMemberAction(
-    () =>
-      addMember(getRoot(), props.members, getActor(), {
+  isWorking.value = true;
+  clearAlerts();
+
+  try {
+    if (props.requireSignedChangePackages && generateKeyForNewMember.value) {
+      const result = await addMemberWithGeneratedKey(
+        getRoot(),
+        props.members,
+        getActor(),
+        {
+          name: newMemberName.value,
+          roles: newMemberRoles.value,
+          password: newMemberPassword.value,
+        },
+      );
+      const keyBlob = memberKeyFileToBlob(result.keyFile);
+      const saved = await saveBlob(keyBlob.blob, keyBlob.fileName);
+
+      emit("membersUpdated", result.members);
+      message.value = saved.saved
+        ? saved.method === "file-picker"
+          ? `成员已新增，私钥文件已保存为 ${saved.fileName}。请安全交给该成员本人。`
+          : "成员已新增，私钥文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果，并安全交给该成员本人。"
+        : "成员已新增并登记公钥，但私钥文件保存已取消。该成员不能使用这把公钥签名，请撤销后重新生成或让成员自行登记公钥。";
+    } else {
+      const members = await addMember(getRoot(), props.members, getActor(), {
         name: newMemberName.value,
         roles: newMemberRoles.value,
         password: newMemberPassword.value,
-      }),
-    "成员已新增。请把初始密码告知该成员。",
-  );
+      });
+
+      emit("membersUpdated", members);
+      message.value = "成员已新增。请把初始密码告知该成员。";
+    }
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "成员管理操作失败。请稍后再试。";
+  } finally {
+    isWorking.value = false;
+  }
 
   if (!errorMessage.value) {
     newMemberName.value = "";
     newMemberPassword.value = "";
     newMemberRoles.value = ["translator"];
+    generateKeyForNewMember.value = props.requireSignedChangePackages;
   }
 }
 
@@ -257,6 +294,14 @@ watch(
   () => props.members,
   () => syncDrafts(),
   { immediate: true, deep: true },
+);
+
+watch(
+  () => props.requireSignedChangePackages,
+  (required) => {
+    generateKeyForNewMember.value = required;
+  },
+  { immediate: true },
 );
 </script>
 
@@ -416,6 +461,18 @@ watch(
           <span>{{ option.label }}</span>
         </label>
       </div>
+
+      <label v-if="requireSignedChangePackages" class="key-option">
+        <input
+          v-model="generateKeyForNewMember"
+          type="checkbox"
+          :disabled="isWorking || !canManageAnyMember"
+        />
+        <span>为该成员生成身份密钥</span>
+        <p>
+          会为新成员生成用于修改包签名的密钥。公钥会保存到项目中，私钥不会写入项目文件；创建后请立即下载私钥文件，并单独交给该成员。
+        </p>
+      </label>
 
       <button
         class="primary-button"
@@ -626,6 +683,22 @@ select:disabled {
 .role-grid label {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
+}
+
+.key-option {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid #d7e9e6;
+  border-radius: 6px;
+  background: #f5fbfa;
+}
+
+.key-option p {
+  grid-column: 2;
+  color: #376164;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .member-actions {

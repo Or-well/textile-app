@@ -986,13 +986,14 @@ onBeforeUnmount(() => {
         <section v-else-if="activeSection === 'keys'" class="settings-card">
           <header class="card-header">
             <h2>我的身份密钥</h2>
-            <p>登录密码只用于登录项目；身份密钥只用于修改包签名和验签。</p>
+            <p>登录密码只用于进入项目；公钥保存在项目中用于验签，私钥只保存在本机或私钥文件中用于签名。</p>
           </header>
 
           <KeyManagementPanel
             :members="localMembers"
             :current-user="currentUser"
             :project-root="props.projectRoot ?? localRoot ?? undefined"
+            :project-id="localProject?.project_id"
             @members-updated="handleMembersUpdated"
           />
         </section>
@@ -1007,6 +1008,9 @@ onBeforeUnmount(() => {
             :members="localMembers"
             :current-user="currentUser"
             :project-root="props.projectRoot ?? localRoot ?? undefined"
+            :require-signed-change-packages="
+              collaborationDraft.require_signed_change_packages
+            "
             @members-updated="handleMembersUpdated"
           />
         </section>

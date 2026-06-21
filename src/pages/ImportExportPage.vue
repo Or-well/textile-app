@@ -440,7 +440,8 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
   }
 
   if (!canSignPackages.value) {
-    errorMessage.value = "当前项目要求修改包签名，但当前成员没有签名修改包的权限。";
+    errorMessage.value =
+      "当前项目要求修改包签名，但当前成员没有签名修改包的权限。请联系负责人调整权限。";
     return false;
   }
 
@@ -451,22 +452,49 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
   }
 
   if (readiness === "private_key_not_loaded") {
-    errorMessage.value = "当前成员已有公钥，但本次运行没有加载身份密钥。请到“我的身份密钥”导入身份密钥文件后再导出。";
+    window.alert(
+      [
+        "当前项目要求修改包带有成员签名。项目里已经登记了你的公钥，但这台设备没有加载对应私钥，无法给修改包签名。",
+        "",
+        "请到“设置 > 我的身份密钥”导入你的私钥文件后再导出。私钥文件通常由你自己之前导出，或由负责人创建账号时单独交给你；项目文件和 .hproj 不包含私钥。",
+      ].join("\n"),
+    );
+    errorMessage.value =
+      "请先到“我的身份密钥”导入私钥文件，再导出签名修改包。";
     return false;
   }
 
   if (!canGenerateKey(currentUser.value)) {
-    errorMessage.value = "当前项目要求修改包签名，但当前成员没有生成身份密钥的权限。";
+    errorMessage.value =
+      readiness === "revoked_key"
+        ? "当前项目中你的公钥已被撤销，且当前成员没有生成新签名密钥的权限。请联系负责人重新登记公钥。"
+        : "当前项目要求修改包签名，但项目还没有登记你的公钥，且当前成员没有生成签名密钥的权限。请联系负责人登记公钥。";
     return false;
   }
 
   const prompt =
     readiness === "revoked_key"
-      ? "当前身份密钥已撤销，不能用于签名。是否现在生成新身份密钥并继续导出？"
-      : "当前项目要求修改包签名，但当前成员还没有身份密钥。是否现在创建身份密钥并继续导出？";
+      ? [
+          "当前项目中你的公钥已被撤销，不能再用对应私钥签名修改包。",
+          "",
+          "如需继续导出，可以现在生成新的签名密钥。生成后新公钥会写入项目，新的私钥只会保存在本机；请稍后到“我的身份密钥”导出私钥文件并妥善保存。",
+          "",
+          "是否生成新的签名密钥并继续导出？",
+        ].join("\n")
+      : [
+          "当前项目要求修改包带有成员签名，但项目还没有登记你的公钥。",
+          "",
+          "签名密钥由公钥和私钥组成：",
+          "- 公钥保存在项目成员信息中，负责人用它验证你的修改包。",
+          "- 私钥只保存在你的本机或私钥文件中，用来给修改包签名。",
+          "",
+          "现在可以为你生成一组签名密钥。生成后公钥会写入项目，私钥只会保存在本机；请稍后到“我的身份密钥”导出私钥文件并妥善保存。",
+          "",
+          "是否生成签名密钥并继续导出？",
+        ].join("\n");
 
   if (!window.confirm(prompt)) {
-    errorMessage.value = "已取消导出。请先创建或导入身份密钥。";
+    errorMessage.value = "已取消导出。请先创建签名密钥或导入私钥文件。";
     return false;
   }
 
@@ -483,7 +511,8 @@ async function ensureRequiredSigningKey(): Promise<boolean> {
 
   localMembers.value = result.members;
   emit("membersUpdated", result.members);
-  message.value = "身份密钥已创建。请稍后到“我的身份密钥”导出密钥文件并妥善保存。";
+  message.value =
+    "签名密钥已创建，公钥已写入项目。请稍后到“我的身份密钥”导出私钥文件并妥善保存。";
 
   return true;
 }

@@ -3,6 +3,10 @@ import type { Member, Role } from "../model/types";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { appendEventToRoot } from "./history";
+import {
+  generateMemberSigningKey,
+  type MemberKeyFile,
+} from "./keyManager";
 import { can, hasRole } from "./permissions";
 import { saveMembers } from "./project";
 import type { ProjectDirectoryHandle } from "./projectFs";
@@ -11,6 +15,12 @@ export interface NewMemberInput {
   name: string;
   roles: Role[];
   password: string;
+}
+
+export interface NewMemberWithKeyResult {
+  members: Member[];
+  member: Member;
+  keyFile: MemberKeyFile;
 }
 
 export interface RoleUpdateInput {
@@ -318,6 +328,51 @@ export async function addMember(
 ): Promise<Member[]> {
   assertCanManageMembers(actor);
 
+  const newMember = await createNewMemberRecord(members, input);
+  const nextMembers = [...members, newMember];
+
+  return writeMembersAndEvent(root, nextMembers, actor.id, "member.created", {
+    member_id: newMember.id,
+    roles: newMember.roles,
+  });
+}
+
+export async function addMemberWithGeneratedKey(
+  root: ProjectDirectoryHandle,
+  members: Member[],
+  actor: Member,
+  input: NewMemberInput,
+): Promise<NewMemberWithKeyResult> {
+  assertCanManageMembers(actor);
+
+  const newMember = await createNewMemberRecord(members, input);
+  const generated = await generateMemberSigningKey(newMember);
+  const nextMembers = [...members, generated.member];
+
+  const savedMembers = await writeMembersAndEvent(
+    root,
+    nextMembers,
+    actor.id,
+    "member.created",
+    {
+      member_id: generated.member.id,
+      roles: generated.member.roles,
+      key_id: generated.member.key_id ?? "",
+      initial_key_generated: true,
+    },
+  );
+
+  return {
+    members: savedMembers,
+    member: generated.member,
+    keyFile: generated.keyFile,
+  };
+}
+
+async function createNewMemberRecord(
+  members: Member[],
+  input: NewMemberInput,
+): Promise<Member> {
   const name = input.name.trim();
   const roles = normalizeRoles(input.roles);
 
@@ -345,12 +400,8 @@ export async function addMember(
     updated_at: now,
     ...(await createPasswordFields(input.password)),
   };
-  const nextMembers = [...members, newMember];
 
-  return writeMembersAndEvent(root, nextMembers, actor.id, "member.created", {
-    member_id: newMember.id,
-    roles,
-  });
+  return newMember;
 }
 
 export async function updateMemberRoles(

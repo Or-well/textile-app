@@ -2,10 +2,13 @@
 import { computed, ref } from "vue";
 import type { Member } from "../model/types";
 import {
+  exportOwnPublicKeyRegistrationFile,
   exportOwnKeyFile,
   generateOwnSigningKey,
   hasLoadedPrivateKey,
+  importMemberPublicKeyRegistrationFile,
   importOwnKeyFile,
+  previewMemberPublicKeyRegistrationFile,
   revokeMemberPublicKey,
   revokeOwnSigningKey,
   rotateOwnSigningKey,
@@ -14,17 +17,20 @@ import {
   canExportPrivateKey,
   canGenerateKey,
   canImportPrivateKey,
+  canRegisterPublicKey,
   canRevokeKey,
   canRotateKey,
   canViewKey,
 } from "../services/permissions";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
+import { saveBlob } from "../utils/saveBlob";
 import { formatDateTime } from "../utils/time";
 
 const props = defineProps<{
   members: Member[];
   currentUser?: Member | null;
   projectRoot?: ProjectDirectoryHandle;
+  projectId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -42,6 +48,7 @@ const canViewKeys = computed(() => canViewKey(props.currentUser));
 const canGenerateKeys = computed(() => canGenerateKey(props.currentUser));
 const canImportPrivate = computed(() => canImportPrivateKey(props.currentUser));
 const canExportPrivate = computed(() => canExportPrivateKey(props.currentUser));
+const canRegisterPublic = computed(() => canRegisterPublicKey(props.currentUser));
 const canRotateKeys = computed(() => canRotateKey(props.currentUser));
 const canRevokeKeys = computed(() => canRevokeKey(props.currentUser));
 const ownPrivateLoaded = computed(() => hasLoadedPrivateKey(ownMember.value));
@@ -53,7 +60,7 @@ const hasActiveOwnPublicKey = computed(
 );
 const ownKeyStatus = computed(() => describeKeyStatus(ownMember.value));
 const primaryKeyButtonText = computed(() =>
-  hasOwnPublicKey.value ? "生成新密钥" : "生成密钥",
+  hasOwnPublicKey.value ? "生成新的签名密钥" : "生成签名密钥",
 );
 const canUsePrimaryKeyAction = computed(() =>
   hasOwnPublicKey.value ? canRotateKeys.value : canGenerateKeys.value,
@@ -67,28 +74,34 @@ function getRoot(): ProjectDirectoryHandle {
   return props.projectRoot;
 }
 
-function downloadBlob(blob: Blob, fileName: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
+function getProjectId(): string {
+  if (!props.projectId) {
+    throw new Error("当前项目缺少项目 ID，无法处理公钥登记文件。");
+  }
 
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  return props.projectId;
 }
 
 function describeKeyStatus(member: Member | null | undefined): string {
   if (!member?.public_key || !member.key_id) {
-    return "未生成";
+    return "项目未登记公钥";
   }
 
   if (member.key_revoked_at) {
-    return "已撤销";
+    return "公钥已撤销";
   }
 
-  return hasLoadedPrivateKey(member) ? "可签名" : "需要导入身份密钥";
+  return hasLoadedPrivateKey(member)
+    ? "已加载私钥，可签名"
+    : "项目已有公钥，本机未加载私钥";
+}
+
+function describeMemberPublicKeyStatus(member: Member): string {
+  if (!member.public_key || !member.key_id) {
+    return "未登记公钥";
+  }
+
+  return member.key_revoked_at ? "公钥已撤销" : "公钥有效";
 }
 
 function keyDate(member: Member): string {
@@ -121,12 +134,16 @@ async function handleGenerateKey() {
     );
 
     emit("membersUpdated", result.members);
-    return "身份密钥已生成。请立即导出身份密钥文件并妥善保存。";
+    return "签名密钥已生成。公钥已写入项目；请立即导出私钥文件并妥善保存。";
   });
 }
 
 async function handleGenerateNewKey() {
-  if (!window.confirm("生成新密钥后，新的修改包会使用新密钥签名。继续？")) {
+  if (
+    !window.confirm(
+      "生成新的签名密钥后，项目会登记新公钥，新的修改包会使用新私钥签名。继续？",
+    )
+  ) {
     return;
   }
 
@@ -138,7 +155,7 @@ async function handleGenerateNewKey() {
     );
 
     emit("membersUpdated", result.members);
-    return "新身份密钥已生成。请导出新的身份密钥文件。";
+    return "新的签名密钥已生成。请导出新的私钥文件。";
   });
 }
 
@@ -152,7 +169,11 @@ async function handlePrimaryKeyAction() {
 }
 
 async function handleRevokeOwnKey() {
-  if (!window.confirm("撤销后当前身份密钥不能继续用于签名。继续？")) {
+  if (
+    !window.confirm(
+      "撤销后，项目将不再接受当前公钥对应私钥签出的新修改包。继续？",
+    )
+  ) {
     return;
   }
 
@@ -164,12 +185,16 @@ async function handleRevokeOwnKey() {
     );
 
     emit("membersUpdated", result.members);
-    return "身份密钥已撤销。";
+    return "当前公钥已撤销。";
   });
 }
 
 async function handleRevokeMemberKey(member: Member) {
-  if (!window.confirm(`撤销 ${member.name} 的公钥？`)) {
+  if (
+    !window.confirm(
+      `撤销 ${member.name} 的公钥？撤销后，项目将不再接受这把公钥对应私钥签出的新修改包。`,
+    )
+  ) {
     return;
   }
 
@@ -186,18 +211,46 @@ async function handleRevokeMemberKey(member: Member) {
   });
 }
 
-function handleExportKey() {
-  try {
+async function saveKeyBlob(blob: Blob, fileName: string, label: string): Promise<string> {
+  const result = await saveBlob(blob, fileName);
+
+  if (!result.saved) {
+    return `${label}保存已取消。`;
+  }
+
+  if (result.method === "file-picker") {
+    return `${label}已保存为 ${result.fileName}。`;
+  }
+
+  return `${label}下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。`;
+}
+
+async function handleExportPrivateKey() {
+  await runAction(async () => {
     const result = exportOwnKeyFile(props.members, props.currentUser);
 
-    downloadBlob(result.blob, result.fileName);
-    message.value = "身份密钥文件已导出。";
-    errorMessage.value = "";
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "身份密钥导出失败。";
-    message.value = "";
-  }
+    return `${await saveKeyBlob(
+      result.blob,
+      result.fileName,
+      "私钥文件",
+    )} 私钥可以代表你签名修改包，请不要交给其他人。`;
+  });
+}
+
+async function handleExportPublicKey() {
+  await runAction(async () => {
+    const result = await exportOwnPublicKeyRegistrationFile(
+      props.members,
+      props.currentUser,
+      getProjectId(),
+    );
+
+    return `${await saveKeyBlob(
+      result.blob,
+      result.fileName,
+      "公钥登记文件",
+    )} 这个文件不包含私钥，可交给负责人登记公钥。`;
+  });
 }
 
 async function handleImportKey(event: Event) {
@@ -217,7 +270,55 @@ async function handleImportKey(event: Event) {
     );
 
     emit("membersUpdated", result.members);
-    return "身份密钥已导入，可用于导出签名修改包。";
+    return "私钥文件已导入，本机可用于导出签名修改包。";
+  });
+
+  input.value = "";
+}
+
+async function handleImportPublicKey(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  await runAction(async () => {
+    const text = await file.text();
+    const preview = await previewMemberPublicKeyRegistrationFile(text);
+    const target = props.members.find((member) => member.id === preview.member_id);
+
+    if (!target) {
+      throw new Error("公钥登记文件对应的成员不存在。");
+    }
+
+    const hasDifferentPublicKey =
+      Boolean(target.public_key && target.key_id) &&
+      (target.public_key !== preview.public_key || target.key_id !== preview.key_id);
+
+    if (
+      hasDifferentPublicKey &&
+      !window.confirm(
+        `成员“${target.name}”已有不同公钥。替换后，旧私钥签出的新修改包将不再通过验证。继续登记新公钥？`,
+      )
+    ) {
+      return "公钥登记已取消。";
+    }
+
+    const result = await importMemberPublicKeyRegistrationFile(
+      getRoot(),
+      props.members,
+      props.currentUser,
+      getProjectId(),
+      text,
+      { allowReplace: hasDifferentPublicKey },
+    );
+
+    emit("membersUpdated", result.members);
+    return hasDifferentPublicKey
+      ? `已为 ${result.member.name} 轮换公钥。`
+      : `已为 ${result.member.name} 登记公钥。`;
   });
 
   input.value = "";
@@ -237,14 +338,18 @@ async function handleImportKey(event: Event) {
           <strong>{{ ownMember?.name || "未登录" }}</strong>
         </div>
         <div>
-          <span>密钥状态</span>
+          <span>私钥状态</span>
           <strong>{{ ownKeyStatus }}</strong>
         </div>
         <div>
-          <span>密钥编号</span>
+          <span>公钥编号</span>
           <strong>{{ ownMember?.key_id || "无" }}</strong>
         </div>
       </div>
+
+      <p class="key-note">
+        公钥保存在项目成员信息中，用来验签；私钥只保存在本机或私钥文件中，用来给修改包签名。私钥文件可以代表你签名修改包，请不要交给其他人。
+      </p>
 
       <div class="key-actions">
         <button
@@ -261,16 +366,26 @@ async function handleImportKey(event: Event) {
           class="secondary-button"
           type="button"
           :disabled="isWorking || !canExportPrivate"
-          @click="handleExportKey"
+          @click="handleExportPrivateKey"
         >
-          导出身份密钥
+          导出私钥文件
+        </button>
+
+        <button
+          v-if="ownPrivateLoaded"
+          class="secondary-button"
+          type="button"
+          :disabled="isWorking || !canExportPrivate || !projectId"
+          @click="handleExportPublicKey"
+        >
+          导出公钥登记文件
         </button>
 
         <label
           class="file-button"
           :class="{ disabled: isWorking || !canImportPrivate || !ownMember }"
         >
-          <span>导入身份密钥</span>
+          <span>导入私钥文件</span>
           <input
             type="file"
             accept=".json,application/json"
@@ -286,16 +401,34 @@ async function handleImportKey(event: Event) {
           :disabled="isWorking || !canRevokeKeys"
           @click="handleRevokeOwnKey"
         >
-          撤销密钥
+          撤销当前公钥
         </button>
       </div>
 
       <section class="member-key-list">
-        <h3>成员公钥</h3>
+        <div class="member-key-header">
+          <div>
+            <h3>成员公钥</h3>
+            <p>公钥不保密，用于验证成员修改包签名；导入登记文件不会导入私钥。</p>
+          </div>
+          <label
+            class="file-button"
+            :class="{ disabled: isWorking || !canRegisterPublic || !projectId }"
+          >
+            <span>导入成员公钥</span>
+            <input
+              type="file"
+              accept=".json,application/json"
+              :disabled="isWorking || !canRegisterPublic || !projectId"
+              @change="handleImportPublicKey"
+            />
+          </label>
+        </div>
         <article v-for="member in members" :key="member.id" class="member-key-row">
           <div>
             <strong>{{ member.name }}</strong>
-            <span>{{ describeKeyStatus(member) }}</span>
+            <span>公钥状态：{{ describeMemberPublicKeyStatus(member) }}</span>
+            <span>公钥编号</span>
             <code>{{ member.key_id || "无公钥" }}</code>
             <small v-if="keyDate(member)">{{ keyDate(member) }}</small>
           </div>
@@ -356,6 +489,17 @@ async function handleImportKey(event: Event) {
   gap: 9px;
 }
 
+.key-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d7e9e6;
+  border-radius: 6px;
+  background: #f5fbfa;
+  color: #376164;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .primary-button,
 .secondary-button,
 .danger-button,
@@ -406,10 +550,24 @@ button:disabled,
   gap: 10px;
 }
 
+.member-key-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 h3 {
   margin: 0;
   color: #111827;
   font-size: 15px;
+}
+
+.member-key-header p {
+  margin: 4px 0 0;
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .member-key-row {
@@ -451,6 +609,11 @@ code {
   }
 
   .member-key-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .member-key-header {
     align-items: stretch;
     flex-direction: column;
   }

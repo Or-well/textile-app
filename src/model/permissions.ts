@@ -79,6 +79,7 @@ export const PERMISSION_ACTIONS = {
   KEY_GENERATE: "key.generate",
   KEY_IMPORT_PRIVATE: "key.import_private",
   KEY_EXPORT_PRIVATE: "key.export_private",
+  KEY_REGISTER_PUBLIC: "key.register_public",
   KEY_ROTATE: "key.rotate",
   KEY_REVOKE: "key.revoke",
   STATS_READ: "stats.read",
@@ -277,8 +278,9 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
     permissions: [
       { action: PERMISSION_ACTIONS.KEY_VIEW, label: "查看密钥状态" },
       { action: PERMISSION_ACTIONS.KEY_GENERATE, label: "生成密钥" },
-      { action: PERMISSION_ACTIONS.KEY_IMPORT_PRIVATE, label: "导入身份密钥" },
-      { action: PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE, label: "导出身份密钥" },
+      { action: PERMISSION_ACTIONS.KEY_IMPORT_PRIVATE, label: "导入私钥文件" },
+      { action: PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE, label: "导出私钥文件" },
+      { action: PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC, label: "登记成员公钥" },
       { action: PERMISSION_ACTIONS.KEY_ROTATE, label: "生成新密钥" },
       { action: PERMISSION_ACTIONS.KEY_REVOKE, label: "撤销密钥" },
     ],
@@ -343,6 +345,7 @@ const OWN_KEY_PERMISSIONS = [
 
 const KEY_ADMIN_PERMISSIONS = [
   ...OWN_KEY_PERMISSIONS,
+  PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC,
   PERMISSION_ACTIONS.KEY_REVOKE,
 ] as const satisfies readonly PermissionAction[];
 

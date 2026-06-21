@@ -11,7 +11,11 @@ interface SaveFilePickerWindow extends Window {
   }) => Promise<WritableFileHandle>;
 }
 
-function startBrowserDownload(blob: Blob, fileName: string): void {
+export type SaveBlobResult =
+  | { saved: true; method: "file-picker" | "browser-download"; fileName: string }
+  | { saved: false; method: "file-picker"; fileName: string };
+
+export function startBrowserDownload(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
 
@@ -23,11 +27,10 @@ function startBrowserDownload(blob: Blob, fileName: string): void {
   URL.revokeObjectURL(url);
 }
 
-export async function saveBlobWithConfirmation(
+export async function saveBlob(
   blob: Blob,
   fileName: string,
-  fallbackConfirmation: string,
-): Promise<boolean> {
+): Promise<SaveBlobResult> {
   const saveFilePicker = (window as SaveFilePickerWindow).showSaveFilePicker;
 
   if (saveFilePicker) {
@@ -37,10 +40,10 @@ export async function saveBlobWithConfirmation(
 
       await writable.write(blob);
       await writable.close();
-      return true;
+      return { saved: true, method: "file-picker", fileName };
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
-        return false;
+        return { saved: false, method: "file-picker", fileName };
       }
 
       throw error;
@@ -48,5 +51,19 @@ export async function saveBlobWithConfirmation(
   }
 
   startBrowserDownload(blob, fileName);
-  return window.confirm(fallbackConfirmation);
+  return { saved: true, method: "browser-download", fileName };
+}
+
+export async function saveBlobWithConfirmation(
+  blob: Blob,
+  fileName: string,
+  fallbackConfirmation: string,
+): Promise<boolean> {
+  const result = await saveBlob(blob, fileName);
+
+  if (!result.saved) {
+    return false;
+  }
+
+  return result.method === "file-picker" || window.confirm(fallbackConfirmation);
 }
