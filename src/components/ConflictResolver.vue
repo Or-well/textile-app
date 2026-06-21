@@ -82,6 +82,10 @@ function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
     proofread_by: "校对成员",
     proofread_count: "校对次数",
     reviewed_by: "审核成员",
+    disputed: "争议状态",
+    dispute_reason: "争议原因",
+    dispute_resolved_at: "争议解决时间",
+    dispute_resolved_by: "争议解决人",
   };
 
   return reasons.map((reason) => labels[reason]).join("、");

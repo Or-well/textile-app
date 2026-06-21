@@ -40,7 +40,6 @@ export type TaskType =
   | "proofread"
   | "review"
   | "term"
-  | "export"
   | "custom";
 
 export type TaskSubmitMethod =
@@ -169,6 +168,7 @@ export interface Task {
   title: string;
   description: string;
   file_id: string;
+  file_ids?: string[];
   range_start: number;
   range_end: number;
   entry_ids: string[];

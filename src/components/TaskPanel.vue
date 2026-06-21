@@ -19,6 +19,7 @@ const props = defineProps<{
     assign: boolean;
     claim: boolean;
     submit: boolean;
+    cancelSubmit: boolean;
     complete: boolean;
     reclaim: boolean;
     delete: boolean;
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   assignTask: [taskId: string, assignee: string];
   claimTask: [taskId: string];
   submitTask: [taskId: string];
+  cancelTaskSubmission: [taskId: string];
   completeTask: [taskId: string];
   reclaimTask: [taskId: string];
   reopenTask: [taskId: string];
@@ -53,7 +55,6 @@ const typeLabels: Record<Task["type"], string> = {
   proofread: "校对",
   review: "审校",
   term: "术语",
-  export: "导出",
   custom: "自定义",
 };
 
@@ -74,6 +75,15 @@ const assigneeName = computed(() => {
 });
 
 const fileName = computed(() => {
+  if (props.task?.file_ids?.length) {
+    const names = props.task.file_ids.map(
+      (fileId) =>
+        props.files.find((file) => file.id === fileId)?.name || fileId,
+    );
+
+    return names.join("、");
+  }
+
   if (!props.task?.file_id) {
     return "未关联文件";
   }
@@ -168,7 +178,15 @@ watch(
           </div>
           <div>
             <dt>范围</dt>
-            <dd>{{ task.range_start }}-{{ task.range_end }}</dd>
+            <dd>
+              {{
+                task.entry_ids.length > 0
+                  ? `指定 ${task.entry_ids.length} 条`
+                  : task.file_ids?.length
+                    ? "所选文件全部词条"
+                    : `${task.range_start}-${task.range_end}`
+              }}
+            </dd>
           </div>
           <div>
             <dt>提交方式</dt>
@@ -258,6 +276,15 @@ watch(
             @click="emit('submitTask', task.id)"
           >
             提交任务
+          </button>
+          <button
+            v-if="actions.cancelSubmit"
+            class="secondary-button"
+            type="button"
+            :disabled="isBusy"
+            @click="emit('cancelTaskSubmission', task.id)"
+          >
+            取消提交
           </button>
           <button
             v-if="actions.complete"

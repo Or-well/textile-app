@@ -43,7 +43,6 @@ const taskTypes: Array<{ value: TaskType; label: string }> = [
   { value: "proofread", label: "校对" },
   { value: "review", label: "审校" },
   { value: "term", label: "术语" },
-  { value: "export", label: "导出" },
   { value: "custom", label: "自定义" },
 ];
 
@@ -65,6 +64,7 @@ const form = reactive({
   description: "",
   type: "translate" as TaskType,
   file_id: "",
+  file_ids: [] as string[],
   range_start: 1,
   range_end: 1,
   entry_ids_text: "",
@@ -148,6 +148,7 @@ function syncForm() {
   form.description = task?.description ?? "";
   form.type = task?.type ?? "translate";
   form.file_id = task?.file_id ?? firstFileId;
+  form.file_ids = task?.file_ids ?? (task?.file_id ? [task.file_id] : firstFileId ? [firstFileId] : []);
   form.range_start = task?.range_start ?? 1;
   form.range_end = task?.range_end ?? 1;
   form.entry_ids_text = task?.entry_ids.join("\n") ?? "";
@@ -247,7 +248,8 @@ function handleSubmit() {
     title,
     description: form.description.trim(),
     type: form.type,
-    file_id: form.file_id,
+    file_id: form.file_ids.length === 1 ? form.file_ids[0] : "",
+    file_ids: form.file_ids,
     range_start: Number(form.range_start) || 1,
     range_end: Number(form.range_end) || Number(form.range_start) || 1,
     entry_ids: form.entry_ids_text
@@ -282,6 +284,14 @@ watch(
       void refreshFileEntryBounds();
     }
   },
+);
+
+watch(
+  () => form.file_ids,
+  () => {
+    form.file_id = form.file_ids.length === 1 ? form.file_ids[0] : "";
+  },
+  { deep: true },
 );
 </script>
 
@@ -330,8 +340,7 @@ watch(
 
           <label>
             <span>文件</span>
-            <select v-model="form.file_id">
-              <option value="">不关联文件</option>
+            <select v-model="form.file_ids" multiple size="5">
               <option v-for="file in project.files" :key="file.id" :value="file.id">
                 {{ file.name }}
               </option>

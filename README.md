@@ -154,4 +154,4 @@ scripts/            版本清单和发布检查脚本
 - [用户手册](docs/MANUAL.md)
 - [技术文档](docs/TECHNICAL_DOCUMENTATION.md)
 - [代码代理开发规范](AGENTS.md)
-- [Tauri Updater 发布说明](docs/05_tauri_updater_release.md)
+- [Tauri Updater 发布说明](docs/TAURI_UPDATER_RELEASE.md)

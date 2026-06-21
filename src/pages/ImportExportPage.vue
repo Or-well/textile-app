@@ -44,6 +44,7 @@ import {
   canImportMemberChangePackage,
   canImportMaintenanceChangePackage,
   canImportProjectUpdatePackage,
+  canManageTask,
   canProjectBackup,
   canReviewChangePackage,
   canSignChangePackage,
@@ -86,7 +87,7 @@ const localProjectStorage = ref<ProjectStorage | null>(null);
 const localProject = ref<ProjectConfig | null>(null);
 const localMembers = ref<Member[]>([]);
 const tasks = ref<Task[]>([]);
-const selectedTaskId = ref("");
+const selectedTaskIds = ref<string[]>([]);
 const exportMode = ref<ExportChangePackageMode>("member_changes");
 const releaseFormat = ref<ReleaseExportFormat>("json");
 const releaseOnlyReviewed = ref(false);
@@ -142,6 +143,17 @@ const canDangerousImport = computed(() =>
 );
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
 const canExportProjectBackup = computed(() => canProjectBackup(currentUser.value));
+const canExportAnyTaskChange = computed(() => canManageTask(currentUser.value));
+const exportableTasks = computed(() =>
+  canExportAnyTaskChange.value
+    ? tasks.value
+    : tasks.value.filter((task) => task.assignee === currentUser.value?.id),
+);
+const taskExportEmptyText = computed(() =>
+  canExportAnyTaskChange.value
+    ? "当前没有可导出的任务。"
+    : "没有分配给你的可导出任务。",
+);
 const requiresSignedChangePackage = computed(() =>
   projectRequiresSignedChangePackages(props.project ?? localProject.value),
 );
@@ -314,11 +326,13 @@ async function loadImportExportState() {
 
   try {
     tasks.value = await loadTasks();
-    selectedTaskId.value = tasks.value[0]?.id ?? "";
+    selectedTaskIds.value = exportableTasks.value[0]?.id
+      ? [exportableTasks.value[0].id]
+      : [];
     await refreshReleaseSummary();
   } catch (error) {
     tasks.value = [];
-    selectedTaskId.value = "";
+    selectedTaskIds.value = [];
     errorMessage.value =
       error instanceof Error
         ? error.message
@@ -395,7 +409,7 @@ async function handleOpenProject() {
     localProjectStorage.value = null;
     localMembers.value = [];
     tasks.value = [];
-    selectedTaskId.value = "";
+    selectedTaskIds.value = [];
     changePackage.value = undefined;
     packagePreview.value = undefined;
     conflicts.value = [];
@@ -480,8 +494,8 @@ async function handleExportChanges() {
     return;
   }
 
-  if (exportMode.value === "task_changes" && !selectedTaskId.value) {
-    errorMessage.value = "请选择任务。";
+  if (exportMode.value === "task_changes" && selectedTaskIds.value.length === 0) {
+    errorMessage.value = "请选择至少一个任务。";
     return;
   }
 
@@ -505,7 +519,8 @@ async function handleExportChanges() {
     const outcome = await withAppOperation("导出修改包", async () => {
       const result = await exportChangePackage(currentUser.value!.id, {
         mode: exportMode.value,
-        taskId: exportMode.value === "task_changes" ? selectedTaskId.value : undefined,
+        taskId: exportMode.value === "task_changes" ? selectedTaskIds.value[0] : undefined,
+        taskIds: exportMode.value === "task_changes" ? selectedTaskIds.value : undefined,
         sign: exportMode.value === "project_update" ? true : canSignPackages.value,
         actor: currentUser.value,
       });
@@ -850,7 +865,7 @@ watch(
               type="radio"
               value="member_changes"
             />
-            <span>导出我的全部修改</span>
+            <span>导出我的可提交修改</span>
           </label>
           <label>
             <input
@@ -858,7 +873,7 @@ watch(
               type="radio"
               value="task_changes"
             />
-            <span>导出所选任务修改</span>
+            <span>导出所选任务范围修改</span>
           </label>
           <label>
             <input
@@ -882,11 +897,14 @@ watch(
 
         <label v-if="exportMode === 'task_changes'">
           <span>任务</span>
-          <select v-model="selectedTaskId">
-            <option v-for="task in tasks" :key="task.id" :value="task.id">
+          <select v-model="selectedTaskIds" multiple size="6">
+            <option v-for="task in exportableTasks" :key="task.id" :value="task.id">
               {{ task.title }}
             </option>
           </select>
+          <small v-if="exportableTasks.length === 0" class="field-help">
+            {{ taskExportEmptyText }}
+          </small>
         </label>
 
         <button
@@ -896,7 +914,7 @@ watch(
           :disabled="
             isExporting ||
             !currentUser ||
-            (exportMode === 'task_changes' && !selectedTaskId)
+            (exportMode === 'task_changes' && selectedTaskIds.length === 0)
           "
           @click="handleExportChanges"
         >
@@ -1171,6 +1189,12 @@ button:disabled {
 .section-note {
   color: #4b5563;
   line-height: 1.7;
+}
+
+.field-help {
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .conflict-section {

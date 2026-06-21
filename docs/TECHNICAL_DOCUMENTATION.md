@@ -565,26 +565,27 @@ tasks/tasks.jsonl
 示例：
 
 ```json
-{"id":"task_001","type":"translate","title":"翻译第一章","description":"","file_id":"script_001","range_start":1,"range_end":50,"entry_ids":[],"assignee":"user_a","status":"assigned","target":"","submit_method":"change_package","proofread_round":1,"created_by":"leader","created_at":"2026-06-18T00:00:00.000Z","updated_at":"2026-06-19T00:00:00.000Z","due_at":"2026-06-25T00:00:00.000Z","due_time_zone":"Asia/Tokyo"}
+{"id":"task_001","type":"translate","title":"翻译第一章","description":"","file_id":"script_001","file_ids":["script_001","script_002"],"range_start":1,"range_end":50,"entry_ids":[],"assignee":"user_a","status":"assigned","target":"","submit_method":"change_package","proofread_round":1,"created_by":"leader","created_at":"2026-06-18T00:00:00.000Z","updated_at":"2026-06-19T00:00:00.000Z","due_at":"2026-06-25T00:00:00.000Z","due_time_zone":"Asia/Tokyo"}
 ```
 
 状态：
 
 ```text
-unassigned -> assigned -> in_progress -> submitted -> completed
+assigned -> in_progress -> submitted -> completed
 ```
 
-服务还支持收回和重新打开动作。
+服务还支持取消提交、收回和重新打开动作。旧 `unassigned` 状态仅为兼容保留；普通成员不能自由领取任务，任务负责人由有权限的成员分配。
 
 旧数据兼容：
 
 - `reclaimed` 规范化为 `unassigned`。
 - `blocked` 规范化为 `in_progress` 或 `unassigned`。
+- 旧 `export` 任务类型规范化为 `custom`。
 - `git_hidden` 提交方式规范化为 `change_package`。
 - `git_manual` 规范化为 `owner_manual`。
 - 旧 `due_at` 若没有 `Z` 或 UTC 偏移，读取时保持原值，不静默推断时区；用户编辑并确认 `due_time_zone` 后才转换为 UTC。
 
-任务范围优先使用 `entry_ids`，否则使用 `file_id` 和起止 index；没有 `file_id` 但包含 `entry_ids` 的任务可以正常计算进度。
+任务范围优先使用 `entry_ids`，其次使用 `file_ids` 表示多个整文件，最后兼容 `file_id` 和起止 index；没有 `file_id` 但包含 `entry_ids` 或 `file_ids` 的任务可以正常计算进度。
 
 `tasks/tasks.jsonl` 不存在时按空任务列表处理；文件存在但读取或 JSONL 解析失败时必须向上报错，不得缓存为空列表，以免后续任务写入覆盖可恢复的数据。
 
@@ -906,7 +907,7 @@ comments/<file_id>/<6位entry index>.jsonl
 职责：
 
 - 任务 CRUD。
-- 分配、领取、提交、完成、收回和重新打开。
+- 分配、提交、取消提交、完成、收回和重新打开。
 - 旧状态和旧提交方式兼容。
 - 计算任务覆盖词条和任务进度。
 
@@ -938,14 +939,14 @@ comments/<file_id>/<6位entry index>.jsonl
 
 进度：
 
-- 根据任务 entry_ids 或 file/range 获取词条。
+- 根据任务 `entry_ids`、`file_ids` 或 legacy `file_id`/range 获取词条。
 - 调用 `calculateEntryProgress()`。
 - 校对任务可通过 `proofread_round` 覆盖需要的校对轮次。
 
 风险点：
 
 - 整个任务文件每次写入整体重写。
-- `enable_tasks === false` 时任务页入口隐藏，任务 service 会拒绝新增、更新、删除、分配、领取、提交、完成、收回和重开。
+- `enable_tasks === false` 时任务页入口隐藏，任务 service 会拒绝新增、更新、删除、分配、提交、取消提交、完成、收回和重开。
 - 普通修改包将 `due_at` 和 `due_time_zone` 视为任务受保护字段。维护修改包实际修改截止时间时必须同时提供绝对时间和有效 IANA 时区；签名项目更新包可继续承载旧任务，由接收方后续明确迁移。
 
 ## 25. `comments.ts`
@@ -1202,8 +1203,8 @@ overall = 三个比例乘归一化权重后相加
 
 | mode | manifest 类型 | 用途 |
 | --- | --- | --- |
-| `member_changes` | member_changes | 当前成员全部修改 |
-| `task_changes` | member_changes | 所选任务范围，manifest 带 task_id |
+| `member_changes` | member_changes | “我的可提交修改”，即当前成员在允许范围内的修改 |
+| `task_changes` | member_changes | “所选任务范围修改”，即一个或多个所选任务范围，manifest scopes 带 `task:<id>`；legacy `task_id` 保留首个任务 ID |
 | `maintenance_changes` | maintenance_changes | 项目维护数据 |
 | `project_update` | project_update | 负责人权威项目更新 |
 
@@ -1217,11 +1218,13 @@ overall = 三个比例乘归一化权重后相加
 
 包括：
 
-- `updated_by === 当前成员` 的词条。
-- 当前成员评论。
+- 普通成员已分配任务范围内 `updated_by === 当前成员` 的词条和争议字段。
+- 普通成员已分配任务范围内的当前成员评论。
 - 当前成员创建的术语。
 - 当前成员创建或负责的任务。
 - 当前成员事件。
+
+负责人、管理员或有任务管理权限的成员导出 `member_changes` 时可以导出自己全部修改，不受已分配任务范围限制。
 
 上下文写在 Entry 中，因此普通上下文修改通常随 entries 导出。
 
@@ -1229,10 +1232,12 @@ overall = 三个比例乘归一化权重后相加
 
 包括：
 
-- 任务范围内由当前成员修改的词条。
-- 相关评论。
-- 任务行。
+- 所选任务范围内由允许成员修改的词条和争议字段。
+- 所选任务范围内的相关评论。
+- 所选任务行。
 - 相关事件。
+
+普通成员只能选择分配给自己的任务。负责人、管理员或有任务管理权限的成员可以选择其他成员的任务，导出时会包含任务负责人在这些任务范围内的相关修改。
 
 ### 维护修改
 
@@ -1362,8 +1367,9 @@ manifest 示例：
 - 凭据、owner 提升和项目设置变化检测。
 - 目标路径是否可读取或创建。
 - 冲突列表是否已经生成。
-- 普通修改包中的词条受保护字段不能变化；允许参与冲突处理的词条字段限于 `target`、`status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by`。
-- 普通修改包中的任务只能更新既有任务的 `status`；标题、范围、创建者、分配关系、截止时间和截止时区等字段变化会阻止导入。
+- 普通修改包中的词条受保护字段不能变化；允许参与冲突处理的词条字段限于 `target`、`status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by`、`disputed`、`dispute_reason`、`dispute_resolved_at`、`dispute_resolved_by`。
+- 普通成员普通修改包只能携带其已分配任务范围内的词条和评论；负责人、管理员或有任务管理权限的导出者只有在包签名有效时才不受该任务范围限制，未签名包不能仅凭 `manifest.user_id` 获得管理者豁免。
+- 普通修改包中的任务只能更新既有任务的执行状态，且普通包只接受 `assigned`、`in_progress`、`submitted` 这类执行中状态；标题、范围、创建者、分配关系、截止时间和截止时区等字段变化会阻止导入。
 
 预检查失败时不开始项目文件写入。
 
@@ -1381,11 +1387,11 @@ manifest 示例：
 2. 检查普通或维护导入权限。
 3. 检查维护和 owner 凭据确认。
 4. 检查危险导入权限。
-5. 检测冲突；普通包会比较译文、状态、译者、校对成员、校对次数和审核成员。
+5. 检测冲突；普通包会比较译文、状态、译者、校对成员、校对次数、审核成员和争议字段。
 6. 要求每个冲突有 resolution。
 7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；普通包根据匹配的词条版本事件决定翻译、校对或审核语义，缺少操作记录的旧包才按普通翻译编辑重置流程。
 8. 对负责人最终采用的词条结果生成本地版本事件，记录来源事件和 package ID；普通包的源词条版本事件不直接写成本地权威版本。
-9. 普通包词条只合并允许的译文和工作流字段，`updated_by` 使用包 manifest 用户；普通包任务只合并执行状态。
+9. 普通包词条只合并允许的译文、工作流和争议字段，`updated_by` 使用包 manifest 用户；普通包任务只合并允许的执行状态。
 10. 维护包在内存中准备 project/members 最终内容。
 11. 去重合并其余包内 events，并生成导入日志事件。
 12. 将所有目标文件加入同一个补偿式写入计划。

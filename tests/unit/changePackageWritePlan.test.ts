@@ -49,6 +49,17 @@ async function createChangePackageFixture(options: {
           options.requireSignedChangePackages === true,
       },
     },
+    files: [
+      {
+        id: "file-1",
+        name: "dialog.txt",
+        source_path: "source/dialog.txt",
+        entries_path: "entries/file-1",
+        type: "txt",
+        hidden: false,
+        locked: false,
+      },
+    ],
   });
   const actor = createMember(["owner"], { id: "owner-1", name: "Owner" });
   const contributor = createMember(["translator"], {
@@ -64,6 +75,24 @@ async function createChangePackageFixture(options: {
     status: "translated",
     updated_by: actor.id,
   });
+  const defaultTask: Task = {
+    id: "task-default",
+    type: "translate",
+    title: "Translate default scope",
+    description: "",
+    file_id: "file-1",
+    range_start: 1,
+    range_end: 1,
+    entry_ids: [],
+    assignee: contributor.id,
+    status: "assigned",
+    target: "",
+    submit_method: "change_package",
+    created_by: actor.id,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    due_at: "",
+  };
   const packageEntry = {
     ...originalEntry,
     ...options.packageEntry,
@@ -158,9 +187,9 @@ async function createChangePackageFixture(options: {
   await storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
     originalEntry,
   ]);
-  if (options.originalTask) {
-    await storage.writeJsonl("tasks/tasks.jsonl", [options.originalTask]);
-  }
+  await storage.writeJsonl("tasks/tasks.jsonl", [
+    options.originalTask ?? defaultTask,
+  ]);
 
   return {
     storage,
@@ -349,6 +378,24 @@ async function createExportFixture(options: {
           updated_by: contributor.id,
         }),
       )}\n`,
+      "tasks/tasks.jsonl": `${JSON.stringify({
+        id: "task-1",
+        type: "translate",
+        title: "Translate",
+        description: "",
+        file_id: "file-1",
+        range_start: 1,
+        range_end: 1,
+        entry_ids: [],
+        assignee: contributor.id,
+        status: "assigned",
+        target: "",
+        submit_method: "change_package",
+        created_by: owner.id,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+        due_at: "",
+      })}\n`,
       "logs/events.jsonl": "",
     },
     "change-package-export-test.hproj",
@@ -423,12 +470,139 @@ describe("ordinary change-package write plan", () => {
     setChangesProjectStorage(fixture.storage);
 
     await expect(
-      applyChangePackage(fixture.changePackage, [], {
-        actor: fixture.actor,
-      }),
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            entryId: fixture.originalEntry.id,
+            action: "use_package",
+          },
+        ],
+        {
+          actor: fixture.actor,
+        },
+      ),
     ).resolves.toMatchObject({
       appliedEntries: 1,
     });
+  });
+
+  it("merges dispute fields from ordinary packages inside assigned task scope", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        disputed: true,
+        dispute_reason: "Needs wording check",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            entryId: fixture.originalEntry.id,
+            action: "use_package",
+          },
+        ],
+        {
+          actor: fixture.actor,
+        },
+      ),
+    ).resolves.toMatchObject({
+      appliedEntries: 1,
+    });
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        disputed: true,
+        dispute_reason: "Needs wording check",
+      },
+    ]);
+  });
+
+  it("rejects ordinary member packages outside assigned task scope", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        id: "file-1:2",
+        index: 2,
+        target: "Outside scope",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("任务范围外");
+  });
+
+  it("does not let unsigned packages forge a manager to bypass task scope", async () => {
+    const fixture = await createChangePackageFixture();
+
+    fixture.changePackage.manifest.user_id = fixture.actor.id;
+    fixture.changePackage.manifest.user_name = fixture.actor.name;
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("任务范围外");
+  });
+
+  it("allows managers to export changes from another member's task", async () => {
+    const fixture = await createExportFixture();
+
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage("owner-1", {
+      mode: "task_changes",
+      taskIds: ["task-1"],
+      actor: fixture.members[0],
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(changePackage.manifest.scopes).toEqual(["task:task-1"]);
+    expect(Object.values(changePackage.entries).flat()).toMatchObject([
+      {
+        updated_by: fixture.contributor.id,
+        target: "Translated",
+      },
+    ]);
+  });
+
+  it("rejects exporting another member's task for ordinary members", async () => {
+    const fixture = await createExportFixture();
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      exportChangePackage(fixture.contributor.id, {
+        mode: "task_changes",
+        taskIds: ["task-1"],
+        actor: createMember(["translator"], {
+          id: "member-3",
+          name: "Other translator",
+        }),
+      }),
+    ).rejects.toThrow("Login required");
+    await expect(
+      exportChangePackage("member-3", {
+        mode: "task_changes",
+        taskIds: ["task-1"],
+        actor: createMember(["translator"], {
+          id: "member-3",
+          name: "Other translator",
+        }),
+      }),
+    ).rejects.toThrow("普通成员只能导出分配给自己的任务修改");
   });
 
   it("commits merged content and one import log entry", async () => {

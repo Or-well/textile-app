@@ -58,7 +58,7 @@ function packageTypeText(preview: ChangePackagePreview): string {
   }
 
   if (preview.packageType === "task_changes") {
-    return "所选任务修改";
+    return "所选任务范围修改";
   }
 
   if (preview.packageType === "maintenance_changes") {

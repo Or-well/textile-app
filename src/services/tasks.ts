@@ -18,7 +18,6 @@ import {
 import { calculateEntryProgress, type ProgressWeights } from "./stats";
 import {
   canAssignTask,
-  canClaimTask,
   canCompleteTask,
   canCreateTask,
   canDeleteTask,
@@ -65,6 +64,7 @@ export interface TaskDraft {
   description?: string;
   type: TaskType;
   file_id?: string;
+  file_ids?: string[];
   range_start: number;
   range_end: number;
   entry_ids?: string[];
@@ -92,7 +92,6 @@ const TASK_TYPES: readonly TaskType[] = [
   "proofread",
   "review",
   "term",
-  "export",
   "custom",
 ];
 const SUBMIT_METHODS: readonly TaskSubmitMethod[] = [
@@ -124,6 +123,9 @@ const TASK_STATUS_TRANSITIONS: Record<string, Partial<Record<TaskStatus, readonl
   reopen: {
     submitted: ["assigned", "in_progress", "unassigned"],
     completed: ["assigned", "in_progress", "unassigned"],
+  },
+  cancel_submit: {
+    submitted: ["assigned", "in_progress"],
   },
 };
 
@@ -257,6 +259,27 @@ function normalizeEntryIds(entryIds: unknown): string[] {
   return [];
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return Array.from(
+      new Set(value.map(String).map((item) => item.trim()).filter(Boolean)),
+    );
+  }
+
+  if (typeof value === "string") {
+    return Array.from(
+      new Set(
+        value
+          .split(/[\n,，\s]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  return [];
+}
+
 function normalizeProofreadRound(value: unknown): ProofreadRequired | undefined {
   const parsed = Number(value);
 
@@ -274,13 +297,16 @@ function normalizeTask(row: Partial<Task>): Task {
   const assignee = row.assignee?.trim() ?? "";
   const status = normalizeTaskStatus(row.status, assignee);
   const type = isTaskType(row.type) ? row.type : "custom";
+  const fileIds = normalizeStringList(row.file_ids);
+  const fileId = row.file_id?.trim() ?? fileIds[0] ?? "";
 
   return {
     id: row.id?.trim() || createId("task"),
     title: row.title?.trim() || "未命名任务",
     description: row.description ?? "",
     type,
-    file_id: row.file_id?.trim() ?? "",
+    file_id: fileId,
+    file_ids: fileIds.length > 0 ? fileIds : undefined,
     range_start: rangeStart,
     range_end: rangeEnd,
     entry_ids: normalizeEntryIds(row.entry_ids),
@@ -404,49 +430,58 @@ async function loadAllEntries(): Promise<Entry[]> {
 }
 
 async function loadEntriesForTask(task: Task): Promise<Entry[]> {
-  if (task.file_id) {
-    return (await loadEntriesForFile(task.file_id)).filter((entry) =>
-      isEntryInTask(entry, task),
-    );
-  }
-
   if (task.entry_ids.length > 0) {
     const ids = new Set(task.entry_ids);
 
     return (await loadAllEntries()).filter((entry) => ids.has(entry.id));
   }
 
+  if (task.file_ids?.length) {
+    const entryGroups = await Promise.all(
+      task.file_ids.map((fileId) => loadEntriesForFile(fileId)),
+    );
+
+    return entryGroups.flat();
+  }
+
+  if (task.file_id) {
+    return (await loadEntriesForFile(task.file_id)).filter((entry) =>
+      isEntryInTask(entry, task),
+    );
+  }
+
   return [];
 }
 
 async function validateTaskScope(task: Task): Promise<void> {
-  if (task.file_id) {
-    const entries = await loadEntriesForFile(task.file_id);
+  if (task.entry_ids.length > 0) {
+    const entries = await loadAllEntries();
+    const ids = new Set(entries.map((entry) => entry.id));
+    const missingIds = task.entry_ids.filter((entryId) => !ids.has(entryId));
 
-    if (task.entry_ids.length > 0) {
-      const ids = new Set(entries.map((entry) => entry.id));
-      const missingIds = task.entry_ids.filter((entryId) => !ids.has(entryId));
-
-      if (missingIds.length > 0) {
-        throw new Error(`Task entries do not belong to file ${task.file_id}: ${missingIds.join(", ")}`);
-      }
-    } else if (!entries.some((entry) => isEntryInTask(entry, task))) {
-      throw new Error("Task range does not match any entries.");
+    if (missingIds.length > 0) {
+      throw new Error(`Task entries do not exist: ${missingIds.join(", ")}`);
     }
 
     return;
   }
 
-  if (task.entry_ids.length === 0) {
+  if (task.file_ids?.length) {
+    for (const fileId of task.file_ids) {
+      await loadEntriesForFile(fileId);
+    }
+
     return;
   }
 
-  const entries = await loadAllEntries();
-  const ids = new Set(entries.map((entry) => entry.id));
-  const missingIds = task.entry_ids.filter((entryId) => !ids.has(entryId));
+  if (task.file_id) {
+    const entries = await loadEntriesForFile(task.file_id);
 
-  if (missingIds.length > 0) {
-    throw new Error(`Task entries do not exist: ${missingIds.join(", ")}`);
+    if (!entries.some((entry) => isEntryInTask(entry, task))) {
+      throw new Error("Task range does not match any entries.");
+    }
+
+    return;
   }
 }
 
@@ -490,6 +525,10 @@ export async function getTasksByUser(userId: string): Promise<Task[]> {
   return tasks.filter((task) => task.assignee === userId);
 }
 
+export async function getTaskEntries(task: Task): Promise<Entry[]> {
+  return loadEntriesForTask(task);
+}
+
 export async function getTaskFileEntryBounds(
   fileId: string,
 ): Promise<TaskFileEntryBounds> {
@@ -516,6 +555,10 @@ export async function getTaskFileEntryBounds(
 export function isEntryInTask(entry: Entry, task: Task): boolean {
   if (task.entry_ids.length > 0) {
     return task.entry_ids.includes(entry.id);
+  }
+
+  if (task.file_ids?.length) {
+    return task.file_ids.includes(entry.file_id);
   }
 
   return (
@@ -669,7 +712,7 @@ export async function assignTask(
 export async function claimTask(taskId: string, userId: string): Promise<Task> {
   const actor = getTaskActor();
 
-  assertTaskWritePermission(canClaimTask(actor));
+  assertTaskWritePermission(canAssignTask(actor) || canManageTask(actor));
   await assertTasksEnabled();
 
   return updateTaskById(taskId, (task) =>
@@ -704,6 +747,29 @@ export async function submitTask(taskId: string): Promise<Task> {
 
       return mergeTaskPatch(task, {
         status: "submitted",
+      });
+    },
+  );
+}
+
+export async function cancelTaskSubmission(taskId: string): Promise<Task> {
+  const actor = getTaskActor();
+
+  assertTaskWritePermission(canSubmitTask(actor));
+  await assertTasksEnabled();
+
+  return updateTaskById(taskId, (task) =>
+    {
+      if (task.assignee !== actor.id && !canManageTask(actor)) {
+        throw new Error("Only assignee can cancel this task submission.");
+      }
+
+      const status = task.assignee ? "in_progress" : "assigned";
+
+      assertTaskStatusTransition("cancel_submit", task.status, status);
+
+      return mergeTaskPatch(task, {
+        status,
       });
     },
   );

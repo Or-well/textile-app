@@ -6,10 +6,10 @@ import TaskPanel from "../components/TaskPanel.vue";
 import type { Member, ProjectConfig, Task, TaskStatus } from "../model/types";
 import {
   canAssignTask,
-  canClaimTask,
   canCompleteTask,
   canCreateTask,
   canDeleteTask,
+  canManageTask,
   canReclaimTask,
   canReopenTask,
   canSubmitTask,
@@ -19,6 +19,7 @@ import {
 } from "../services/permissions";
 import {
   assignTask,
+  cancelTaskSubmission,
   claimTask,
   completeTask,
   createTask,
@@ -88,7 +89,11 @@ const visibleTasks = computed(() => {
       return false;
     }
 
-    if (fileFilter.value !== "all" && task.file_id !== fileFilter.value) {
+    if (
+      fileFilter.value !== "all" &&
+      task.file_id !== fileFilter.value &&
+      !task.file_ids?.includes(fileFilter.value)
+    ) {
       return false;
     }
 
@@ -103,18 +108,19 @@ const selectedTaskActions = computed(() => {
   return {
     update: Boolean(task && canUpdateTask(currentUser.value)),
     assign: Boolean(task && canAssignTask(currentUser.value)),
-    claim: Boolean(
-      task &&
-        canClaimTask(currentUser.value) &&
-        !task.assignee &&
-        task.status === "unassigned",
-    ),
+    claim: false,
     submit: Boolean(
       task &&
         canSubmitTask(currentUser.value) &&
-        isAssignee &&
+        (isAssignee || canManageTask(currentUser.value)) &&
         (task.status === "assigned" ||
           task.status === "in_progress"),
+    ),
+    cancelSubmit: Boolean(
+      task &&
+        canSubmitTask(currentUser.value) &&
+        (isAssignee || canManageTask(currentUser.value)) &&
+        task.status === "submitted",
     ),
     complete: Boolean(
       task &&
@@ -266,6 +272,10 @@ function handleSubmitTask(taskId: string) {
   void runTaskAction(() => submitTask(taskId), "任务已提交。");
 }
 
+function handleCancelTaskSubmission(taskId: string) {
+  void runTaskAction(() => cancelTaskSubmission(taskId), "已取消提交。");
+}
+
 function handleCompleteTask(taskId: string) {
   void runTaskAction(() => completeTask(taskId), "任务已完成。");
 }
@@ -289,7 +299,12 @@ function handleDeleteTask(taskId: string) {
 }
 
 function handleOpenTarget(task: Task) {
-  emit("openTaskTarget", task.file_id, task.entry_ids[0] ?? "", task.range_start);
+  emit(
+    "openTaskTarget",
+    task.file_id || task.file_ids?.[0] || "",
+    task.entry_ids[0] ?? "",
+    task.range_start,
+  );
 }
 
 watch(
@@ -412,6 +427,7 @@ watch(visibleTasks, (nextTasks) => {
         @assign-task="handleAssignTask"
         @claim-task="handleClaimTask"
         @submit-task="handleSubmitTask"
+        @cancel-task-submission="handleCancelTaskSubmission"
         @complete-task="handleCompleteTask"
         @reclaim-task="handleReclaimTask"
         @reopen-task="handleReopenTask"

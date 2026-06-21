@@ -27,7 +27,6 @@ const typeLabels: Record<Task["type"], string> = {
   proofread: "校对",
   review: "审校",
   term: "术语",
-  export: "导出",
   custom: "自定义",
 };
 
@@ -37,6 +36,16 @@ function getMemberName(memberId: string): string {
 
 function getFileName(fileId: string): string {
   return props.files.find((file) => file.id === fileId)?.name || fileId || "未关联文件";
+}
+
+function getTaskFileText(task: Task): string {
+  if (task.file_ids?.length) {
+    return task.file_ids
+      .map((fileId) => getFileName(fileId))
+      .join("、");
+  }
+
+  return getFileName(task.file_id);
 }
 </script>
 
@@ -54,8 +63,10 @@ function getFileName(fileId: string): string {
       <span>{{ getMemberName(task.assignee) }}</span>
     </span>
     <span class="task-target">
-      {{ getFileName(task.file_id) }}
-      <template v-if="task.file_id"> · {{ task.range_start }}-{{ task.range_end }}</template>
+      {{ getTaskFileText(task) }}
+      <template v-if="task.entry_ids.length > 0"> · 指定 {{ task.entry_ids.length }} 条</template>
+      <template v-else-if="task.file_ids?.length"> · 全部词条</template>
+      <template v-else-if="task.file_id"> · {{ task.range_start }}-{{ task.range_end }}</template>
     </span>
     <span v-if="progress" class="progress-track" aria-label="任务进度">
       <span :style="{ width: `${progress.progressPercent}%` }"></span>

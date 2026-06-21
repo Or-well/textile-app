@@ -73,6 +73,7 @@ import {
   canImportMemberChangePackage,
   canImportMaintenanceChangePackage,
   canImportProjectUpdatePackage,
+  canManageTask,
   canSignChangePackage,
   setPermissionProject,
 } from "./permissions";
@@ -86,6 +87,7 @@ export type ExportChangePackageMode =
 export interface ExportChangePackageOptions {
   mode: ExportChangePackageMode;
   taskId?: string;
+  taskIds?: string[];
   sign?: boolean;
   actor?: Member | null;
 }
@@ -229,7 +231,11 @@ type EntryConflictReason =
   | "translated_by"
   | "proofread_by"
   | "proofread_count"
-  | "reviewed_by";
+  | "reviewed_by"
+  | "disputed"
+  | "dispute_reason"
+  | "dispute_resolved_at"
+  | "dispute_resolved_by";
 type EntryProtectedField =
   | "id"
   | "file_id"
@@ -238,10 +244,6 @@ type EntryProtectedField =
   | "speaker"
   | "source"
   | "context"
-  | "disputed"
-  | "dispute_reason"
-  | "dispute_resolved_at"
-  | "dispute_resolved_by"
   | "assignee"
   | "word_count"
   | "hidden"
@@ -251,6 +253,7 @@ type TaskProtectedField =
   | "title"
   | "description"
   | "file_id"
+  | "file_ids"
   | "range_start"
   | "range_end"
   | "entry_ids"
@@ -270,6 +273,10 @@ const ENTRY_CONFLICT_FIELDS = [
   "proofread_by",
   "proofread_count",
   "reviewed_by",
+  "disputed",
+  "dispute_reason",
+  "dispute_resolved_at",
+  "dispute_resolved_by",
 ] as const satisfies readonly EntryConflictReason[];
 const ENTRY_PROTECTED_FIELDS = [
   "id",
@@ -279,10 +286,6 @@ const ENTRY_PROTECTED_FIELDS = [
   "speaker",
   "source",
   "context",
-  "disputed",
-  "dispute_reason",
-  "dispute_resolved_at",
-  "dispute_resolved_by",
   "assignee",
   "word_count",
   "hidden",
@@ -293,6 +296,7 @@ const TASK_PROTECTED_FIELDS = [
   "title",
   "description",
   "file_id",
+  "file_ids",
   "range_start",
   "range_end",
   "entry_ids",
@@ -770,6 +774,10 @@ function isEntryInTask(entry: Entry, task: Task): boolean {
     return task.entry_ids.includes(entry.id);
   }
 
+  if (task.file_ids?.length) {
+    return task.file_ids.includes(entry.file_id);
+  }
+
   return (
     entry.file_id === task.file_id &&
     entry.index >= task.range_start &&
@@ -781,39 +789,47 @@ function commentPathForEntry(entry: Entry): string {
   return `comments/${entry.file_id}/${String(entry.index).padStart(6, "0")}.jsonl`;
 }
 
-async function loadTask(storage: ProjectStorage, taskId: string): Promise<Task> {
+async function loadTasksByIds(
+  storage: ProjectStorage,
+  taskIds: string[],
+): Promise<Task[]> {
   const tasks = await storage.readJsonl<Task>("tasks/tasks.jsonl");
-  const task = tasks.find((row) => row.id === taskId);
+  const selectedTasks = taskIds.map((taskId) => {
+    const task = tasks.find((row) => row.id === taskId);
 
-  if (!task) {
-    throw new Error("没有找到要导出的任务。请重新打开项目后再试。");
+    if (!task) {
+      throw new Error(`没有找到要导出的任务：${taskId}。`);
+    }
+
+    return task;
+  });
+
+  return selectedTasks;
+}
+
+async function loadExportableTasksForUser(
+  storage: ProjectStorage,
+  userId: string,
+): Promise<Task[]> {
+  if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
+    return [];
   }
 
-  return task;
+  const tasks = await storage.readJsonl<Task>("tasks/tasks.jsonl");
+
+  return tasks.filter((task) => task.assignee === userId);
 }
 
 async function loadTaskEntries(
   storage: ProjectStorage,
   task: Task,
 ): Promise<Entry[]> {
-  const entryDirectory = `entries/${task.file_id}`;
-  const fileNames = await storage.listFiles(entryDirectory);
-  const chunkFiles = fileNames
-    .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
-    .sort((a, b) => a.localeCompare(b));
-  const groups = await Promise.all(
-    chunkFiles.map(async (fileName) => {
-      const path = `${entryDirectory}/${fileName}`;
-      const entries = await storage.readJsonl<Entry>(path);
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const groups = await collectProjectEntryGroups(storage, project);
 
-      return {
-        path,
-        entries: normalizeEntries(entries).filter((entry) => isEntryInTask(entry, task)),
-      };
-    }),
-  );
-
-  return groups.flatMap((group) => group.entries);
+  return groups
+    .flatMap((group) => group.entries)
+    .filter((entry) => isEntryInTask(entry, task));
 }
 
 async function collectProjectEntryGroups(
@@ -881,38 +897,53 @@ async function collectAllEntries(
 async function collectTaskChangedEntries(
   storage: ProjectStorage,
   task: Task,
-  userId: string,
+  userIds: Set<string>,
 ): Promise<Record<string, Entry[]>> {
-  const entryDirectory = `entries/${task.file_id}`;
-  const fileNames = await storage.listFiles(entryDirectory);
-  const chunkFiles = fileNames
-    .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
-    .sort((a, b) => a.localeCompare(b));
   const changedEntries: Record<string, Entry[]> = {};
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const groups = await collectProjectEntryGroups(storage, project);
 
-  for (const chunkFile of chunkFiles) {
-    const path = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await storage.readJsonl<Entry>(path));
-    const rows = entries.filter(
-      (entry) => isEntryInTask(entry, task) && entry.updated_by === userId,
+  for (const group of groups) {
+    const rows = group.entries.filter(
+      (entry) => isEntryInTask(entry, task) && userIds.has(entry.updated_by),
     );
 
     if (rows.length > 0) {
-      changedEntries[path] = rows;
+      changedEntries[group.path] = rows;
     }
   }
 
   return changedEntries;
 }
 
+function mergeEntryRecords(
+  records: Array<Record<string, Entry[]>>,
+): Record<string, Entry[]> {
+  const merged: Record<string, Entry[]> = {};
+
+  for (const record of records) {
+    for (const [path, rows] of Object.entries(record)) {
+      const existingRows = merged[path] ?? [];
+      const existingIds = new Set(existingRows.map((entry) => entry.id));
+
+      merged[path] = [
+        ...existingRows,
+        ...rows.filter((entry) => !existingIds.has(entry.id)),
+      ];
+    }
+  }
+
+  return merged;
+}
+
 function getPackageEntries(payloadEntries: Record<string, Entry[]>): Entry[] {
   return Object.values(payloadEntries).flat();
 }
 
-async function collectComments(
+async function collectCommentsByUsers(
   storage: ProjectStorage,
   entries: Entry[],
-  userId: string,
+  userIds: Set<string>,
 ): Promise<Record<string, Comment[]>> {
   const comments: Record<string, Comment[]> = {};
 
@@ -924,7 +955,7 @@ async function collectComments(
     }
 
     const rows = (await storage.readJsonl<Comment>(path)).filter(
-      (comment) => comment.user_id === userId,
+      (comment) => userIds.has(comment.user_id),
     );
 
     if (rows.length > 0) {
@@ -933,6 +964,53 @@ async function collectComments(
   }
 
   return comments;
+}
+
+async function collectTaskScopedChanges(
+  storage: ProjectStorage,
+  tasks: Task[],
+  userId: string,
+  options: { includeAssignees?: boolean } = {},
+): Promise<Pick<ChangePackagePayload, "entries" | "comments" | "tasks" | "events">> {
+  const entries = mergeEntryRecords(
+    await Promise.all(
+      tasks.map((task) =>
+        collectTaskChangedEntries(
+          storage,
+          task,
+          new Set([
+            userId,
+            ...(options.includeAssignees && task.assignee
+              ? [task.assignee]
+              : []),
+          ]),
+        ),
+      ),
+    ),
+  );
+  const scopeEntries = getPackageEntries(entries);
+  const commentUsers = new Set([
+    userId,
+    ...(options.includeAssignees
+      ? tasks.map((task) => task.assignee).filter(Boolean)
+      : []),
+  ]);
+  const comments = await collectCommentsByUsers(storage, scopeEntries, commentUsers);
+  const changedTaskRows = tasks.filter(
+    (task) =>
+      task.assignee === userId ||
+      task.created_by === userId ||
+      (options.includeAssignees && task.assignee),
+  );
+
+  return {
+    entries,
+    comments,
+    tasks: changedTaskRows.length > 0
+      ? { "tasks/tasks.jsonl": changedTaskRows }
+      : {},
+    events: await collectEventsByUsers(storage, scopeEntries, commentUsers),
+  };
 }
 
 async function collectUserComments(
@@ -1049,16 +1127,10 @@ async function collectAllTasks(storage: ProjectStorage): Promise<Record<string, 
   return { "tasks/tasks.jsonl": await storage.readJsonl<Task>("tasks/tasks.jsonl") };
 }
 
-async function collectTaskRows(storage: ProjectStorage, task: Task): Promise<Record<string, Task[]>> {
-  return (await storage.fileExists("tasks/tasks.jsonl"))
-    ? { "tasks/tasks.jsonl": [task] }
-    : {};
-}
-
-async function collectEvents(
+async function collectEventsByUsers(
   storage: ProjectStorage,
   taskEntries: Entry[],
-  userId: string,
+  userIds: Set<string>,
 ): Promise<ProjectEvent[]> {
   if (!(await storage.fileExists("logs/events.jsonl"))) {
     return [];
@@ -1068,7 +1140,7 @@ async function collectEvents(
 
   return (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
     (event) =>
-      event.user_id === userId &&
+      userIds.has(event.user_id) &&
       (!event.entry_id || taskEntryIds.has(event.entry_id)),
   );
 }
@@ -1261,11 +1333,17 @@ function mergeOrdinaryPackageEntry(
 
   if (normalizedPackageEntry.target !== currentEntry.target) {
     if (operation === "translation_edit") {
-      return applyEntryWorkflowOperation(currentEntry, {
-        userId,
-        target: normalizedPackageEntry.target,
-        operation,
-        updatedAt,
+      return normalizeEntry({
+        ...applyEntryWorkflowOperation(currentEntry, {
+          userId,
+          target: normalizedPackageEntry.target,
+          operation,
+          updatedAt,
+        }),
+        disputed: normalizedPackageEntry.disputed,
+        dispute_reason: normalizedPackageEntry.dispute_reason,
+        dispute_resolved_at: normalizedPackageEntry.dispute_resolved_at,
+        dispute_resolved_by: normalizedPackageEntry.dispute_resolved_by,
       });
     }
 
@@ -1281,6 +1359,10 @@ function mergeOrdinaryPackageEntry(
       proofread_by: normalizedPackageEntry.proofread_by,
       proofread_count: normalizedPackageEntry.proofread_count,
       reviewed_by: normalizedPackageEntry.reviewed_by,
+      disputed: normalizedPackageEntry.disputed,
+      dispute_reason: normalizedPackageEntry.dispute_reason,
+      dispute_resolved_at: normalizedPackageEntry.dispute_resolved_at,
+      dispute_resolved_by: normalizedPackageEntry.dispute_resolved_by,
       updated_at: updatedAt,
       updated_by: userId,
     });
@@ -1293,9 +1375,72 @@ function mergeOrdinaryPackageEntry(
     proofread_by: normalizedPackageEntry.proofread_by,
     proofread_count: normalizedPackageEntry.proofread_count,
     reviewed_by: normalizedPackageEntry.reviewed_by,
+    disputed: normalizedPackageEntry.disputed,
+    dispute_reason: normalizedPackageEntry.dispute_reason,
+    dispute_resolved_at: normalizedPackageEntry.dispute_resolved_at,
+    dispute_resolved_by: normalizedPackageEntry.dispute_resolved_by,
     updated_at: updatedAt,
     updated_by: userId,
   });
+}
+
+async function getTaskScopeEntryIds(
+  storage: ProjectStorage,
+  tasks: Task[],
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+
+  for (const task of tasks) {
+    for (const entry of await loadTaskEntries(storage, task)) {
+      ids.add(entry.id);
+    }
+  }
+
+  return ids;
+}
+
+async function assertOrdinaryPackageWithinTaskScope(
+  storage: ProjectStorage,
+  changePackage: ReadChangePackage,
+  members: Member[],
+  validation: ChangePackageValidation,
+): Promise<void> {
+  const exporter = members.find(
+    (member) => member.id === changePackage.manifest.user_id,
+  );
+
+  if (validation.signatureStatus === "valid" && canManageTask(exporter)) {
+    return;
+  }
+
+  const tasks = (await storage.fileExists("tasks/tasks.jsonl"))
+    ? (await storage.readJsonl<Task>("tasks/tasks.jsonl")).filter(
+        (task) => task.assignee === changePackage.manifest.user_id,
+      )
+    : [];
+  const allowedEntryIds = await getTaskScopeEntryIds(storage, tasks);
+
+  for (const packageEntry of flattenEntries(changePackage.entries)) {
+    if (!allowedEntryIds.has(packageEntry.id)) {
+      throw new Error("普通成员修改包包含分配任务范围外的词条，不能导入。");
+    }
+  }
+
+  for (const comments of Object.values(changePackage.comments)) {
+    for (const comment of comments) {
+      if (!allowedEntryIds.has(comment.entry_id)) {
+        throw new Error("普通成员修改包包含分配任务范围外的评论，不能导入。");
+      }
+    }
+  }
+
+  const allowedTaskIds = new Set(tasks.map((task) => task.id));
+
+  for (const packageTask of Object.values(changePackage.tasks).flat()) {
+    if (!allowedTaskIds.has(packageTask.id)) {
+      throw new Error("普通成员修改包包含未分配给导出者的任务状态，不能导入。");
+    }
+  }
 }
 
 function inferEntryOperationFromEvent(
@@ -1384,6 +1529,10 @@ function entryWorkflowChanged(before: Entry, after: Entry): boolean {
     before.translated_by !== after.translated_by ||
     before.proofread_count !== after.proofread_count ||
     before.reviewed_by !== after.reviewed_by ||
+    before.disputed !== after.disputed ||
+    before.dispute_reason !== after.dispute_reason ||
+    before.dispute_resolved_at !== after.dispute_resolved_at ||
+    before.dispute_resolved_by !== after.dispute_resolved_by ||
     stableStringify(before.proofread_by ?? []) !==
       stableStringify(after.proofread_by ?? [])
   );
@@ -1409,6 +1558,19 @@ function mergeOrdinaryPackageTasks(
     assertOrdinaryTaskPackageFields(currentTask, packageTask);
 
     if (currentTask.status !== packageTask.status) {
+      const allowedStatuses: Task["status"][] = [
+        "assigned",
+        "in_progress",
+        "submitted",
+      ];
+
+      if (
+        !allowedStatuses.includes(currentTask.status) ||
+        !allowedStatuses.includes(packageTask.status)
+      ) {
+        throw new Error("普通修改包只能提交任务或取消提交，不能完成、收回或重分配任务。");
+      }
+
       nextRows[index] = {
         ...currentTask,
         status: packageTask.status,
@@ -1754,16 +1916,32 @@ export async function exportChangePackage(
       throw new Error("当前成员没有导出普通修改包的权限。");
     }
 
-    if (!options.taskId) {
-      throw new Error("请选择要导出的任务。");
+    const taskIds = options.taskIds?.length
+      ? options.taskIds
+      : options.taskId
+        ? [options.taskId]
+        : [];
+
+    if (taskIds.length === 0) {
+      throw new Error("请选择至少一个任务。");
     }
 
-    const task = await loadTask(storage, options.taskId);
+    const tasks = await loadTasksByIds(storage, taskIds);
+    const canExportAnyTask = canManageTask(actor);
+    const unauthorizedTask = tasks.find(
+      (task) => task.assignee !== actor.id && !canExportAnyTask,
+    );
 
-    payload.entries = await collectTaskChangedEntries(storage, task, userId);
-    payload.comments = await collectComments(storage, await loadTaskEntries(storage, task), userId);
-    payload.tasks = await collectTaskRows(storage, task);
-    payload.events = await collectEvents(storage, getPackageEntries(payload.entries), userId);
+    if (unauthorizedTask) {
+      throw new Error("普通成员只能导出分配给自己的任务修改。");
+    }
+
+    Object.assign(
+      payload,
+      await collectTaskScopedChanges(storage, tasks, userId, {
+        includeAssignees: canExportAnyTask,
+      }),
+    );
   }
 
   if (options.mode === "member_changes") {
@@ -1771,11 +1949,22 @@ export async function exportChangePackage(
       throw new Error("当前成员没有导出普通修改包的权限。");
     }
 
-    payload.entries = await collectUserChangedEntries(storage, project, userId);
-    payload.comments = await collectUserComments(storage, userId);
+    if (canManageTask(actor)) {
+      payload.entries = await collectUserChangedEntries(storage, project, userId);
+      payload.comments = await collectUserComments(storage, userId);
+      payload.tasks = await collectUserTasks(storage, userId);
+      payload.events = await collectUserEvents(storage, userId);
+    } else {
+      Object.assign(
+        payload,
+        await collectTaskScopedChanges(
+          storage,
+          await loadExportableTasksForUser(storage, userId),
+          userId,
+        ),
+      );
+    }
     payload.terms = await collectUserTerms(storage, userId);
-    payload.tasks = await collectUserTasks(storage, userId);
-    payload.events = await collectUserEvents(storage, userId);
   }
 
   if (options.mode === "maintenance_changes") {
@@ -1821,7 +2010,7 @@ export async function exportChangePackage(
   const summary = getPackageSummary(payload);
 
   if (!hasPackageContent(summary)) {
-    throw new Error("当前范围内没有可导出的修改。");
+    throw new Error("当前导出范围内没有可提交的修改。");
   }
 
   const requiresSignature =
@@ -1850,8 +2039,9 @@ export async function exportChangePackage(
     exported_by: actor.id,
     exported_at: createdAt,
     scopes:
-      options.mode === "task_changes" && options.taskId
-        ? [`task:${options.taskId}`]
+      options.mode === "task_changes"
+        ? (options.taskIds?.length ? options.taskIds : options.taskId ? [options.taskId] : [])
+            .map((taskId) => `task:${taskId}`)
         : [options.mode],
     summary,
   };
@@ -2665,6 +2855,15 @@ export async function applyChangePackage(
   const storage = getProjectStorage();
   const conflicts = await detectConflicts(changePackage);
   const useOrdinarySafeguards = isMemberChangePackage(validation.packageType);
+
+  if (useOrdinarySafeguards) {
+    await assertOrdinaryPackageWithinTaskScope(
+      storage,
+      changePackage,
+      await loadProjectMembers(storage),
+      validation,
+    );
+  }
 
   await precheckChangePackageImport(changePackage, validation, conflicts);
 
