@@ -69,6 +69,7 @@ import {
 import {
   assertCan,
   canDangerousImportChangePackage,
+  canDeleteComment,
   canExportMemberChangePackage,
   canExportProjectUpdatePackage,
   canImportMemberChangePackage,
@@ -136,6 +137,11 @@ export interface ChangePackagePreview {
   manifest: ChangePackageManifest;
   changedEntries: number;
   commentCount: number;
+  newCommentCount: number;
+  updatedCommentCount: number;
+  deletedCommentCount: number;
+  changedEntryContextCount: number;
+  changedDisputeCount: number;
   termCount: number;
   contextCount: number;
   sourceFileCount: number;
@@ -183,15 +189,35 @@ export interface ChangePackageValidation {
   requiresMaintenanceConfirmation: boolean;
   requiresOwnerCredentialConfirmation: boolean;
   requiresSignedPackage: boolean;
+  newCommentCount: number;
+  updatedCommentCount: number;
+  deletedCommentCount: number;
+  changedEntryContextCount: number;
+  changedDisputeCount: number;
 }
 
-export interface ChangeConflict {
+export interface EntryChangeConflict {
+  kind: "entry";
+  conflictId: string;
   entryId: string;
   path: string;
   mainEntry: Entry;
   packageEntry: Entry;
   reasons: EntryConflictReason[];
 }
+
+export interface CommentChangeConflict {
+  kind: "comment";
+  conflictId: string;
+  entryId: string;
+  commentId: string;
+  path: string;
+  mainComment: Comment;
+  packageComment: Comment;
+  reasons: CommentConflictReason[];
+}
+
+export type ChangeConflict = EntryChangeConflict | CommentChangeConflict;
 
 export type ConflictResolutionAction =
   | "keep_main"
@@ -200,10 +226,12 @@ export type ConflictResolutionAction =
   | "skip";
 
 export interface ConflictResolution {
-  entryId: string;
+  conflictId?: string;
+  entryId?: string;
   action: ConflictResolutionAction;
   target?: string;
   status?: Entry["status"];
+  context?: string;
 }
 
 export interface ApplyChangePackageResult {
@@ -236,7 +264,12 @@ type EntryConflictReason =
   | "disputed"
   | "dispute_reason"
   | "dispute_resolved_at"
-  | "dispute_resolved_by";
+  | "dispute_resolved_by"
+  | "context";
+type CommentConflictReason =
+  | "status"
+  | "resolved_at"
+  | "resolved_by";
 type EntryProtectedField =
   | "id"
   | "file_id"
@@ -244,7 +277,6 @@ type EntryProtectedField =
   | "key"
   | "speaker"
   | "source"
-  | "context"
   | "assignee"
   | "word_count"
   | "hidden"
@@ -278,6 +310,7 @@ const ENTRY_CONFLICT_FIELDS = [
   "dispute_reason",
   "dispute_resolved_at",
   "dispute_resolved_by",
+  "context",
 ] as const satisfies readonly EntryConflictReason[];
 const ENTRY_PROTECTED_FIELDS = [
   "id",
@@ -286,7 +319,6 @@ const ENTRY_PROTECTED_FIELDS = [
   "key",
   "speaker",
   "source",
-  "context",
   "assignee",
   "word_count",
   "hidden",
@@ -310,6 +342,20 @@ const TASK_PROTECTED_FIELDS = [
   "due_at",
   "due_time_zone",
 ] as const satisfies readonly TaskProtectedField[];
+const COMMENT_IMMUTABLE_FIELDS = [
+  "id",
+  "entry_id",
+  "file_id",
+  "user_id",
+  "body",
+  "reply_to",
+  "created_at",
+] as const satisfies readonly (keyof Comment)[];
+const COMMENT_CONFLICT_FIELDS = [
+  "status",
+  "resolved_at",
+  "resolved_by",
+] as const satisfies readonly CommentConflictReason[];
 const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_entries: 0,
   changed_comments: 0,
@@ -640,6 +686,13 @@ function createBaseValidation(
     requiresMaintenanceConfirmation: false,
     requiresOwnerCredentialConfirmation: false,
     requiresSignedPackage: false,
+    newCommentCount: countRecordRows(changePackage.comments),
+    updatedCommentCount: 0,
+    deletedCommentCount: changePackage.events.filter(
+      (event) => event.type === "comment.deleted",
+    ).length,
+    changedEntryContextCount: 0,
+    changedDisputeCount: 0,
   };
 }
 
@@ -956,7 +1009,9 @@ async function collectCommentsByUsers(
     }
 
     const rows = (await storage.readJsonl<Comment>(path)).filter(
-      (comment) => userIds.has(comment.user_id),
+      (comment) =>
+        userIds.has(comment.user_id) ||
+        Boolean(comment.updated_by && userIds.has(comment.updated_by)),
     );
 
     if (rows.length > 0) {
@@ -1033,7 +1088,8 @@ async function collectUserComments(
     for (const fileName of fileNames.filter((name) => name.endsWith(".jsonl"))) {
       const path = `${directory}/${fileName}`;
       const rows = (await storage.readJsonl<Comment>(path)).filter(
-        (comment) => comment.user_id === userId,
+        (comment) =>
+          comment.user_id === userId || comment.updated_by === userId,
       );
 
       if (rows.length > 0) {
@@ -1281,6 +1337,108 @@ function samePackageValue(left: unknown, right: unknown): boolean {
   return stableStringify(left ?? null) === stableStringify(right ?? null);
 }
 
+function normalizePackageComment(comment: Comment): Comment {
+  const status = comment.status ?? (comment.resolved ? "resolved" : "open");
+
+  return {
+    ...comment,
+    reply_to: comment.reply_to ?? null,
+    status,
+    resolved: status === "resolved",
+    updated_at: comment.updated_at || comment.created_at,
+    resolved_at: status === "resolved" ? comment.resolved_at : "",
+    resolved_by: status === "resolved" ? comment.resolved_by : "",
+  };
+}
+
+function assertOrdinaryCommentPackageFields(
+  mainComment: Comment,
+  packageComment: Comment,
+): void {
+  const normalizedMainComment = normalizePackageComment(mainComment);
+  const normalizedPackageComment = normalizePackageComment(packageComment);
+
+  for (const field of COMMENT_IMMUTABLE_FIELDS) {
+    if (
+      field === "file_id" &&
+      (!normalizedMainComment.file_id || !normalizedPackageComment.file_id)
+    ) {
+      continue;
+    }
+
+    if (
+      !samePackageValue(
+        normalizedMainComment[field],
+        normalizedPackageComment[field],
+      )
+    ) {
+      throw new Error(`普通修改包不能修改评论受保护字段：${field}。`);
+    }
+  }
+}
+
+function getCommentConflictReasons(
+  mainComment: Comment,
+  packageComment: Comment,
+): CommentConflictReason[] {
+  assertOrdinaryCommentPackageFields(mainComment, packageComment);
+
+  const normalizedMainComment = normalizePackageComment(mainComment);
+  const normalizedPackageComment = normalizePackageComment(packageComment);
+
+  return COMMENT_CONFLICT_FIELDS.filter(
+    (field) =>
+      !samePackageValue(
+        normalizedMainComment[field],
+        normalizedPackageComment[field],
+      ),
+  );
+}
+
+function mergeOrdinaryPackageComment(
+  mainComment: Comment,
+  packageComment: Comment,
+): Comment {
+  assertOrdinaryCommentPackageFields(mainComment, packageComment);
+
+  const normalizedPackageComment = normalizePackageComment(packageComment);
+
+  return {
+    ...mainComment,
+    status: normalizedPackageComment.status,
+    resolved: normalizedPackageComment.resolved,
+    resolved_at: normalizedPackageComment.resolved_at,
+    resolved_by: normalizedPackageComment.resolved_by,
+    updated_at: normalizedPackageComment.updated_at,
+    updated_by: normalizedPackageComment.updated_by,
+  };
+}
+
+function getCommentDeletionIds(
+  comments: Comment[],
+  commentId: string,
+): Set<string> {
+  const deleteIds = new Set([commentId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+
+    for (const comment of comments) {
+      if (
+        comment.reply_to &&
+        deleteIds.has(comment.reply_to) &&
+        !deleteIds.has(comment.id)
+      ) {
+        deleteIds.add(comment.id);
+        changed = true;
+      }
+    }
+  }
+
+  return deleteIds;
+}
+
 function assertOrdinaryEntryPackageFields(
   mainEntry: Entry,
   packageEntry: Entry,
@@ -1345,6 +1503,7 @@ function mergeOrdinaryPackageEntry(
         dispute_reason: normalizedPackageEntry.dispute_reason,
         dispute_resolved_at: normalizedPackageEntry.dispute_resolved_at,
         dispute_resolved_by: normalizedPackageEntry.dispute_resolved_by,
+        context: normalizedPackageEntry.context,
       });
     }
 
@@ -1364,6 +1523,7 @@ function mergeOrdinaryPackageEntry(
       dispute_reason: normalizedPackageEntry.dispute_reason,
       dispute_resolved_at: normalizedPackageEntry.dispute_resolved_at,
       dispute_resolved_by: normalizedPackageEntry.dispute_resolved_by,
+      context: normalizedPackageEntry.context,
       updated_at: updatedAt,
       updated_by: userId,
     });
@@ -1387,6 +1547,7 @@ function mergeOrdinaryPackageEntry(
     dispute_reason: normalizedPackageEntry.dispute_reason,
     dispute_resolved_at: normalizedPackageEntry.dispute_resolved_at,
     dispute_resolved_by: normalizedPackageEntry.dispute_resolved_by,
+    context: normalizedPackageEntry.context,
     updated_at: updatedAt,
     updated_by: userId,
   });
@@ -1442,11 +1603,109 @@ async function assertOrdinaryPackageWithinTaskScope(
     }
   }
 
+  for (const event of changePackage.events) {
+    if (
+      event.type === "comment.deleted" &&
+      (!event.entry_id || !allowedEntryIds.has(event.entry_id))
+    ) {
+      throw new Error("普通成员修改包包含分配任务范围外的评论删除操作，不能导入。");
+    }
+  }
+
   const allowedTaskIds = new Set(tasks.map((task) => task.id));
 
   for (const packageTask of Object.values(changePackage.tasks).flat()) {
     if (!allowedTaskIds.has(packageTask.id)) {
       throw new Error("普通成员修改包包含未分配给导出者的任务状态，不能导入。");
+    }
+  }
+}
+
+function getCommentIdFromEvent(event: ProjectEvent): string {
+  return typeof event.detail?.comment_id === "string"
+    ? event.detail.comment_id
+    : "";
+}
+
+async function assertOrdinaryPackageComments(
+  storage: ProjectStorage,
+  changePackage: ReadChangePackage,
+  validation: ChangePackageValidation,
+  members: Member[],
+): Promise<void> {
+  const exporter = members.find(
+    (member) => member.id === changePackage.manifest.user_id,
+  );
+  const canSubmitOtherMembersComments =
+    validation.signatureStatus === "valid" && canManageTask(exporter);
+
+  for (const [path, packageComments] of Object.entries(changePackage.comments)) {
+    const existingComments = (await storage.fileExists(path))
+      ? await storage.readJsonl<Comment>(path)
+      : [];
+    const existingById = new Map(
+      existingComments.map((comment) => [comment.id, comment]),
+    );
+    const packageById = new Map(
+      packageComments.map((comment) => [comment.id, comment]),
+    );
+
+    if (packageById.size !== packageComments.length) {
+      throw new Error("普通修改包包含重复评论 ID，不能导入。");
+    }
+
+    for (const packageComment of packageComments) {
+      const mainComment = existingById.get(packageComment.id);
+
+      if (mainComment) {
+        const reasons = getCommentConflictReasons(mainComment, packageComment);
+
+        if (
+          reasons.length > 0 &&
+          packageComment.updated_by !== changePackage.manifest.user_id &&
+          !canSubmitOtherMembersComments
+        ) {
+          throw new Error(
+            `评论 ${packageComment.id} 的状态修改人不是修改包提交者，不能导入。`,
+          );
+        }
+      } else if (
+        packageComment.user_id !== changePackage.manifest.user_id &&
+        !canSubmitOtherMembersComments
+      ) {
+        throw new Error(
+          `新增评论 ${packageComment.id} 的作者不是修改包提交者，不能导入。`,
+        );
+      }
+
+      if (
+        packageComment.reply_to &&
+        !existingById.has(packageComment.reply_to) &&
+        !packageById.has(packageComment.reply_to)
+      ) {
+        throw new Error(
+          `评论 ${packageComment.id} 引用的父评论不存在，不能导入。`,
+        );
+      }
+    }
+  }
+
+  for (const event of changePackage.events) {
+    if (event.type !== "comment.deleted") {
+      continue;
+    }
+
+    const commentId = getCommentIdFromEvent(event);
+
+    if (!event.entry_id || !event.file_id || !commentId) {
+      throw new Error("评论删除事件缺少词条、文件或评论 ID，不能导入。");
+    }
+
+    if (
+      event.user_id !== changePackage.manifest.user_id &&
+      !canSubmitOtherMembersComments
+    ) {
+      throw new Error("评论删除事件的操作人不是修改包提交者，不能导入。");
     }
   }
 }
@@ -1541,6 +1800,7 @@ function entryWorkflowChanged(before: Entry, after: Entry): boolean {
     before.dispute_reason !== after.dispute_reason ||
     before.dispute_resolved_at !== after.dispute_resolved_at ||
     before.dispute_resolved_by !== after.dispute_resolved_by ||
+    before.context !== after.context ||
     stableStringify(before.proofread_by ?? []) !==
       stableStringify(after.proofread_by ?? [])
   );
@@ -1634,9 +1894,17 @@ function normalizeImportedTaskDeadline(
 
 function findResolution(
   resolutions: ConflictResolution[],
-  entryId: string,
+  conflict: ChangeConflict,
 ): ConflictResolution | undefined {
-  return resolutions.find((resolution) => resolution.entryId === entryId);
+  return resolutions.find(
+    (resolution) =>
+      resolution.conflictId === conflict.conflictId ||
+      (
+        conflict.kind === "entry" &&
+        !resolution.conflictId &&
+        resolution.entryId === conflict.entryId
+      ),
+  );
 }
 
 async function loadCurrentEntries(path: string): Promise<Entry[]> {
@@ -2267,6 +2535,106 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
   }
 }
 
+async function summarizePackageCollaborationChanges(
+  storage: ProjectStorage,
+  changePackage: ReadChangePackage,
+): Promise<Pick<
+  ChangePackageValidation,
+  | "newCommentCount"
+  | "updatedCommentCount"
+  | "deletedCommentCount"
+  | "changedEntryContextCount"
+  | "changedDisputeCount"
+>> {
+  let newCommentCount = 0;
+  let updatedCommentCount = 0;
+  let changedEntryContextCount = 0;
+  let changedDisputeCount = 0;
+
+  for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
+    const currentEntries = (await storage.fileExists(path))
+      ? normalizeEntries(await storage.readJsonl<Entry>(path))
+      : [];
+    const currentById = new Map(
+      currentEntries.map((entry) => [entry.id, entry]),
+    );
+
+    for (const packageEntry of packageEntries) {
+      const currentEntry = currentById.get(packageEntry.id);
+
+      if (
+        !currentEntry ||
+        !samePackageValue(currentEntry.context, packageEntry.context)
+      ) {
+        changedEntryContextCount += 1;
+      }
+
+      if (
+        !currentEntry ||
+        !samePackageValue(currentEntry.disputed, packageEntry.disputed) ||
+        !samePackageValue(
+          currentEntry.dispute_reason,
+          packageEntry.dispute_reason,
+        ) ||
+        !samePackageValue(
+          currentEntry.dispute_resolved_at,
+          packageEntry.dispute_resolved_at,
+        ) ||
+        !samePackageValue(
+          currentEntry.dispute_resolved_by,
+          packageEntry.dispute_resolved_by,
+        )
+      ) {
+        changedDisputeCount += 1;
+      }
+    }
+  }
+
+  for (const [path, packageComments] of Object.entries(changePackage.comments)) {
+    const existingComments = (await storage.fileExists(path))
+      ? await storage.readJsonl<Comment>(path)
+      : [];
+    const existingById = new Map(
+      existingComments.map((comment) => [comment.id, comment]),
+    );
+
+    for (const comment of packageComments) {
+      const existingComment = existingById.get(comment.id);
+
+      if (!existingComment) {
+        newCommentCount += 1;
+        continue;
+      }
+
+      const normalizedExistingComment =
+        normalizePackageComment(existingComment);
+      const normalizedPackageComment = normalizePackageComment(comment);
+
+      if (
+        COMMENT_CONFLICT_FIELDS.some(
+          (field) =>
+            !samePackageValue(
+              normalizedExistingComment[field],
+              normalizedPackageComment[field],
+            ),
+        )
+      ) {
+        updatedCommentCount += 1;
+      }
+    }
+  }
+
+  return {
+    newCommentCount,
+    updatedCommentCount,
+    deletedCommentCount: changePackage.events.filter(
+      (event) => event.type === "comment.deleted",
+    ).length,
+    changedEntryContextCount,
+    changedDisputeCount,
+  };
+}
+
 export async function validateChangePackage(
   changePackage: ReadChangePackage,
 ): Promise<ChangePackageValidation> {
@@ -2295,6 +2663,10 @@ export async function validateChangePackage(
       : "failed"
     : "legacy_unchecked";
   const signatureResult = await verifySignatureStatus(changePackage, members);
+  const collaborationSummary = await summarizePackageCollaborationChanges(
+    storage,
+    changePackage,
+  );
   const packageMembers = parseMembersFromPackage(changePackage.memberFiles);
   const packageProject = parseProjectFromPackage(changePackage.projectFiles);
   const summary = getPackageSummary(payload);
@@ -2374,6 +2746,7 @@ export async function validateChangePackage(
     requiresMaintenanceConfirmation,
     requiresOwnerCredentialConfirmation,
     requiresSignedPackage,
+    ...collaborationSummary,
   };
   const validation: ChangePackageValidation = {
     ...baseValidation,
@@ -2397,6 +2770,11 @@ export function previewChangePackage(
       (total, rows) => total + rows.length,
       0,
     ),
+    newCommentCount: validation.newCommentCount,
+    updatedCommentCount: validation.updatedCommentCount,
+    deletedCommentCount: validation.deletedCommentCount,
+    changedEntryContextCount: validation.changedEntryContextCount,
+    changedDisputeCount: validation.changedDisputeCount,
     termCount: countRecordRows(changePackage.terms),
     contextCount: countRecordFiles(changePackage.contexts),
     sourceFileCount: countRecordFiles(changePackage.sourceFiles),
@@ -2448,12 +2826,53 @@ export async function detectConflicts(
 
       if (reasons.length > 0) {
         conflicts.push({
+          kind: "entry",
+          conflictId: `entry:${packageEntry.id}`,
           entryId: packageEntry.id,
           path,
           mainEntry,
           packageEntry,
           reasons,
         });
+      }
+    }
+  }
+
+  if (useOrdinarySafeguards) {
+    for (const [path, packageComments] of Object.entries(
+      changePackage.comments,
+    )) {
+      const currentComments = (await getProjectStorage().fileExists(path))
+        ? await getProjectStorage().readJsonl<Comment>(path)
+        : [];
+      const currentById = new Map(
+        currentComments.map((comment) => [comment.id, comment]),
+      );
+
+      for (const packageComment of packageComments) {
+        const mainComment = currentById.get(packageComment.id);
+
+        if (!mainComment) {
+          continue;
+        }
+
+        const reasons = getCommentConflictReasons(
+          mainComment,
+          packageComment,
+        );
+
+        if (reasons.length > 0) {
+          conflicts.push({
+            kind: "comment",
+            conflictId: `comment:${path}:${packageComment.id}`,
+            entryId: packageComment.entry_id,
+            commentId: packageComment.id,
+            path,
+            mainComment,
+            packageComment,
+            reasons,
+          });
+        }
       }
     }
   }
@@ -2661,6 +3080,68 @@ async function collectProjectUpdateStaleFiles(
     .sort((left, right) => right.split("/").length - left.split("/").length || left.localeCompare(right));
 }
 
+type CommentImportRowsByPath = Map<string, Comment[]>;
+
+async function readCommentRowsForImport(
+  storage: ProjectStorage,
+  rowsByPath: CommentImportRowsByPath,
+  path: string,
+): Promise<Comment[]> {
+  const cachedRows = rowsByPath.get(path);
+
+  if (cachedRows) {
+    return cachedRows;
+  }
+
+  const rows = (await storage.fileExists(path))
+    ? await storage.readJsonl<Comment>(path)
+    : [];
+
+  rowsByPath.set(path, [...rows]);
+
+  return rowsByPath.get(path)!;
+}
+
+async function findCommentPathForDeletion(
+  storage: ProjectStorage,
+  rowsByPath: CommentImportRowsByPath,
+  event: ProjectEvent,
+): Promise<string | undefined> {
+  const commentId = getCommentIdFromEvent(event);
+
+  if (!event.file_id || !event.entry_id || !commentId) {
+    throw new Error("评论删除事件缺少词条、文件或评论 ID，不能导入。");
+  }
+
+  const directory = `comments/${event.file_id}`;
+  const candidatePaths = new Set<string>(
+    Array.from(rowsByPath.keys()).filter((path) =>
+      path.startsWith(`${directory}/`),
+    ),
+  );
+
+  for (const path of await listExistingFiles(storage, directory)) {
+    if (path.endsWith(".jsonl")) {
+      candidatePaths.add(path);
+    }
+  }
+
+  for (const path of candidatePaths) {
+    const rows = await readCommentRowsForImport(storage, rowsByPath, path);
+
+    if (
+      rows.some(
+        (comment) =>
+          comment.id === commentId && comment.entry_id === event.entry_id,
+      )
+    ) {
+      return path;
+    }
+  }
+
+  return undefined;
+}
+
 async function applyProjectUpdatePackage(
   changePackage: ReadChangePackage,
   validation: ChangePackageValidation,
@@ -2863,20 +3344,27 @@ export async function applyChangePackage(
   const storage = getProjectStorage();
   const conflicts = await detectConflicts(changePackage);
   const useOrdinarySafeguards = isMemberChangePackage(validation.packageType);
+  const currentMembers = await loadProjectMembers(storage);
 
   if (useOrdinarySafeguards) {
     await assertOrdinaryPackageWithinTaskScope(
       storage,
       changePackage,
-      await loadProjectMembers(storage),
+      currentMembers,
       validation,
+    );
+    await assertOrdinaryPackageComments(
+      storage,
+      changePackage,
+      validation,
+      currentMembers,
     );
   }
 
   await precheckChangePackageImport(changePackage, validation, conflicts);
 
   const unresolvedConflicts = conflicts.filter(
-    (conflict) => !findResolution(resolutions, conflict.entryId),
+    (conflict) => !findResolution(resolutions, conflict),
   );
 
   if (unresolvedConflicts.length > 0) {
@@ -2893,6 +3381,8 @@ export async function applyChangePackage(
   let importedProjectSettings = 0;
   let importedEvents = 0;
   const writePlan = createProjectWritePlan(storage);
+  const commentRowsByPath: CommentImportRowsByPath = new Map();
+  const changedCommentPaths = new Set<string>();
   const changedEntryGroups: Array<{
     fileId: string;
     entries: Entry[];
@@ -2913,10 +3403,11 @@ export async function applyChangePackage(
       }
 
       const conflict = conflicts.find(
-        (item) => item.entryId === packageEntry.id,
+        (item) =>
+          item.kind === "entry" && item.entryId === packageEntry.id,
       );
       const resolution = conflict
-        ? findResolution(resolutions, packageEntry.id)
+        ? findResolution(resolutions, conflict)
         : undefined;
 
       if (resolution?.action === "keep_main" || resolution?.action === "skip") {
@@ -2934,18 +3425,20 @@ export async function applyChangePackage(
       if (resolution?.action === "manual_merge") {
         const target = resolution.target ?? currentEntry.target;
         const updatedAt = nowIso();
-
-        nextEntry = target !== currentEntry.target
+        const baseEntry = target !== currentEntry.target
           ? applyEntryTargetChange(currentEntry, target, {
               userId: changePackage.manifest.user_id,
               updatedAt,
             })
-          : normalizeEntry({
-              ...currentEntry,
-              status: resolution.status ?? currentEntry.status,
-              updated_at: updatedAt,
-              updated_by: changePackage.manifest.user_id,
-            });
+          : currentEntry;
+
+        nextEntry = normalizeEntry({
+          ...baseEntry,
+          status: resolution.status ?? baseEntry.status,
+          context: resolution.context ?? baseEntry.context,
+          updated_at: updatedAt,
+          updated_by: changePackage.manifest.user_id,
+        });
       } else {
         nextEntry = useOrdinarySafeguards
           ? mergeOrdinaryPackageEntry(
@@ -3003,18 +3496,137 @@ export async function applyChangePackage(
   }
 
   for (const [path, packageComments] of Object.entries(changePackage.comments)) {
-    const existingComments = (await storage.fileExists(path))
-      ? await storage.readJsonl<Comment>(path)
-      : [];
-    const existingIds = new Set(existingComments.map((comment) => comment.id));
-    const newComments = packageComments.filter(
-      (comment) => !existingIds.has(comment.id),
+    const existingComments = await readCommentRowsForImport(
+      storage,
+      commentRowsByPath,
+      path,
+    );
+    let changed = false;
+
+    for (const packageComment of packageComments) {
+      const commentIndex = existingComments.findIndex(
+        (comment) => comment.id === packageComment.id,
+      );
+
+      if (commentIndex < 0) {
+        existingComments.push(normalizePackageComment(packageComment));
+        importedComments += 1;
+        changed = true;
+        continue;
+      }
+
+      const currentComment = existingComments[commentIndex]!;
+
+      if (useOrdinarySafeguards) {
+        const conflict = conflicts.find(
+          (item) =>
+            item.kind === "comment" &&
+            item.commentId === packageComment.id &&
+            item.path === path,
+        );
+        const resolution = conflict
+          ? findResolution(resolutions, conflict)
+          : undefined;
+
+        if (
+          resolution?.action === "keep_main" ||
+          resolution?.action === "skip"
+        ) {
+          continue;
+        }
+
+        if (resolution?.action === "manual_merge") {
+          throw new Error("评论冲突只能保留当前项目或使用修改包版本。");
+        }
+
+        if (getCommentConflictReasons(currentComment, packageComment).length === 0) {
+          continue;
+        }
+
+        existingComments[commentIndex] = mergeOrdinaryPackageComment(
+          currentComment,
+          packageComment,
+        );
+      } else {
+        const normalizedPackageComment = normalizePackageComment(packageComment);
+
+        if (
+          stableStringify(normalizePackageComment(currentComment)) ===
+          stableStringify(normalizedPackageComment)
+        ) {
+          continue;
+        }
+
+        existingComments[commentIndex] = normalizedPackageComment;
+      }
+
+      importedComments += 1;
+      changed = true;
+    }
+
+    if (changed) {
+      changedCommentPaths.add(path);
+    }
+  }
+
+  for (const event of changePackage.events) {
+    if (event.type !== "comment.deleted") {
+      continue;
+    }
+
+    const path = await findCommentPathForDeletion(
+      storage,
+      commentRowsByPath,
+      event,
     );
 
-    if (newComments.length > 0) {
-      writePlan.writeJsonl(path, [...existingComments, ...newComments]);
-      importedComments += newComments.length;
+    if (!path) {
+      continue;
     }
+
+    const comments = await readCommentRowsForImport(
+      storage,
+      commentRowsByPath,
+      path,
+    );
+    const deleteIds = getCommentDeletionIds(
+      comments,
+      getCommentIdFromEvent(event),
+    );
+    const commentsToDelete = comments.filter((comment) =>
+      deleteIds.has(comment.id),
+    );
+
+    if (commentsToDelete.length === 0) {
+      continue;
+    }
+
+    if (useOrdinarySafeguards) {
+      const exporter = currentMembers.find(
+        (member) => member.id === changePackage.manifest.user_id,
+      );
+
+      if (
+        commentsToDelete.some(
+          (comment) => !canDeleteComment(exporter, comment),
+        )
+      ) {
+        throw new Error(
+          "普通修改包包含无权删除的评论或回复，不能导入。",
+        );
+      }
+    }
+
+    commentRowsByPath.set(
+      path,
+      comments.filter((comment) => !deleteIds.has(comment.id)),
+    );
+    changedCommentPaths.add(path);
+    importedComments += commentsToDelete.length;
+  }
+
+  for (const path of changedCommentPaths) {
+    writePlan.writeJsonl(path, commentRowsByPath.get(path) ?? []);
   }
 
   for (const [path, packageTerms] of Object.entries(changePackage.terms)) {

@@ -211,6 +211,23 @@ async function createChangePackageFixture(options: {
   };
 }
 
+async function refreshChangePackageHash(
+  changePackage: ReadChangePackage,
+): Promise<void> {
+  changePackage.manifest.content_hash =
+    await calculateChangePackageContentHash({
+      entries: changePackage.entries,
+      comments: changePackage.comments,
+      terms: changePackage.terms,
+      contexts: changePackage.contexts,
+      sourceFiles: changePackage.sourceFiles,
+      tasks: changePackage.tasks,
+      projectFiles: changePackage.projectFiles,
+      memberFiles: changePackage.memberFiles,
+      events: changePackage.events,
+    });
+}
+
 async function createProjectUpdateFixture() {
   const baseProject = createProject({
     revision: "base-revision",
@@ -629,6 +646,113 @@ describe("ordinary change-package write plan", () => {
     await expect(
       fixture.storage.readJsonl("logs/events.jsonl"),
     ).resolves.toMatchObject([{ type: "change_package.applied" }]);
+  });
+
+  it("imports ordinary comment status updates", async () => {
+    const fixture = await createChangePackageFixture();
+    const path = "comments/file-1/1.jsonl";
+    const existingComment: Comment = {
+      ...fixture.changePackage.comments[path][0]!,
+      status: "open",
+      resolved: false,
+      updated_at: "2026-02-01T00:00:00.000Z",
+      updated_by: "member-2",
+      resolved_at: "",
+      resolved_by: "",
+    };
+    const packageComment: Comment = {
+      ...existingComment,
+      status: "resolved",
+      resolved: true,
+      updated_at: "2026-02-02T00:00:00.000Z",
+      resolved_at: "2026-02-02T00:00:00.000Z",
+      resolved_by: "member-2",
+    };
+
+    fixture.changePackage.comments[path] = [packageComment];
+    await fixture.storage.writeJsonl(path, [existingComment]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            conflictId: `comment:${path}:comment-1`,
+            action: "use_package",
+          },
+        ],
+        {
+          actor: fixture.actor,
+        },
+      ),
+    ).resolves.toMatchObject({
+      importedComments: 1,
+    });
+    await expect(
+      fixture.storage.readJsonl<Comment>(path),
+    ).resolves.toMatchObject([
+      {
+        id: "comment-1",
+        status: "resolved",
+        resolved: true,
+        resolved_at: "2026-02-02T00:00:00.000Z",
+        resolved_by: "member-2",
+      },
+    ]);
+  });
+
+  it("imports ordinary comment deletion events", async () => {
+    const fixture = await createChangePackageFixture();
+    const path = "comments/file-1/1.jsonl";
+    const parentComment: Comment = {
+      ...fixture.changePackage.comments[path][0]!,
+      status: "open",
+      resolved: false,
+    };
+    const replyComment: Comment = {
+      ...parentComment,
+      id: "comment-reply",
+      body: "Reply",
+      reply_to: parentComment.id,
+    };
+
+    fixture.changePackage.comments = {};
+    fixture.changePackage.events = [
+      {
+        id: "comment-delete-event",
+        type: "comment.deleted",
+        user_id: "member-2",
+        entry_id: fixture.originalEntry.id,
+        file_id: fixture.originalEntry.file_id,
+        created_at: "2026-02-03T00:00:00.000Z",
+        detail: { comment_id: parentComment.id, deleted_replies: 1 },
+      },
+    ];
+    await fixture.storage.writeJsonl(path, [parentComment, replyComment]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).resolves.toMatchObject({
+      importedComments: 2,
+      importedEvents: 1,
+    });
+    await expect(
+      fixture.storage.readJsonl<Comment>(path),
+    ).resolves.toEqual([]);
+    await expect(
+      fixture.storage.readJsonl<ProjectEvent>("logs/events.jsonl"),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "comment-delete-event" }),
+        expect.objectContaining({ type: "change_package.applied" }),
+      ]),
+    );
   });
 
   it("restores earlier files when a later package write fails", async () => {

@@ -729,7 +729,7 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
     }
 
     conflicts.value = [];
-    const detail = `应用 ${result.appliedEntries} 条词条，导入 ${result.importedComments} 条评论、${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
+    const detail = `应用 ${result.appliedEntries} 条词条，处理 ${result.importedComments} 条评论、导入 ${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
     message.value =
       packageValidation.value?.packageType === "project_update"
         ? `项目更新完成：${detail}`
@@ -1016,7 +1016,7 @@ watch(
         <section class="conflict-section">
           <h2>冲突处理</h2>
           <p class="section-note">
-            如果修改包和当前项目内容同时改过同一词条，请先选择保留哪一版。
+            如果修改包和当前项目同时改过同一词条或评论状态，请先选择处理方式。
           </p>
 
         <ConflictResolver

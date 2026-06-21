@@ -5,7 +5,7 @@ import type {
   ConflictResolution,
   ConflictResolutionAction,
 } from "../services/changes";
-import type { Entry, EntryStatus } from "../model/types";
+import type { Comment, Entry, EntryStatus } from "../model/types";
 import {
   ENTRY_STATUSES,
   hasVisibleText,
@@ -13,10 +13,12 @@ import {
 } from "../model/status";
 
 interface ConflictDraft {
-  entryId: string;
+  conflictId: string;
+  entryId?: string;
   action: ConflictResolutionAction;
-  target: string;
-  status: EntryStatus;
+  target?: string;
+  status?: EntryStatus;
+  context?: string;
 }
 
 const props = defineProps<{
@@ -35,34 +37,56 @@ const drafts = ref<ConflictDraft[]>([]);
 watch(
   () => props.conflicts,
   (conflicts) => {
-    drafts.value = conflicts.map((conflict) => ({
-      entryId: conflict.entryId,
-      action: "keep_main",
-      target: conflict.mainEntry.target,
-      status: conflict.mainEntry.status,
-    }));
+    drafts.value = conflicts.map((conflict) => {
+      if (conflict.kind === "entry") {
+        return {
+          conflictId: conflict.conflictId,
+          entryId: conflict.entryId,
+          action: "keep_main",
+          target: conflict.mainEntry.target,
+          status: conflict.mainEntry.status,
+          context: conflict.mainEntry.context,
+        };
+      }
+
+      return {
+        conflictId: conflict.conflictId,
+        entryId: conflict.entryId,
+        action: "keep_main",
+      };
+    });
   },
   { immediate: true },
 );
 
-function updateAction(entryId: string, action: ConflictResolutionAction) {
-  const draft = drafts.value.find((item) => item.entryId === entryId);
-  const conflict = props.conflicts.find((item) => item.entryId === entryId);
+function updateAction(
+  conflict: ChangeConflict,
+  action: ConflictResolutionAction,
+) {
+  const draft = drafts.value.find(
+    (item) => item.conflictId === conflict.conflictId,
+  );
 
-  if (!draft || !conflict) {
+  if (!draft) {
     return;
   }
 
   draft.action = action;
 
+  if (conflict.kind !== "entry") {
+    return;
+  }
+
   if (action === "use_package") {
     draft.target = conflict.packageEntry.target;
     draft.status = conflict.packageEntry.status;
+    draft.context = conflict.packageEntry.context;
   }
 
   if (action === "keep_main" || action === "skip") {
     draft.target = conflict.mainEntry.target;
     draft.status = conflict.mainEntry.status;
+    draft.context = conflict.mainEntry.context;
   }
 }
 
@@ -70,16 +94,18 @@ function handleApply() {
   emit(
     "apply",
     drafts.value.map((draft) => ({
+      conflictId: draft.conflictId,
       entryId: draft.entryId,
       action: draft.action,
       target: draft.target,
       status: draft.status,
+      context: draft.context,
     })),
   );
 }
 
-function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
-  const labels: Record<ChangeConflict["reasons"][number], string> = {
+function formatConflictReasons(conflict: ChangeConflict): string {
+  const entryLabels: Record<string, string> = {
     target: "译文",
     status: "状态",
     translated_by: "译者",
@@ -90,9 +116,26 @@ function formatConflictReasons(reasons: ChangeConflict["reasons"]): string {
     dispute_reason: "争议原因",
     dispute_resolved_at: "争议解决时间",
     dispute_resolved_by: "争议解决人",
+    context: "上下文",
   };
+  const commentLabels: Record<string, string> = {
+    status: "评论状态",
+    resolved_at: "解决时间",
+    resolved_by: "解决人",
+  };
+  const labels = conflict.kind === "entry" ? entryLabels : commentLabels;
 
-  return reasons.map((reason) => labels[reason]).join("、");
+  return conflict.reasons
+    .map((reason) => labels[reason] ?? reason)
+    .join("、");
+}
+
+function formatConflictTitle(conflict: ChangeConflict): string {
+  if (conflict.kind === "entry") {
+    return `词条 ${conflict.entryId}`;
+  }
+
+  return `评论 ${conflict.commentId}（词条 ${conflict.entryId}）`;
 }
 
 function formatTarget(entry: Entry): string {
@@ -101,6 +144,31 @@ function formatTarget(entry: Entry): string {
   }
 
   return hasWorkflowTarget(entry) ? "空白译文" : "未填写译文";
+}
+
+function formatContext(entry: Entry): string {
+  return entry.context?.trim() || "无上下文";
+}
+
+function getCommentStatus(comment: Comment): "open" | "resolved" {
+  return comment.status ?? (comment.resolved ? "resolved" : "open");
+}
+
+function formatCommentStatus(comment: Comment): string {
+  return getCommentStatus(comment) === "resolved" ? "已解决" : "未解决";
+}
+
+function formatCommentResolution(comment: Comment): string {
+  if (getCommentStatus(comment) !== "resolved") {
+    return "未解决";
+  }
+
+  const parts = [
+    comment.resolved_by ? `解决人：${comment.resolved_by}` : "",
+    comment.resolved_at ? `时间：${comment.resolved_at}` : "",
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join("，") : "已解决";
 }
 </script>
 
@@ -123,51 +191,69 @@ function formatTarget(entry: Entry): string {
 
     <article
       v-for="conflict in conflicts"
-      :key="conflict.entryId"
+      :key="conflict.conflictId"
       class="conflict-card"
     >
       <div class="conflict-title">
-        <strong>{{ conflict.entryId }}</strong>
-        <span>{{ formatConflictReasons(conflict.reasons) }} 不一致</span>
+        <strong>{{ formatConflictTitle(conflict) }}</strong>
+        <span>{{ formatConflictReasons(conflict) }} 不一致</span>
       </div>
 
       <div class="compare-grid">
         <section>
-          <h3>主项目版本</h3>
-          <p>{{ formatTarget(conflict.mainEntry) }}</p>
-          <small>状态：{{ conflict.mainEntry.status }}</small>
+          <h3>当前项目版本</h3>
+          <template v-if="conflict.kind === 'entry'">
+            <p>{{ formatTarget(conflict.mainEntry) }}</p>
+            <small>状态：{{ conflict.mainEntry.status }}</small>
+            <small>上下文：{{ formatContext(conflict.mainEntry) }}</small>
+          </template>
+          <template v-else>
+            <p>{{ conflict.mainComment.body }}</p>
+            <small>状态：{{ formatCommentStatus(conflict.mainComment) }}</small>
+            <small>{{ formatCommentResolution(conflict.mainComment) }}</small>
+          </template>
         </section>
         <section>
-          <h3>我的修改</h3>
-          <p>{{ formatTarget(conflict.packageEntry) }}</p>
-          <small>状态：{{ conflict.packageEntry.status }}</small>
+          <h3>修改包版本</h3>
+          <template v-if="conflict.kind === 'entry'">
+            <p>{{ formatTarget(conflict.packageEntry) }}</p>
+            <small>状态：{{ conflict.packageEntry.status }}</small>
+            <small>上下文：{{ formatContext(conflict.packageEntry) }}</small>
+          </template>
+          <template v-else>
+            <p>{{ conflict.packageComment.body }}</p>
+            <small>状态：{{ formatCommentStatus(conflict.packageComment) }}</small>
+            <small>{{ formatCommentResolution(conflict.packageComment) }}</small>
+          </template>
         </section>
       </div>
 
       <div
-        v-for="draft in drafts.filter((item) => item.entryId === conflict.entryId)"
-        :key="draft.entryId"
+        v-for="draft in drafts.filter((item) => item.conflictId === conflict.conflictId)"
+        :key="draft.conflictId"
         class="resolution-form"
       >
         <label>
           <span>处理方式</span>
           <select
             v-model="draft.action"
-            @change="updateAction(conflict.entryId, draft.action)"
+            @change="updateAction(conflict, draft.action)"
           >
-            <option value="keep_main">保留主项目</option>
-            <option value="use_package">使用我的修改</option>
-            <option value="manual_merge">手动处理</option>
+            <option value="keep_main">保留当前项目</option>
+            <option value="use_package">使用修改包版本</option>
+            <option v-if="conflict.kind === 'entry'" value="manual_merge">
+              手动处理
+            </option>
             <option value="skip">跳过</option>
           </select>
         </label>
 
-        <label v-if="draft.action === 'manual_merge'">
+        <label v-if="conflict.kind === 'entry' && draft.action === 'manual_merge'">
           <span>处理后的译文</span>
           <textarea v-model="draft.target" rows="4" />
         </label>
 
-        <label v-if="draft.action === 'manual_merge'">
+        <label v-if="conflict.kind === 'entry' && draft.action === 'manual_merge'">
           <span>处理后的状态</span>
           <select v-model="draft.status">
             <option
@@ -178,6 +264,11 @@ function formatTarget(entry: Entry): string {
               {{ status }}
             </option>
           </select>
+        </label>
+
+        <label v-if="conflict.kind === 'entry' && draft.action === 'manual_merge'">
+          <span>处理后的上下文</span>
+          <textarea v-model="draft.context" rows="3" />
         </label>
       </div>
     </article>
@@ -257,6 +348,11 @@ label span,
 .disabled-reason {
   color: #5b6472;
   font-size: 13px;
+}
+
+small {
+  display: block;
+  margin-top: 6px;
 }
 
 .disabled-reason {

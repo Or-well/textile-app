@@ -22,7 +22,7 @@ function projectMatchText(preview: ChangePackagePreview): string {
 function contentIntegrityText(preview: ChangePackagePreview): string {
   if (preview.validation.contentIntegrity === "passed") {
     return preview.contentHashShort
-      ? `通过，${preview.contentHashShort}`
+      ? `通过：${preview.contentHashShort}`
       : "通过";
   }
 
@@ -112,14 +112,30 @@ function riskLevelText(preview: ChangePackagePreview): string {
       </div>
       <div>
         <dt>新增评论</dt>
-        <dd>{{ preview.commentCount }}</dd>
+        <dd>{{ preview.newCommentCount }}</dd>
+      </div>
+      <div>
+        <dt>评论状态更新</dt>
+        <dd>{{ preview.updatedCommentCount }}</dd>
+      </div>
+      <div>
+        <dt>评论删除事件</dt>
+        <dd>{{ preview.deletedCommentCount }}</dd>
+      </div>
+      <div>
+        <dt>词条上下文变更</dt>
+        <dd>{{ preview.changedEntryContextCount }}</dd>
+      </div>
+      <div>
+        <dt>争议信息变更</dt>
+        <dd>{{ preview.changedDisputeCount }}</dd>
       </div>
       <div>
         <dt>术语变更</dt>
         <dd>{{ preview.termCount }}</dd>
       </div>
       <div>
-        <dt>上下文变更</dt>
+        <dt>独立上下文文件</dt>
         <dd>{{ preview.contextCount }}</dd>
       </div>
       <div>

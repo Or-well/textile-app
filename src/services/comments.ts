@@ -264,6 +264,7 @@ async function updateCommentStatus(
     status,
     resolved: status === "resolved",
     updated_at: updatedAt,
+    updated_by: userId,
     resolved_at: status === "resolved" ? updatedAt : "",
     resolved_by: status === "resolved" ? userId : "",
   };

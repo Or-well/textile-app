@@ -198,6 +198,7 @@ export interface Comment {
   resolved?: boolean;
   created_at: string;
   updated_at?: string;
+  updated_by?: string;
   resolved_at?: string;
   resolved_by?: string;
 }
