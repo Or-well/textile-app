@@ -15,6 +15,15 @@ import {
   type TaskDraft,
   type TaskFileEntryBounds,
 } from "../services/tasks";
+import {
+  formatDateTimeLocalInput,
+  getCurrentTimeZone,
+  getSupportedTimeZones,
+  getZonedDateTimeCandidates,
+  hasExplicitTimeZone,
+  zonedDateTimeToUtc,
+  type DateTimeDisambiguation,
+} from "../utils/time";
 
 const props = defineProps<{
   open: boolean;
@@ -64,11 +73,16 @@ const form = reactive({
   target: "",
   proofread_round: 1 as ProofreadRequired,
   submit_method: "change_package" as TaskSubmitMethod,
-  due_at: "",
+  due_local: "",
+  due_time_zone: getCurrentTimeZone(),
+  due_disambiguation: "earlier" as Exclude<DateTimeDisambiguation, "reject">,
 });
+const timeZoneOptions = getSupportedTimeZones();
 const fileEntryBounds = ref<TaskFileEntryBounds>();
 const isLoadingFileBounds = ref(false);
 const boundsErrorMessage = ref("");
+const dueErrorMessage = ref("");
+const hasLegacyDueAt = ref(false);
 const initialFormSnapshot = ref("");
 const isInitializingForm = ref(false);
 
@@ -109,6 +123,14 @@ const canSaveTask = computed(() => {
   return !form.file_id || Boolean(fileEntryBounds.value?.lastIndex);
 });
 const currentFormSnapshot = computed(() => JSON.stringify(form));
+const dueCandidates = computed(() => {
+  if (!form.due_local || !form.due_time_zone) {
+    return [];
+  }
+
+  return getZonedDateTimeCandidates(form.due_local, form.due_time_zone);
+});
+const hasAmbiguousDueAt = computed(() => dueCandidates.value.length > 1);
 const hasUnsavedTask = computed(
   () =>
     props.open &&
@@ -139,7 +161,17 @@ function syncForm() {
     task?.proofread_round ?? proofreadRoundOptions.value[0] ?? 1;
   form.submit_method =
     props.mode === "edit" ? (task?.submit_method ?? "change_package") : "change_package";
-  form.due_at = task?.due_at ?? "";
+  form.due_time_zone = task?.due_time_zone || getCurrentTimeZone();
+  hasLegacyDueAt.value = Boolean(
+    task?.due_at && !hasExplicitTimeZone(task.due_at),
+  );
+  form.due_local = task?.due_at
+    ? hasLegacyDueAt.value
+      ? task.due_at.replace(" ", "T").slice(0, 16)
+      : formatDateTimeLocalInput(task.due_at, form.due_time_zone)
+    : "";
+  form.due_disambiguation = "earlier";
+  dueErrorMessage.value = "";
 }
 
 async function initializeForm() {
@@ -193,6 +225,24 @@ function handleSubmit() {
     return;
   }
 
+  let dueAt = "";
+
+  dueErrorMessage.value = "";
+
+  try {
+    dueAt = form.due_local
+      ? zonedDateTimeToUtc(
+          form.due_local,
+          form.due_time_zone,
+          hasAmbiguousDueAt.value ? form.due_disambiguation : "reject",
+        )
+      : "";
+  } catch (error) {
+    dueErrorMessage.value =
+      error instanceof Error ? error.message : "截止时间无效。";
+    return;
+  }
+
   emit("save", {
     title,
     description: form.description.trim(),
@@ -210,7 +260,8 @@ function handleSubmit() {
     proofread_round:
       form.type === "proofread" ? form.proofread_round : undefined,
     submit_method: props.mode === "edit" ? form.submit_method : "change_package",
-    due_at: form.due_at,
+    due_at: dueAt,
+    due_time_zone: dueAt ? form.due_time_zone : undefined,
   });
 }
 
@@ -339,7 +390,31 @@ watch(
 
           <label>
             <span>截止时间</span>
-            <input v-model="form.due_at" type="datetime-local" />
+            <input v-model="form.due_local" type="datetime-local" />
+          </label>
+
+          <label>
+            <span>截止时区</span>
+            <input
+              v-model.trim="form.due_time_zone"
+              list="task-time-zone-options"
+              placeholder="例如 Asia/Tokyo"
+            />
+            <datalist id="task-time-zone-options">
+              <option
+                v-for="timeZone in timeZoneOptions"
+                :key="timeZone"
+                :value="timeZone"
+              />
+            </datalist>
+          </label>
+
+          <label v-if="hasAmbiguousDueAt">
+            <span>重复时刻</span>
+            <select v-model="form.due_disambiguation">
+              <option value="earlier">较早时刻</option>
+              <option value="later">较晚时刻</option>
+            </select>
           </label>
 
           <label>
@@ -347,6 +422,11 @@ watch(
             <input v-model="form.target" placeholder="例如：完成第 1-20 条翻译" />
           </label>
         </div>
+
+        <p v-if="hasLegacyDueAt" class="time-warning">
+          旧任务未记录截止时区。保存时将按上方时区转换为 UTC。
+        </p>
+        <p v-if="dueErrorMessage" class="error-message">{{ dueErrorMessage }}</p>
 
         <label class="wide-field">
           <span>指定词条编号</span>
@@ -485,6 +565,27 @@ textarea {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.time-warning,
+.error-message {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.time-warning {
+  border: 1px solid #f0d59c;
+  background: #fffbeb;
+  color: #8a4b08;
+}
+
+.error-message {
+  border: 1px solid #f4c7c3;
+  background: #fff7f6;
+  color: #b42318;
 }
 
 .primary-button,

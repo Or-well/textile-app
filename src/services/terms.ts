@@ -3,7 +3,7 @@ import type { Term } from "../model/types";
 import { createId } from "../utils/id";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { parseCsvRecords } from "../utils/csv";
-import { nowIso } from "../utils/time";
+import { nowIso, utcDateKey } from "../utils/time";
 import {
   canCreateTerm,
   canDeleteTerm,
@@ -679,7 +679,7 @@ export async function exportTermsFile(): Promise<ExportedTermsFile> {
   assertTermWritePermission(canExportTerm(getCurrentUser()));
 
   const terms = await loadTerms();
-  const createdAt = nowIso().slice(0, 10);
+  const createdAt = utcDateKey();
 
   return {
     fileName: `terms-${createdAt}.jsonl`,

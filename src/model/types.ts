@@ -176,6 +176,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   due_at: string;
+  due_time_zone?: string;
 }
 
 export interface Comment {

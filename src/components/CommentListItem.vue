@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Comment, Entry } from "../model/types";
+import { formatDateTime } from "../utils/time";
 
 const props = withDefaults(
   defineProps<{
@@ -65,7 +66,9 @@ const emit = defineEmits<{
     <p class="comment-body">{{ props.comment.body }}</p>
 
     <footer class="comment-footer">
-      <span>{{ props.comment.updated_at || props.comment.created_at }}</span>
+      <span>
+        {{ formatDateTime(props.comment.updated_at || props.comment.created_at) || "时间无效" }}
+      </span>
       <div class="comment-actions">
         <button
           v-if="props.showViewEntry"

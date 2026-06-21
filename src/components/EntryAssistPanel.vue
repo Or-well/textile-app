@@ -33,6 +33,7 @@ import {
   canUpdateTerm,
   getCurrentUser,
 } from "../services/permissions";
+import { compareInstants, formatDateTime } from "../utils/time";
 
 type AssistTab = "terms" | "comments" | "context" | "history";
 
@@ -214,9 +215,7 @@ function canRestoreVersion(version: HistoryVersion): boolean {
 }
 
 function formatEventTime(value: string): string {
-  const date = new Date(value);
-
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return formatDateTime(value) || "时间无效";
 }
 
 async function handleRestoreVersion(version: HistoryVersion): Promise<void> {
@@ -273,8 +272,10 @@ async function refreshEntryHistory(entryId?: string): Promise<void> {
     const events = await getEntryHistory(entryId);
 
     if (requestId === historyRequestId) {
-      historyEvents.value = events.sort((a, b) =>
-        b.created_at.localeCompare(a.created_at),
+      historyEvents.value = events.sort(
+        (a, b) =>
+          compareInstants(b.created_at, a.created_at) ||
+          a.id.localeCompare(b.id),
       );
       historyErrorMessage.value = "";
     }

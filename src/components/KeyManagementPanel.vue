@@ -19,6 +19,7 @@ import {
   canViewKey,
 } from "../services/permissions";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
+import { formatDateTime } from "../utils/time";
 
 const props = defineProps<{
   members: Member[];
@@ -91,7 +92,9 @@ function describeKeyStatus(member: Member | null | undefined): string {
 }
 
 function keyDate(member: Member): string {
-  return member.key_revoked_at || member.key_created_at || "";
+  const value = member.key_revoked_at || member.key_created_at || "";
+
+  return value ? formatDateTime(value) || "时间无效" : "";
 }
 
 async function runAction(action: () => Promise<string>): Promise<void> {

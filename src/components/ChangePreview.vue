@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChangePackagePreview } from "../services/changes";
+import { formatDateTime } from "../utils/time";
 
 defineProps<{
   preview?: ChangePackagePreview;
@@ -99,7 +100,7 @@ function riskLevelText(preview: ChangePackagePreview): string {
       </div>
       <div>
         <dt>创建时间</dt>
-        <dd>{{ preview.manifest.created_at }}</dd>
+        <dd>{{ formatDateTime(preview.manifest.created_at) || "时间无效" }}</dd>
       </div>
       <div>
         <dt>任务</dt>

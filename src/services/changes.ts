@@ -17,7 +17,12 @@ import {
   normalizeEntry,
 } from "../model/status";
 import { cacheEntriesForFile } from "./entries";
-import { nowIso } from "../utils/time";
+import {
+  isValidTimeZone,
+  normalizeInstant,
+  nowIso,
+  utcDateKey,
+} from "../utils/time";
 import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
@@ -241,7 +246,8 @@ type TaskProtectedField =
   | "proofread_round"
   | "created_by"
   | "created_at"
-  | "due_at";
+  | "due_at"
+  | "due_time_zone";
 
 const ENTRY_CONFLICT_FIELDS = [
   "target",
@@ -283,6 +289,7 @@ const TASK_PROTECTED_FIELDS = [
   "created_by",
   "created_at",
   "due_at",
+  "due_time_zone",
 ] as const satisfies readonly TaskProtectedField[];
 const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_entries: 0,
@@ -363,7 +370,7 @@ function getProjectRevision(project: ProjectConfig): string {
 }
 
 function createNextProjectRevision(projectId: string, createdAt = nowIso()): string {
-  return createId(`rev_${projectId}_${createdAt.slice(0, 10).replace(/-/g, "")}`);
+  return createId(`rev_${projectId}_${utcDateKey(createdAt).replace(/-/g, "")}`);
 }
 
 function countRecordRows<T>(rowsByPath: Record<string, T[]>): number {
@@ -406,7 +413,7 @@ function buildPackageId(
   createdAt: string,
   taskId?: string,
 ): string {
-  const date = createdAt.slice(0, 10).replace(/-/g, "");
+  const date = utcDateKey(createdAt).replace(/-/g, "");
   const scope = taskId ? taskId : packageType;
 
   return createId(`change_${date}_${userId}_${scope}`);
@@ -1104,7 +1111,7 @@ function buildFileName(
   createdAt: string,
   taskId?: string,
 ): string {
-  const date = createdAt.slice(0, 10).replace(/-/g, "");
+  const date = utcDateKey(createdAt).replace(/-/g, "");
 
   const scope = taskId ? taskId : packageType;
 
@@ -1238,6 +1245,47 @@ function mergeOrdinaryPackageTasks(
   }
 
   return { rows: nextRows, imported };
+}
+
+function normalizeImportedTaskDeadline(
+  currentTask: Task | undefined,
+  packageTask: Task,
+): Task {
+  if (
+    currentTask &&
+    samePackageValue(currentTask.due_at, packageTask.due_at) &&
+    samePackageValue(currentTask.due_time_zone, packageTask.due_time_zone)
+  ) {
+    return packageTask;
+  }
+
+  if (!packageTask.due_at) {
+    return {
+      ...packageTask,
+      due_at: "",
+      due_time_zone: undefined,
+    };
+  }
+
+  const dueAt = normalizeInstant(packageTask.due_at);
+
+  if (!dueAt) {
+    throw new Error(
+      `任务 ${packageTask.id} 的截止时间未记录明确时区，不能导入。请先在来源项目中确认时区。`,
+    );
+  }
+
+  if (!isValidTimeZone(packageTask.due_time_zone ?? "")) {
+    throw new Error(
+      `任务 ${packageTask.id} 的截止时间缺少有效 IANA 时区，不能导入。`,
+    );
+  }
+
+  return {
+    ...packageTask,
+    due_at: dueAt,
+    due_time_zone: packageTask.due_time_zone,
+  };
 }
 
 function findResolution(
@@ -2538,9 +2586,18 @@ export async function applyChangePackage(
     const existingTasks = (await storage.fileExists(path))
       ? await storage.readJsonl<Task>(path)
       : [];
+    const normalizedPackageTasks = useOrdinarySafeguards
+      ? packageTasks
+      : packageTasks.map((packageTask) =>
+          normalizeImportedTaskDeadline(
+            existingTasks.find((task) => task.id === packageTask.id),
+            packageTask,
+          ),
+        );
+
     const result = useOrdinarySafeguards
-      ? mergeOrdinaryPackageTasks(existingTasks, packageTasks)
-      : mergeRowsById(existingTasks, packageTasks);
+      ? mergeOrdinaryPackageTasks(existingTasks, normalizedPackageTasks)
+      : mergeRowsById(existingTasks, normalizedPackageTasks);
 
     if (result.imported > 0) {
       writePlan.writeJsonl(path, result.rows);

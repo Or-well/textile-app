@@ -1,7 +1,7 @@
 import type { Comment, Entry } from "../model/types";
 import { normalizeEntries, normalizeEntry } from "../model/status";
 import { createId } from "../utils/id";
-import { nowIso } from "../utils/time";
+import { compareInstants, nowIso } from "../utils/time";
 import {
   canCreateComment,
   canDeleteComment,
@@ -166,7 +166,11 @@ export async function loadComments(entry: Entry): Promise<Comment[]> {
 
   return (await storage.readJsonl<Comment>(path))
     .map((comment) => normalizeComment(comment, { entry }))
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    .sort(
+      (a, b) =>
+        compareInstants(a.created_at, b.created_at) ||
+        a.id.localeCompare(b.id),
+    );
 }
 
 export async function addComment(
@@ -444,7 +448,11 @@ export async function loadAllComments(): Promise<Comment[]> {
 
   return groups
     .flat()
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    .sort(
+      (a, b) =>
+        compareInstants(b.created_at, a.created_at) ||
+        a.id.localeCompare(b.id),
+    );
 }
 
 export async function loadDisputedEntries(): Promise<Entry[]> {

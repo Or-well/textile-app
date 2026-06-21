@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   ChangePackageManifest,
+  ChangePackageType,
   Comment,
   Entry,
   Member,
@@ -28,6 +29,7 @@ async function createChangePackageFixture(options: {
   packageEntry?: Partial<Entry>;
   originalTask?: Task;
   packageTask?: Task;
+  packageType?: ChangePackageType;
 } = {}): Promise<{
   storage: ReturnType<typeof createProjectStorage>;
   actor: Member;
@@ -90,7 +92,7 @@ async function createChangePackageFixture(options: {
     schema_version: 1,
     project_id: project.project_id,
     package_id: "change-1",
-    package_type: "member_changes",
+    package_type: options.packageType ?? "member_changes",
     user_id: contributor.id,
     user_name: contributor.name,
     created_at: "2026-02-01T00:00:00.000Z",
@@ -494,6 +496,94 @@ describe("ordinary change-package write plan", () => {
       fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
     ).resolves.toMatchObject([
       { title: "Translate chapter", status: "submitted", assignee: "member-2" },
+    ]);
+  });
+
+  it("rejects changed timezone-free deadlines in maintenance packages", async () => {
+    const originalTask: Task = {
+      id: "task-1",
+      type: "translate",
+      title: "Translate chapter",
+      description: "",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 10,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "assigned",
+      target: "",
+      submit_method: "change_package",
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      packageType: "maintenance_changes",
+      originalTask,
+      packageTask: {
+        ...originalTask,
+        updated_at: "2026-02-01T00:00:00.000Z",
+        due_at: "2026-06-21T18:00",
+        due_time_zone: "Asia/Tokyo",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+        confirmMaintenance: true,
+      }),
+    ).rejects.toThrow("未记录明确时区");
+  });
+
+  it("normalizes maintenance package deadlines to UTC before writing", async () => {
+    const originalTask: Task = {
+      id: "task-1",
+      type: "translate",
+      title: "Translate chapter",
+      description: "",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 10,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "assigned",
+      target: "",
+      submit_method: "change_package",
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      packageType: "maintenance_changes",
+      originalTask,
+      packageTask: {
+        ...originalTask,
+        updated_at: "2026-02-01T00:00:00.000Z",
+        due_at: "2026-06-21T18:00:00+09:00",
+        due_time_zone: "Asia/Tokyo",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+        confirmMaintenance: true,
+      }),
+    ).resolves.toMatchObject({ importedTasks: 1 });
+    await expect(
+      fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        due_at: "2026-06-21T09:00:00.000Z",
+        due_time_zone: "Asia/Tokyo",
+      },
     ]);
   });
 });

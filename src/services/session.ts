@@ -42,11 +42,7 @@ function getExpiryDate(rememberDays: number): string | undefined {
     return undefined;
   }
 
-  const expiresAt = new Date();
-
-  expiresAt.setDate(expiresAt.getDate() + rememberDays);
-
-  return expiresAt.toISOString();
+  return new Date(Date.now() + rememberDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
 export function saveProjectSession(
@@ -90,7 +86,9 @@ export function isSessionExpired(session: ProjectSession): boolean {
     return false;
   }
 
-  return new Date(session.expiresAt).getTime() <= Date.now();
+  const expiresAt = Date.parse(session.expiresAt);
+
+  return !Number.isFinite(expiresAt) || expiresAt <= Date.now();
 }
 
 export function restoreProjectSession(

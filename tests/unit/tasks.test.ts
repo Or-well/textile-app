@@ -181,4 +181,86 @@ describe("task storage integrity", () => {
       ),
     ).rejects.toThrow("do not exist");
   });
+
+  it("stores new task deadlines as UTC with their source timezone", async () => {
+    const storage = await createTaskProjectStorage();
+    const task = await createTask(
+      {
+        title: "Timed task",
+        type: "translate",
+        file_id: "file-1",
+        range_start: 1,
+        range_end: 1,
+        due_at: "2026-06-21T18:00:00+09:00",
+        due_time_zone: "Asia/Tokyo",
+      },
+      "owner-1",
+    );
+
+    expect(task).toMatchObject({
+      due_at: "2026-06-21T09:00:00.000Z",
+      due_time_zone: "Asia/Tokyo",
+    });
+    await expect(
+      storage.readJsonl("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        due_at: "2026-06-21T09:00:00.000Z",
+        due_time_zone: "Asia/Tokyo",
+      },
+    ]);
+  });
+
+  it("rejects new timezone-free task deadlines", async () => {
+    await createTaskProjectStorage();
+
+    await expect(
+      createTask(
+        {
+          title: "Ambiguous task",
+          type: "translate",
+          file_id: "file-1",
+          range_start: 1,
+          range_end: 1,
+          due_at: "2026-06-21T18:00",
+          due_time_zone: "Asia/Tokyo",
+        },
+        "owner-1",
+      ),
+    ).rejects.toThrow("UTC ISO");
+  });
+
+  it("keeps legacy timezone-free deadlines readable until edited", async () => {
+    const root = createMemoryProjectDirectory(
+      {
+        "tasks/tasks.jsonl": `${JSON.stringify({
+          id: "legacy-task",
+          title: "Legacy",
+          type: "translate",
+          file_id: "",
+          range_start: 1,
+          range_end: 1,
+          entry_ids: [],
+          assignee: "",
+          status: "unassigned",
+          target: "",
+          submit_method: "change_package",
+          created_by: "owner-1",
+          created_at: "2026-01-01T00:00:00.000Z",
+          updated_at: "2026-01-01T00:00:00.000Z",
+          due_at: "2026-06-21T18:00",
+        })}\n`,
+      },
+      "tasks-legacy.hproj",
+    );
+
+    setTasksProjectStorage(createProjectStorage(root));
+
+    await expect(loadTasks()).resolves.toMatchObject([
+      {
+        id: "legacy-task",
+        due_at: "2026-06-21T18:00",
+      },
+    ]);
+  });
 });

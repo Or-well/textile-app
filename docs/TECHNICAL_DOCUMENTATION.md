@@ -561,7 +561,7 @@ tasks/tasks.jsonl
 示例：
 
 ```json
-{"id":"task_001","type":"translate","title":"翻译第一章","description":"","file_id":"script_001","range_start":1,"range_end":50,"entry_ids":[],"assignee":"user_a","status":"assigned","target":"","submit_method":"change_package","proofread_round":1,"created_by":"leader","created_at":"2026-06-18T00:00:00.000Z","updated_at":"2026-06-19T00:00:00.000Z","due_at":"2026-06-25T00:00:00.000Z"}
+{"id":"task_001","type":"translate","title":"翻译第一章","description":"","file_id":"script_001","range_start":1,"range_end":50,"entry_ids":[],"assignee":"user_a","status":"assigned","target":"","submit_method":"change_package","proofread_round":1,"created_by":"leader","created_at":"2026-06-18T00:00:00.000Z","updated_at":"2026-06-19T00:00:00.000Z","due_at":"2026-06-25T00:00:00.000Z","due_time_zone":"Asia/Tokyo"}
 ```
 
 状态：
@@ -578,10 +578,13 @@ unassigned -> assigned -> in_progress -> submitted -> completed
 - `blocked` 规范化为 `in_progress` 或 `unassigned`。
 - `git_hidden` 提交方式规范化为 `change_package`。
 - `git_manual` 规范化为 `owner_manual`。
+- 旧 `due_at` 若没有 `Z` 或 UTC 偏移，读取时保持原值，不静默推断时区；用户编辑并确认 `due_time_zone` 后才转换为 UTC。
 
 任务范围优先使用 `entry_ids`，否则使用 `file_id` 和起止 index；没有 `file_id` 但包含 `entry_ids` 的任务可以正常计算进度。
 
 `tasks/tasks.jsonl` 不存在时按空任务列表处理；文件存在但读取或 JSONL 解析失败时必须向上报错，不得缓存为空列表，以免后续任务写入覆盖可恢复的数据。
+
+所有新写入的 `due_at` 必须是 UTC ISO 字符串，`due_time_zone` 必须是有效 IANA 时区。`TaskEditDialog` 使用 `utils/time.ts` 在本地墙上时间与 UTC 之间转换，并拒绝夏令时缺失时刻；重复时刻必须显式选择 earlier/later。
 
 ## 15. comments JSONL
 
@@ -935,6 +938,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - 整个任务文件每次写入整体重写。
 - `enable_tasks === false` 时任务页入口隐藏，任务 service 会拒绝新增、更新、删除、分配、领取、提交、完成、收回和重开。
+- 普通修改包将 `due_at` 和 `due_time_zone` 视为任务受保护字段。维护修改包实际修改截止时间时必须同时提供绝对时间和有效 IANA 时区；签名项目更新包可继续承载旧任务，由接收方后续明确迁移。
 
 ## 25. `comments.ts`
 
@@ -1348,7 +1352,7 @@ manifest 示例：
 - 目标路径是否可读取或创建。
 - 冲突列表是否已经生成。
 - 普通修改包中的词条受保护字段不能变化；允许参与冲突处理的词条字段限于 `target`、`status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by`。
-- 普通修改包中的任务只能更新既有任务的 `status`；标题、范围、创建者、分配关系等字段变化会阻止导入。
+- 普通修改包中的任务只能更新既有任务的 `status`；标题、范围、创建者、分配关系、截止时间和截止时区等字段变化会阻止导入。
 
 预检查失败时不开始项目文件写入。
 

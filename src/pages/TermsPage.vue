@@ -20,6 +20,10 @@ import {
   updateTerm,
   type TermInput,
 } from "../services/terms";
+import {
+  compareInstants,
+  formatDateTime,
+} from "../utils/time";
 
 type SortMode = "alphabetical" | "created_at" | "updated_at";
 
@@ -97,11 +101,11 @@ const filteredTerms = computed(() => {
 
   return [...filtered].sort((a, b) => {
     if (sortMode.value === "created_at") {
-      return getTimeValue(b.created_at) - getTimeValue(a.created_at);
+      return compareInstants(b.created_at, a.created_at) || a.id.localeCompare(b.id);
     }
 
     if (sortMode.value === "updated_at") {
-      return getTimeValue(b.updated_at) - getTimeValue(a.updated_at);
+      return compareInstants(b.updated_at, a.updated_at) || a.id.localeCompare(b.id);
     }
 
     return (
@@ -111,10 +115,6 @@ const filteredTerms = computed(() => {
     );
   });
 });
-
-function getTimeValue(value: string | undefined): number {
-  return value ? Date.parse(value) || 0 : 0;
-}
 
 function getCurrentUserId(): string {
   return currentUser.value?.id ?? "unknown_user";
@@ -388,7 +388,7 @@ onMounted(loadTermRows);
           </div>
           <div>
             <dt>更新时间</dt>
-            <dd>{{ term.updated_at || "暂无记录" }}</dd>
+            <dd>{{ formatDateTime(term.updated_at) || "时间无效" }}</dd>
           </div>
           <div>
             <dt>匹配规则</dt>

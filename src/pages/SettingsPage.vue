@@ -62,6 +62,7 @@ import {
 } from "../services/appUpdatePresentation";
 import { withAppOperation } from "../services/appOperation";
 import { saveBlobWithConfirmation } from "../utils/saveBlob";
+import { formatDateTime } from "../utils/time";
 
 type SettingsSection =
   | "project"
@@ -222,7 +223,7 @@ const lastUpdateCheckText = computed(() => {
     return "尚未检查";
   }
 
-  return new Date(updateState.value.checkedAt).toLocaleString();
+  return formatDateTime(updateState.value.checkedAt) || "时间无效";
 });
 const updateStatusText = computed(() =>
   getAppUpdateStatusMessage(updateState.value),
@@ -1443,7 +1444,7 @@ onBeforeUnmount(() => {
                 </span>
                 <span v-if="updateState.latest?.critical">这是重要更新。</span>
                 <span v-if="updateState.pwaRefreshReady">
-                  新版资源已下载：{{ updateState.latestDownloadedAt ? new Date(updateState.latestDownloadedAt).toLocaleString() : "刚刚" }}
+                  新版资源已下载：{{ updateState.latestDownloadedAt ? formatDateTime(updateState.latestDownloadedAt) || "时间无效" : "刚刚" }}
                 </span>
               </div>
             </div>

@@ -1,6 +1,7 @@
 import type { Member, ProjectConfig } from "../model/types";
 import { parseJsonl } from "../utils/jsonl";
 import { createZip, readZipEntries, type ZipContent } from "../utils/zip";
+import { utcDateKey } from "../utils/time";
 import {
   createMemoryProjectDirectory,
   deleteEntry,
@@ -131,7 +132,7 @@ function buildPackageFileName(project: ProjectConfig): string {
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   const baseName = safeProjectId || "translation-project";
-  const dateText = new Date().toISOString().slice(0, 10);
+  const dateText = utcDateKey();
 
   return `${baseName}-${dateText}.hproj`;
 }

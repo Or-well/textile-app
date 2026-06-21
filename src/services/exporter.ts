@@ -7,7 +7,7 @@ import type {
   Term,
 } from "../model/types";
 import { isEntryReleaseComplete, normalizeEntries } from "../model/status";
-import { nowIso } from "../utils/time";
+import { nowIso, utcDateKey } from "../utils/time";
 import { APP_VERSION } from "../utils/appVersion";
 import { createZip, type ZipContent } from "../utils/zip";
 import { exportCsvFile } from "./exporters/csvExporter";
@@ -514,7 +514,7 @@ export async function exportProject(
   };
 
   return {
-    fileName: `release-${config.project_id}-${exportedAt.slice(0, 10)}.zip`,
+    fileName: `release-${config.project_id}-${utcDateKey(exportedAt)}.zip`,
     blob: await generateReleaseZip(data),
     manifest,
     summary: buildSummary(config, allEntries, exportEntries),

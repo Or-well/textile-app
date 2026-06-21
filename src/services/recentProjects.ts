@@ -3,7 +3,7 @@ import {
   removeLocalStorageItem,
   writeLocalStorageItem,
 } from "../utils/browserStorage";
-import { nowIso } from "../utils/time";
+import { compareInstants, nowIso } from "../utils/time";
 import type { ProjectDirectoryHandle } from "./projectFs";
 
 export type RecentProjectSourceType = "folder" | "hproj";
@@ -79,7 +79,8 @@ function sortRecentProjects(
   records: RecentProjectRecord[],
 ): RecentProjectRecord[] {
   return [...records].sort((left, right) =>
-    right.lastOpenedAt.localeCompare(left.lastOpenedAt),
+    compareInstants(right.lastOpenedAt, left.lastOpenedAt) ||
+      left.projectId.localeCompare(right.projectId),
   );
 }
 

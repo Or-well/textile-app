@@ -26,6 +26,10 @@ import {
   canUpdateFile,
 } from "../services/permissions";
 import { calculateEntryProgress } from "../services/stats";
+import {
+  compareInstants,
+  formatDateTime,
+} from "../utils/time";
 
 type SortKey = "name" | "updated" | "translated" | "proofread" | "reviewed";
 type FileFilter = "visible" | "all" | "hidden" | "locked" | "disputed";
@@ -40,6 +44,7 @@ interface FileSummary {
   proofreadPercent: number;
   reviewedPercent: number;
   updatedAt: string;
+  updatedAtValue: string;
 }
 
 interface BatchFailure {
@@ -117,7 +122,10 @@ const visibleFiles = computed(() => {
 
   return [...files].sort((a, b) => {
     if (sortKey.value === "updated") {
-      return b.updatedAt.localeCompare(a.updatedAt);
+      return (
+        compareInstants(b.updatedAtValue, a.updatedAtValue) ||
+        a.file.id.localeCompare(b.file.id)
+      );
     }
 
     if (sortKey.value === "translated") {
@@ -180,9 +188,9 @@ function latestUpdatedAt(entries: { updated_at: string }[], file: ProjectFile): 
   const latest = entries
     .map((entry) => entry.updated_at)
     .filter(Boolean)
-    .sort((a, b) => b.localeCompare(a))[0];
+    .sort((a, b) => compareInstants(b, a))[0];
 
-  return latest || file.updated_at || "暂无记录";
+  return latest || file.updated_at || "";
 }
 
 function setProject(config: ProjectConfig) {
@@ -220,6 +228,8 @@ async function loadFileSummaries() {
           currentProject.value.settings.workflow,
         );
 
+        const updatedAtValue = latestUpdatedAt(entries, file);
+
         return {
           file,
           totalEntries: progress.totalEntries,
@@ -228,7 +238,10 @@ async function loadFileSummaries() {
           translatedPercent: progress.translationProgress,
           proofreadPercent: progress.proofreadProgress,
           reviewedPercent: progress.reviewProgress,
-          updatedAt: latestUpdatedAt(entries, file),
+          updatedAt: updatedAtValue
+            ? formatDateTime(updatedAtValue) || "时间无效"
+            : "暂无记录",
+          updatedAtValue,
         };
       }),
     );

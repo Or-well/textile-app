@@ -9,7 +9,12 @@ import type {
 } from "../model/types";
 import { normalizeEntries } from "../model/status";
 import { createId } from "../utils/id";
-import { nowIso } from "../utils/time";
+import {
+  compareInstants,
+  isValidTimeZone,
+  normalizeInstant,
+  nowIso,
+} from "../utils/time";
 import { calculateEntryProgress, type ProgressWeights } from "./stats";
 import {
   canAssignTask,
@@ -69,6 +74,7 @@ export interface TaskDraft {
   proofread_round?: ProofreadRequired;
   submit_method?: TaskSubmitMethod;
   due_at?: string;
+  due_time_zone?: string;
 }
 
 export type TaskPatch = Partial<TaskDraft>;
@@ -288,6 +294,42 @@ function normalizeTask(row: Partial<Task>): Task {
     created_at: row.created_at || now,
     updated_at: row.updated_at || row.created_at || now,
     due_at: row.due_at ?? "",
+    due_time_zone: row.due_time_zone?.trim() || undefined,
+  };
+}
+
+function normalizeTaskDuePatch<T extends Pick<TaskDraft, "due_at" | "due_time_zone">>(
+  patch: T,
+): T {
+  if (patch.due_at === undefined && patch.due_time_zone === undefined) {
+    return patch;
+  }
+
+  const dueAt = patch.due_at?.trim() ?? "";
+  const dueTimeZone = patch.due_time_zone?.trim() ?? "";
+
+  if (!dueAt) {
+    return {
+      ...patch,
+      due_at: "",
+      due_time_zone: undefined,
+    };
+  }
+
+  const normalizedDueAt = normalizeInstant(dueAt);
+
+  if (!normalizedDueAt) {
+    throw new Error("任务截止时间必须包含明确时区并以 UTC ISO 格式保存。");
+  }
+
+  if (!isValidTimeZone(dueTimeZone)) {
+    throw new Error("任务截止时间必须记录有效的 IANA 时区。");
+  }
+
+  return {
+    ...patch,
+    due_at: normalizedDueAt,
+    due_time_zone: dueTimeZone,
   };
 }
 
@@ -300,7 +342,11 @@ function sortTasks(tasks: Task[]): Task[] {
       return statusOrder;
     }
 
-    return b.updated_at.localeCompare(a.updated_at) || a.title.localeCompare(b.title);
+    return (
+      compareInstants(b.updated_at, a.updated_at) ||
+      a.title.localeCompare(b.title) ||
+      a.id.localeCompare(b.id)
+    );
   });
 }
 
@@ -553,7 +599,7 @@ export async function createTask(draft: TaskDraft, userId: string): Promise<Task
 
   const now = nowIso();
   const task = normalizeTask({
-    ...draft,
+    ...normalizeTaskDuePatch(draft),
     id: createId("task"),
     status: draft.status ?? (draft.assignee ? "assigned" : "unassigned"),
     created_by: actor.id || userId,
@@ -582,7 +628,7 @@ export async function updateTask(
     }
 
     return mergeTaskPatch(task, {
-      ...patch,
+      ...normalizeTaskDuePatch(patch),
       status: task.status,
     });
   });

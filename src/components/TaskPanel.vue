@@ -2,6 +2,11 @@
 import { computed, ref, watch } from "vue";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
+import {
+  formatDateTime,
+  getCurrentTimeZone,
+  hasExplicitTimeZone,
+} from "../utils/time";
 
 const props = defineProps<{
   task?: Task;
@@ -94,15 +99,32 @@ const dueAtText = computed(() => {
     return "";
   }
 
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
+  if (!hasExplicitTimeZone(value)) {
+    return `${value.replace("T", " ")}（旧数据，时区未记录）`;
   }
 
-  const pad = (part: number) => String(part).padStart(2, "0");
+  return formatDateTime(value, {
+    includeTimeZone: true,
+    seconds: false,
+  });
+});
+const originalDueAtText = computed(() => {
+  const task = props.task;
 
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (
+    !task?.due_at ||
+    !task.due_time_zone ||
+    task.due_time_zone === getCurrentTimeZone() ||
+    !hasExplicitTimeZone(task.due_at)
+  ) {
+    return "";
+  }
+
+  return formatDateTime(task.due_at, {
+    timeZone: task.due_time_zone,
+    includeTimeZone: true,
+    seconds: false,
+  });
 });
 
 const progressPercent = computed(() => props.progress?.progressPercent ?? 0);
@@ -159,6 +181,7 @@ watch(
           <div v-if="dueAtText">
             <dt>截止时间</dt>
             <dd>{{ dueAtText }}</dd>
+            <small v-if="originalDueAtText">任务时区：{{ originalDueAtText }}</small>
           </div>
         </dl>
       </section>
@@ -310,6 +333,14 @@ p,
 dl,
 dd {
   margin: 0;
+}
+
+.detail-grid small {
+  display: block;
+  margin-top: 4px;
+  color: #5b6472;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .section-label {
