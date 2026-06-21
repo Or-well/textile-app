@@ -7,6 +7,10 @@ import type { Member, ProjectConfig, ProjectFile } from "../model/types";
 import { PERMISSION_ACTIONS } from "../model/permissions";
 import { loadEntries } from "../services/entries";
 import {
+  exportEntryExchangeFile,
+  type EntryExchangeFormat,
+} from "../services/entryExchange";
+import {
   addSourceFileToProject,
   deleteProjectFile,
   importTranslationFileToProject,
@@ -30,6 +34,7 @@ import {
   compareInstants,
   formatDateTime,
 } from "../utils/time";
+import { saveBlob } from "../utils/saveBlob";
 
 type SortKey = "name" | "updated" | "translated" | "proofread" | "reviewed";
 type FileFilter = "visible" | "all" | "hidden" | "locked" | "disputed";
@@ -71,6 +76,7 @@ const sortKey = ref<SortKey>("name");
 const fileFilter = ref<FileFilter>("visible");
 const isLoading = ref(false);
 const isSubmitting = ref(false);
+const isExportingExchange = ref(false);
 const errorMessage = ref("");
 const noticeMessage = ref("");
 const dialogMode = ref<DialogMode | null>(null);
@@ -90,6 +96,9 @@ const canLock = computed(() => canLockFile(props.currentUser));
 const canHide = computed(() => canHideFile(props.currentUser));
 const canDelete = computed(() => canDeleteFile(props.currentUser));
 const canManageFolder = computed(() => canManageFileFolder(props.currentUser));
+const canExportExchange = computed(() =>
+  can(props.currentUser, PERMISSION_ACTIONS.FILE_VIEW, currentProject.value),
+);
 
 const visibleFiles = computed(() => {
   const keyword = searchText.value.trim().toLowerCase();
@@ -402,6 +411,36 @@ async function handleBatchImportTranslations(files: File[]) {
   noticeMessage.value = `批量导入完成：成功 ${batchSuccessCount.value} 个，失败 ${batchFailures.value.length} 个。`;
 }
 
+async function handleExportExchange(
+  fileId: string,
+  format: EntryExchangeFormat,
+) {
+  isExportingExchange.value = true;
+  errorMessage.value = "";
+  noticeMessage.value = "";
+
+  try {
+    const result = await exportEntryExchangeFile(
+      currentProject.value,
+      fileId,
+      format,
+      props.currentUser,
+    );
+    const saved = await saveBlob(result.blob, result.fileName);
+
+    noticeMessage.value = saved.saved
+      ? saved.method === "file-picker"
+        ? `已保存词条交换文件：${saved.fileName}（${result.entryCount} 条）。`
+        : `词条交换文件下载已开始（${result.entryCount} 条）。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。`
+      : "词条交换文件保存已取消。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "导出词条交换文件失败。";
+  } finally {
+    isExportingExchange.value = false;
+  }
+}
+
 async function handleRename(fileId: string) {
   const file = currentProject.value.files.find((item) => item.id === fileId);
   const nextName = window.prompt("请输入新的文件显示名。", file?.name ?? "");
@@ -597,6 +636,7 @@ onMounted(loadFileSummaries);
         :can-lock="canLock"
         :can-hide="canHide"
         :can-delete="canDelete"
+        :can-export-exchange="canExportExchange && !isExportingExchange"
         @open="emit('openFile', $event)"
         @manage-entries="emit('manageEntries', $event)"
         @update-source="openDialog('update', $event)"
@@ -606,6 +646,7 @@ onMounted(loadFileSummaries);
         @toggle-locked="handleToggleLocked"
         @delete="handleDelete"
         @history="handleHistory"
+        @export-exchange="handleExportExchange"
       />
     </div>
 
@@ -619,6 +660,13 @@ onMounted(loadFileSummaries);
       accept=".txt,.ks,.jsonl,.json,.csv,text/plain,text/csv,application/json"
       confirm-label="开始处理"
       :is-submitting="isSubmitting"
+      :import-mode="
+        dialogMode === 'import-translation' || dialogMode === 'batch-import'
+          ? 'translation'
+          : dialogMode === 'update'
+            ? 'source-update'
+            : 'source'
+      "
       @cancel="closeDialog"
       @submit="handleDialogSubmit"
     />

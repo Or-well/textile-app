@@ -13,7 +13,7 @@
 9. 上传安装包、签名和更新清单。
 10. 验证首次安装和自动更新。
 
-本文以 **Windows PowerShell、本机手动构建、GitHub 网页发布** 为主流程，并在第 19 节提供 GitHub Actions 自动发布作为补充选择。当前仓库尚未提交 `.github/workflows`；只有按第 19 节添加并启用 workflow 后，GitHub 才会自动构建和上传文件。
+本文以 **Windows PowerShell、本机手动构建、GitHub 网页发布** 为主流程，并在第 19 节说明当前仓库使用的 GitHub Actions 自动发布流程。当前 `.github/workflows/release.yml` 会在推送 `v*` tag 后自动构建并上传草稿 Release。
 
 ---
 
@@ -2363,6 +2363,54 @@ Resource not accessible by integration
 
 ### 19.13 Actions 常见问题
 
+#### 同版本 workflow 已启动，但 Release 尚未发布
+
+适用情况：
+
+- 版本 tag 已推送，Actions 已经开始或完成构建。
+- Release 仍未公开，可能尚未创建，也可能只是草稿。
+- 随后又发现必须包含在本次发布中的代码或文档修改。
+- 仍准备使用相同版本号，例如继续发布 `0.4.0`。
+
+此时不能直接重新运行旧 workflow。重新运行仍会检出旧 tag 指向的旧 commit，不会包含后续修改。
+
+按以下顺序处理：
+
+1. 在 GitHub Actions 中取消仍在运行的旧任务。
+2. 如果旧任务已经创建同 tag 的草稿 Release，在 Releases 页面删除该草稿。
+3. 完成修改，并把本次版本内容从 `[Unreleased]` 归入对应版本标题。
+4. 重新运行测试、构建和发布配置检查。
+5. 提交并推送最终 commit。
+6. 删除旧的本地和远程 tag。
+7. 在最终 commit 上重新创建并推送同名 tag，让 workflow 重新触发。
+
+示例：
+
+```powershell
+$Version = "0.4.0"
+$Tag = "v$Version"
+
+npm.cmd run test:unit
+npm.cmd run build
+npm.cmd run tauri:release:check
+git diff --check
+
+git add -A
+git diff --cached
+git commit -m "fix: finalize v$Version"
+git push origin HEAD
+
+git tag -d $Tag
+git push origin --delete $Tag
+
+git tag -a $Tag -m "Textile v$Version"
+git push origin $Tag
+```
+
+重新触发后，检查新 workflow 对应的 commit 是否为最终 commit，再检查草稿中的安装包、`.sig` 和 `latest.json`。
+
+这个做法只适用于 Release **尚未公开且没有用户依赖旧 tag** 的情况。如果 Release 已经发布、安装包已经分发，或 tag 可能已被其他人使用，不要移动同名 tag，应增加修订版本号并发布新版本。
+
 #### tag 与 package.json 不一致
 
 日志显示：
@@ -2481,4 +2529,4 @@ npm.cmd run tauri:release:check
 - [GitHub Actions 的 GITHUB_TOKEN](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token)
 - [tauri-apps/tauri-action](https://github.com/tauri-apps/tauri-action)
 
-当前仓库默认仍以手动流程为准；第 19 节描述的是选择加入 `.github/workflows/release.yml` 后的补充方案。实际提交 workflow 时，应再次对照 Tauri 和 GitHub 的最新官方文档核对 action 主版本、runner 和权限配置。
+当前仓库已经启用 `.github/workflows/release.yml`，第 19 节描述其自动发布流程；本机手动发布仍可用于排错和受控备用流程。修改 workflow 时，应再次对照 Tauri 和 GitHub 的最新官方文档核对 action 主版本、runner 和权限配置。

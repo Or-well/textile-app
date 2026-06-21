@@ -1,4 +1,8 @@
 import { PERMISSION_ACTIONS } from "../model/permissions";
+import {
+  hasEntryExchangeWorkflowFields,
+  parseEntryExchangeWorkflowFields,
+} from "../model/entryExchange";
 import type {
   Entry,
   Member,
@@ -94,6 +98,11 @@ interface ImportEntryRow {
   speaker?: string;
   index?: number;
   status?: Entry["status"];
+  translated_by?: unknown;
+  proofread_count?: unknown;
+  proofread_by?: unknown;
+  reviewed_by?: unknown;
+  [key: string]: unknown;
 }
 
 export function setEntriesProjectRoot(root: ProjectDirectoryHandle): void {
@@ -254,10 +263,28 @@ function getTargetText(row: ImportEntryRow): string {
 function normalizeSourceEntry(
   row: ImportEntryRow,
   fileId: string,
-  index: number,
+  fallbackIndex: number,
 ): Entry {
+  const exchangeWorkflow = parseEntryExchangeWorkflowFields(
+    row,
+    fallbackIndex,
+  );
+  const index = exchangeWorkflow
+    ? row.index === undefined
+      ? fallbackIndex
+      : Number(row.index)
+    : fallbackIndex;
+
+  if (exchangeWorkflow && (!Number.isInteger(index) || index <= 0)) {
+    throw new Error(
+      `第 ${fallbackIndex} 条交换词条的 index 必须是正整数。`,
+    );
+  }
+
   const key = row.key?.trim() || `line_${padEntryIndex(index)}`;
-  const source = getSourceText(row).trim();
+  const source = exchangeWorkflow
+    ? getSourceText(row)
+    : getSourceText(row).trim();
   const target = getTargetText(row);
   const now = nowIso();
 
@@ -270,13 +297,16 @@ function normalizeSourceEntry(
     source,
     target,
     context: row.context ?? "",
-    status: row.status ?? (target.trim() ? "translated" : "untranslated"),
+    status:
+      exchangeWorkflow?.status ??
+      row.status ??
+      (target.trim() ? "translated" : "untranslated"),
     disputed: false,
     assignee: "",
-    translated_by: "",
-    proofread_by: [],
-    proofread_count: 0,
-    reviewed_by: "",
+    translated_by: exchangeWorkflow?.translated_by ?? "",
+    proofread_by: exchangeWorkflow?.proofread_by ?? [],
+    proofread_count: exchangeWorkflow?.proofread_count ?? 0,
+    reviewed_by: exchangeWorkflow?.reviewed_by ?? "",
     word_count: countTextWords(source),
     hidden: false,
     locked: false,
@@ -303,6 +333,20 @@ function assertUniqueEntryKeys(entries: Entry[]): void {
   }
 }
 
+function assertUniqueEntryIndexes(entries: Entry[]): void {
+  const seenIndexes = new Set<number>();
+
+  for (const entry of entries) {
+    if (seenIndexes.has(entry.index)) {
+      throw new Error(
+        `词条交换文件包含重复 index：${entry.index}。请先修正后再导入。`,
+      );
+    }
+
+    seenIndexes.add(entry.index);
+  }
+}
+
 function parseSourceText(fileId: string, fileName: string, text: string): SourceImportResult {
   const format = getSupportedTextFormat(fileName);
 
@@ -312,6 +356,9 @@ function parseSourceText(fileId: string, fileName: string, text: string): Source
     const entries = rows.map((row, index) => normalizeSourceEntry(row, fileId, index + 1));
 
     assertUniqueEntryKeys(entries);
+    if (rows.some((row) => hasEntryExchangeWorkflowFields(row))) {
+      assertUniqueEntryIndexes(entries);
+    }
 
     return {
       entries,

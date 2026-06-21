@@ -29,4 +29,22 @@ describe("csv parsing", () => {
       ),
     ).toThrow("重复 key");
   });
+
+  it("does not treat CSV workflow-looking columns as exchange audit data", () => {
+    const entries = parseEntriesFromSourceFile(
+      "file-1",
+      "script.csv",
+      "key,source,target,status,proofread_count\nline.1,Hello,你好,proofread,2\n",
+    );
+
+    expect(entries).toMatchObject([
+      {
+        key: "line.1",
+        target: "你好",
+        status: "translated",
+        proofread_count: 0,
+        proofread_by: [],
+      },
+    ]);
+  });
 });

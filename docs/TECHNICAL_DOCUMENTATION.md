@@ -841,6 +841,28 @@ comments/<file_id>/<6位entry index>.jsonl
 - 保存前若当前 `updated_at` 对应完整版本事件，译者、校对和审核审计以该事件投影为准；旧项目或旧事件缺少完整快照时回退到 Entry 字段。
 - 批量译文导入同样通过一个写入计划提交全部 entries chunk 和版本事件。
 
+源 JSON/JSONL 兼容两种语义：
+
+- 旧内容格式没有 `translated_by`、`proofread_count`、`proofread_by`、`reviewed_by` 时，继续按现有宽松规则读取；非空译文默认为 translated，空译文默认为 untranslated，旧文件无需迁移。
+- 出现任一上述工作流字段时视为 Textile 词条交换行，要求提供有效 `status`，并严格校验译文、校对次数和成员数组的一致性。`proofread_count` 只接受 0 到 3 的整数，`proofread_by` 可为空表示成员未知，但成员数量不能大于次数。
+- 交换行拒绝 `id`、`file_id`、锁定、隐藏、分配、争议和更新时间等管理字段，避免源导入成为管理字段覆盖入口。
+- 交换行提供 `index` 时必须为正整数，且同一文件不能重复；旧内容格式仍沿用数组/行顺序，不改变原兼容行为。
+- reviewed 允许校对次数为 0，以兼容未启用校对但启用审核的项目；人员字段为空表示未知，不补写当前导入成员。
+
+CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有格式都只读取 key/index/target，交换字段不会在译文导入入口生效。
+
+### `entryExchange.ts`
+
+职责：
+
+- 按文件导出 Textile 词条交换 JSON 或 JSONL。
+- 只包含 key、index、speaker、source、target、context 和翻译/校对/审核工作流字段。
+- 不包含锁定、隐藏、分配、争议、评论、成员权限或私密数据。
+- 使用 `file.view` 权限兜底。
+- 隐藏文件或包含隐藏词条的文件拒绝导出，避免静默生成不完整交换文件。
+
+交换导出与成品导出相互独立。成品适配器不增加内部审计字段；修改包和 `.hproj` 继续承担协作提交与完整备份职责。
+
 历史恢复：
 
 - `restoreEntryVersion(entryId, eventId, { actor, snapshot })` 只接受带完整快照的 `entry.updated`/`entry.restored` 事件；`snapshot` 为 `before` 或 `after`。

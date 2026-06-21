@@ -75,6 +75,50 @@ describe("translation import workflow", () => {
     ]);
   });
 
+  it("ignores exchange workflow fields in the translation-only import", async () => {
+    const storage = await createImportStorage([
+      createEntry({
+        id: "file-1:1",
+        file_id: "file-1",
+        index: 1,
+        key: "line_000001",
+        target: "Original",
+        status: "translated",
+        translated_by: "translator-1",
+      }),
+    ]);
+
+    await importEntryTranslations(
+      "file-1",
+      "exchange.json",
+      JSON.stringify([
+        {
+          key: "line_000001",
+          target: "Changed",
+          status: "reviewed",
+          translated_by: "other-translator",
+          proofread_count: 3,
+          proofread_by: ["proofreader-1"],
+          reviewed_by: "reviewer-1",
+        },
+      ]),
+      "importer-1",
+    );
+
+    await expect(
+      storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        target: "Changed",
+        status: "translated",
+        translated_by: "importer-1",
+        proofread_count: 0,
+        proofread_by: [],
+        reviewed_by: "",
+      },
+    ]);
+  });
+
   it("skips locked and hidden entries", async () => {
     const storage = await createImportStorage([
       createEntry({

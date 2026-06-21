@@ -16,6 +16,7 @@ defineProps<{
   canLock: boolean;
   canHide: boolean;
   canDelete: boolean;
+  canExportExchange: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -28,6 +29,7 @@ const emit = defineEmits<{
   toggleLocked: [fileId: string];
   delete: [fileId: string];
   history: [fileId: string];
+  exportExchange: [fileId: string, format: "json" | "jsonl"];
 }>();
 </script>
 
@@ -102,6 +104,20 @@ const emit = defineEmits<{
             删除
           </button>
           <button type="button" @click="emit('history', file.id)">查看历史</button>
+          <button
+            type="button"
+            :disabled="!canExportExchange"
+            @click="emit('exportExchange', file.id, 'json')"
+          >
+            导出词条交换 JSON
+          </button>
+          <button
+            type="button"
+            :disabled="!canExportExchange"
+            @click="emit('exportExchange', file.id, 'jsonl')"
+          >
+            导出词条交换 JSONL
+          </button>
         </div>
       </details>
     </div>

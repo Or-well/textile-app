@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import ImportFormatHelp from "./ImportFormatHelp.vue";
 
 const props = defineProps<{
@@ -10,6 +10,7 @@ const props = defineProps<{
   accept?: string;
   confirmLabel: string;
   isSubmitting?: boolean;
+  importMode?: "source" | "source-update" | "translation";
 }>();
 
 const emit = defineEmits<{
@@ -19,7 +20,7 @@ const emit = defineEmits<{
 
 const selectedFiles = ref<File[]>([]);
 
-const jsonSample = `[
+const legacyJsonSample = `[
   {
     "key": "KEY 键值",
     "original": "source text 原文",
@@ -33,6 +34,25 @@ const jsonSample = `[
   }
 ]`;
 
+const exchangeJsonSample = `[
+  {
+    "key": "line_000001",
+    "index": 1,
+    "speaker": "角色名",
+    "source": "原文",
+    "target": "译文",
+    "context": "上下文",
+    "status": "proofread",
+    "translated_by": "",
+    "proofread_count": 1,
+    "proofread_by": [],
+    "reviewed_by": ""
+  }
+]`;
+
+const exchangeJsonlSample = `{"key":"line_000001","index":1,"speaker":"角色名","source":"原文","target":"译文","context":"上下文","status":"proofread","translated_by":"","proofread_count":1,"proofread_by":[],"reviewed_by":""}
+{"key":"line_000002","index":2,"speaker":"","source":"第二条原文","target":"","context":"","status":"untranslated","translated_by":"","proofread_count":0,"proofread_by":[],"reviewed_by":""}`;
+
 const csvSample = `#正式使用时请删除前三行。Please remove the first 3 lines in production.
 #键值,原文,译文,上下文（可选）
 #Key,Source,Translation,Context(optional)
@@ -40,28 +60,73 @@ key_apple,apple,苹果,"A common, round fruit produced by the tree Malus domesti
 key_pear,pear,梨
 key_peach,peach,桃子`;
 
-const importNotes = [
-  ".txt / .ks：按行生成词条。",
-  ".json / .jsonl / .csv：读取 key、source/original、target/translation、context 字段。",
-];
+const importNotes = computed(() => {
+  if (props.importMode === "translation") {
+    return [
+      "此入口只按 key / index 更新译文，文件中的状态和校对、审核字段不会被采用。",
+      "译文内容发生变化时，词条会回到已翻译或未翻译，并清空原有校对和审核结果。",
+      ".json / .jsonl / .csv 可按 key / index 匹配；.txt / .ks 按行号匹配。",
+    ];
+  }
 
-const importSamples = [
-  {
-    title: "JSON 示例",
-    description: "数组格式，适合结构化词条。",
-    fileName: "textile-import-sample.json",
-    mimeType: "application/json;charset=utf-8",
-    sampleText: jsonSample,
-    previewable: true,
-  },
-  {
-    title: "CSV 示例",
-    description: "逗号分隔，支持注释说明行。",
-    fileName: "textile-import-sample.csv",
-    mimeType: "text/csv;charset=utf-8",
-    sampleText: csvSample,
-  },
-];
+  if (props.importMode === "source-update") {
+    return [
+      "更新源文件时优先保留项目内已有译文和工作流状态。",
+      "交换 JSON / JSONL 中的工作流字段不会覆盖项目内现有审计信息。",
+      ".txt / .ks 按行读取；.json / .jsonl / .csv 读取结构化词条。",
+    ];
+  }
+
+  return [
+    ".txt / .ks：按行生成词条；.csv：只读取词条内容，不保存工作流状态。",
+    "旧 JSON / JSONL 继续按 key、source/original、target/translation、context 等字段导入。",
+    "Textile 词条交换 JSON / JSONL 可额外保留 status、校对次数和相关成员记录。",
+  ];
+});
+
+const importSamples = computed(() => {
+  const contentSamples = [
+    {
+      title: "普通 JSON 示例",
+      description: "兼容旧格式，只包含词条内容。",
+      fileName: "textile-content-sample.json",
+      mimeType: "application/json;charset=utf-8",
+      sampleText: legacyJsonSample,
+      previewable: true,
+    },
+    {
+      title: "CSV 示例",
+      description: "逗号分隔，支持注释说明行。",
+      fileName: "textile-import-sample.csv",
+      mimeType: "text/csv;charset=utf-8",
+      sampleText: csvSample,
+    },
+  ];
+
+  if (props.importMode === "translation") {
+    return contentSamples;
+  }
+
+  return [
+    ...contentSamples,
+    {
+      title: "词条交换 JSON",
+      description: "数组格式，可保留工作流状态。",
+      fileName: "textile-entry-exchange-sample.json",
+      mimeType: "application/json;charset=utf-8",
+      sampleText: exchangeJsonSample,
+      previewable: true,
+    },
+    {
+      title: "词条交换 JSONL",
+      description: "每行一个词条，可保留工作流状态。",
+      fileName: "textile-entry-exchange-sample.jsonl",
+      mimeType: "application/x-ndjson;charset=utf-8",
+      sampleText: exchangeJsonlSample,
+      previewable: true,
+    },
+  ];
+});
 
 watch(
   () => props.open,

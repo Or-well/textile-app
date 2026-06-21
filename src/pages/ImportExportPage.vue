@@ -1032,6 +1032,9 @@ watch(
         <p class="section-note">
           按当前设置生成成品包、项目清单和检查报告。
         </p>
+        <p class="section-note">
+          成品文件用于发布，不用于恢复 Textile 项目，也不会完整保留校对人员、校对次数、评论和项目设置。
+        </p>
         <div class="release-settings-grid">
           <label>
             <span>导出格式</span>
