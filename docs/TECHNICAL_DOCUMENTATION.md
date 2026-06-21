@@ -97,9 +97,9 @@ npm run tauri:release:check
 
 - `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 版本一致。
 - Tauri Updater 公钥非空。
-- 至少配置一个 HTTPS updater endpoint。
+- 至少配置一个 HTTPS 更新端点。
 
-当前仓库已经配置 Tauri updater 公钥和 GitHub Releases endpoint；发布前仍必须运行该检查，防止版本或发布配置回退。
+当前仓库已经配置 Tauri Updater 公钥和 GitHub Releases 更新端点；发布前仍必须运行该检查，防止版本或发布配置回退。
 
 ## 4. 目录结构
 
@@ -113,7 +113,7 @@ textile/
     utils/            ID、时间、JSONL、ZIP 工具
     App.vue            手写路由和应用状态中心
     main.ts            Vue 挂载入口
-  src-tauri/           Tauri 壳、能力和 updater 配置
+  src-tauri/           Tauri 壳、能力和 Tauri Updater 配置
   public/              PWA 图标和 Web 版本清单
   scripts/             版本清单与发布检查脚本
   examples/
@@ -1847,7 +1847,7 @@ installing / refreshing / restarting
 - Web/PWA 清单与 Tauri `latest.json` 不是同一种格式，不能混用。
 - 安装和刷新前必须继续尊重活动写操作与未保存草稿状态。
 - Web 下载 URL 为空时不能打开占位地址。
-- Tauri updater 未配置公钥或 endpoint 时检查会失败，不应绕过发布检查。
+- Tauri Updater 未配置公钥或更新端点时检查会失败，不应绕过发布检查。
 
 ### PWA
 
@@ -1939,7 +1939,7 @@ npm.cmd run tauri signer generate -- -w "$env:USERPROFILE\.tauri\textile.key"
 
 4. 私钥文件只保存在发布机或 CI 密钥库，不能提交到 GitHub，不能放进项目文件夹、`.hproj`、修改包或应用存储。
 
-第一个公开版本必须已经配置好 `pubkey` 和 `endpoints`。如果先发布一个未配置 updater 的安装包，已安装用户无法依靠自动更新补上 updater 配置。
+第一个公开版本必须已经配置好 `pubkey` 和 `endpoints`。如果先发布一个未配置 Tauri Updater 的安装包，已安装用户无法依靠自动更新补上 Tauri Updater 配置。
 
 每次发布：
 
@@ -1983,7 +1983,7 @@ GitHub Release 应上传：
 
 - 安装包，例如 `Textile_0.1.1_x64-setup.exe`。
 - 对应 `.sig` 文件，方便人工核对和留档。
-- Tauri updater 使用的 `latest.json`。
+- Tauri Updater 使用的 `latest.json`。
 
 `latest.json` 使用 Tauri Updater 格式，不是 Web/PWA 的 `public/version.json`。最小示例：
 
@@ -2007,7 +2007,7 @@ GitHub Release 应上传：
 - `url` 必须是用户机器可以直接下载到安装包的 HTTPS 地址。
 - 每个新版本必须用同一把 updater 私钥签名，否则旧版本无法验证更新。
 - GitHub Release 若使用私有仓库，普通用户可能无法下载更新文件；公开分发时应确保 release 资源公开可访问。
-- `public/version.json` 只服务 Web/PWA 更新检查；桌面自动更新只看 Tauri endpoint 返回的 `latest.json`。
+- `public/version.json` 只服务 Web/PWA 更新检查；桌面自动更新只看 Tauri Updater 更新端点返回的 `latest.json`。
 
 ### 更新安全
 
@@ -2129,7 +2129,7 @@ Tauri：
 
 - 使用 `npm run tauri:dev`。
 - debug 构建启用 Tauri log 插件。
-- updater 配置问题先运行 `npm run tauri:release:check`。
+- Tauri Updater 配置问题先运行 `npm run tauri:release:check`。
 
 常见错误定位：
 
@@ -2166,7 +2166,7 @@ npm run build
 4. 翻译、校对多轮、审核、回退、争议。
 5. 上下文、术语、评论、任务。
 6. 统计页和概览进度一致。
-7. 普通成员导出普通/任务修改包。
+7. 普通成员导出我的可提交修改/所选任务范围修改包。
 8. 负责人导入并处理冲突。
 9. 负责人发布签名项目更新。
 10. 普通成员先导出本地修改，再接收更新。
@@ -2175,7 +2175,7 @@ npm run build
 13. 导入 `.hproj` 到新的本地项目文件夹，登录并确认词条可读写。
 14. 无权限成员尝试关键写操作。
 15. Web/PWA 更新提示和安全刷新。
-16. 配置完成后测试 Tauri updater。
+16. 配置完成后测试 Tauri Updater。
 
 ## 55. 已知限制
 
@@ -2187,7 +2187,6 @@ npm run build
 - 没有多标签页并发锁。
 - 尚无集成测试和端到端自动化测试。
 - Web 下载地址未配置。
-- Tauri updater 公钥和 endpoint 未配置。
 - 私钥文件未加密，内存私钥刷新后丢失。
 - 独立 `contexts/` 协议目录与当前 Entry 内联上下文并存。
 - `exports/` 和 `changes/` 多数情况下不会自动写入。
@@ -2198,7 +2197,7 @@ npm run build
 
 建议按风险顺序推进：
 
-1. 配置正式 Tauri updater 公钥和 HTTPS endpoint。
+1. 发布前复核 Tauri Updater 公钥、HTTPS 更新端点和更新清单。
 2. 增加端到端手动测试清单或 Playwright 流程。
 
 任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。
