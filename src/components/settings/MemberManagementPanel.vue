@@ -1,24 +1,29 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { PERMISSION_ACTIONS } from "../../model/permissions";
-import type { Member, Role } from "../../model/types";
+import type { Member, ProjectConfig, Role } from "../../model/types";
+import {
+  completeChangePackageExport,
+  exportChangePackage,
+} from "../../services/changes";
 import {
   addMember,
   addMemberWithGeneratedKey,
   canManageMember,
   canTransferOwner,
   changeOwnPassword,
+  commitPreparedOwnerTransfer,
   deleteMember,
   disableMember,
   enableMember,
+  prepareOwnerTransfer,
   resetMemberPassword,
-  transferOwner,
   updateMemberRoles,
 } from "../../services/auth";
-import { memberKeyFileToBlob } from "../../services/keyManager";
+import { hasLoadedPrivateKey, memberKeyFileToBlob } from "../../services/keyManager";
 import { can, isOwnerMember } from "../../services/permissions";
 import type { ProjectDirectoryHandle } from "../../services/projectFs";
-import { saveBlob } from "../../utils/saveBlob";
+import { saveBlob, saveBlobWithConfirmation } from "../../utils/saveBlob";
 import MemberDeletionDialog from "./MemberDeletionDialog.vue";
 
 const props = defineProps<{
@@ -30,6 +35,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   membersUpdated: [members: Member[]];
+  projectUpdated: [project: ProjectConfig];
 }>();
 
 const roleOptions: Array<{ role: Role; label: string }> = [
@@ -330,17 +336,79 @@ async function handleTransferOwner() {
     return;
   }
 
+  if (!target.public_key || !target.key_id || target.key_revoked_at) {
+    errorMessage.value =
+      "新的项目负责人还没有有效身份公钥。请先在身份密钥页面登记该成员公钥，并确认该成员已保存对应私钥。";
+    message.value = "";
+    return;
+  }
+
+  const actor = getActor();
+
+  if (!hasLoadedPrivateKey(actor)) {
+    errorMessage.value =
+      "转让负责人前，需要先导入当前负责人的旧私钥，用旧负责人签名发布包含新负责人的过渡项目更新包。";
+    message.value = "";
+    return;
+  }
+
   if (
-    !window.confirm(`确认要把项目负责人转让给“${target.name}”吗？`) ||
-    !window.confirm("再次确认：转让后你将变为管理员。继续转让？")
+    !window.confirm(
+      [
+        `确认要把项目负责人转让给“${target.name}”吗？`,
+        "",
+        "Textile 将先导出一份由当前负责人旧密钥签名、内容包含新负责人和其公钥的项目更新包。成员接收该过渡包后，才能验证新负责人之后发布的项目更新包。",
+      ].join("\n"),
+    ) ||
+    !window.confirm("再次确认：确认过渡项目更新包保存后，当前负责人将变为管理员。继续？")
   ) {
     return;
   }
 
-  await runMemberAction(
-    () => transferOwner(getRoot(), props.members, getActor(), ownerTargetId.value),
-    "项目负责人已转让。",
-  );
+  isWorking.value = true;
+  clearAlerts();
+
+  try {
+    const root = getRoot();
+    const transfer = prepareOwnerTransfer(
+      props.members,
+      actor,
+      ownerTargetId.value,
+    );
+    const exported = await exportChangePackage(transfer.previousOwner.id, {
+      mode: "project_update",
+      sign: true,
+      actor: transfer.previousOwner,
+      projectUpdateMembers: transfer.members,
+      signatureMember: transfer.previousOwner,
+    });
+    const saved = await saveBlobWithConfirmation(
+      exported.blob,
+      exported.fileName,
+      "下载已经开始。请确认负责人转让项目更新包已经保存到电脑；只有确认后，Textile 才会完成本地主项目的负责人转让。",
+    );
+
+    if (!saved) {
+      message.value = "负责人转让项目更新包尚未确认保存，当前项目负责人没有变化。";
+      return;
+    }
+
+    const updatedProject = await completeChangePackageExport(exported);
+    const members = await commitPreparedOwnerTransfer(root, transfer, actor);
+
+    if (updatedProject) {
+      emit("projectUpdated", updatedProject);
+    }
+
+    emit("membersUpdated", members);
+    message.value =
+      "项目负责人已转让。请把刚才生成的项目更新包分发给成员；成员接收后才能验证新负责人后续发布的项目更新包。";
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "成员管理操作失败。请稍后再试。";
+  } finally {
+    isWorking.value = false;
+  }
 }
 
 watch(

@@ -92,6 +92,8 @@ export interface ExportChangePackageOptions {
   taskIds?: string[];
   sign?: boolean;
   actor?: Member | null;
+  projectUpdateMembers?: Member[];
+  signatureMember?: Member;
 }
 
 export interface ExportedChangePackage {
@@ -1296,11 +1298,21 @@ async function collectPublicMemberFiles(storage: ProjectStorage): Promise<Record
     members?: Member[];
   }>("members.json");
 
+  return collectPublicMemberFilesFromMembers(
+    membersFile.members ?? [],
+    membersFile.schema_version ?? 1,
+  );
+}
+
+function collectPublicMemberFilesFromMembers(
+  members: Member[],
+  schemaVersion = 1,
+): Record<string, string> {
   return {
     "members/members.json": `${JSON.stringify(
       {
-        schema_version: membersFile.schema_version ?? 1,
-        members: (membersFile.members ?? []).map(sanitizeMemberForProjectUpdate),
+        schema_version: schemaVersion,
+        members: members.map(sanitizeMemberForProjectUpdate),
       },
       null,
       2,
@@ -2172,6 +2184,14 @@ export async function exportChangePackage(
   userId: string,
   options: ExportChangePackageOptions,
 ): Promise<ExportedChangePackage> {
+  if (options.projectUpdateMembers && options.mode !== "project_update") {
+    throw new Error("只有项目更新包可以指定公开成员快照。");
+  }
+
+  if (options.signatureMember && options.signatureMember.id !== userId) {
+    throw new Error("签名成员必须与导出成员一致。");
+  }
+
   const storage = getProjectStorage();
   const project = await storage.readJson<ProjectConfig>("project.json");
   const actor = options.actor;
@@ -2291,7 +2311,9 @@ export async function exportChangePackage(
       targetRevision ?? baseRevision,
       createdAt,
     );
-    payload.memberFiles = await collectPublicMemberFiles(storage);
+    payload.memberFiles = options.projectUpdateMembers
+      ? collectPublicMemberFilesFromMembers(options.projectUpdateMembers)
+      : await collectPublicMemberFiles(storage);
     payload.events = await collectAllEvents(storage);
   }
 
@@ -2333,10 +2355,11 @@ export async function exportChangePackage(
         : [options.mode],
     summary,
   };
-  const members =
-    options.sign || requiresSignature ? await loadProjectMembers(storage) : [];
-  const signer = members.find((member) => member.id === userId);
   const shouldSign = options.sign || requiresSignature;
+  const members =
+    shouldSign && !options.signatureMember ? await loadProjectMembers(storage) : [];
+  const signer =
+    options.signatureMember ?? members.find((member) => member.id === userId);
 
   if (shouldSign) {
     assertCanCreateSignature(actor, signer, requiresSignature);

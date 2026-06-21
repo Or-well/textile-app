@@ -49,6 +49,11 @@ export interface GeneratedMemberKey {
   keyFile: MemberKeyFile;
 }
 
+export interface PreparedOwnSigningKeyRotation extends GeneratedMemberKey {
+  previousMember: Member;
+  members: Member[];
+}
+
 export type SigningKeyReadiness =
   | "ready"
   | "missing_public_key"
@@ -311,6 +316,47 @@ export async function rotateOwnSigningKey(
     },
     "member.key_rotated",
   );
+}
+
+export async function prepareOwnSigningKeyRotation(
+  members: Member[],
+  actor: Member | null | undefined,
+): Promise<PreparedOwnSigningKeyRotation> {
+  assertActor(actor);
+  assertPermission(actor, PERMISSION_ACTIONS.KEY_ROTATE);
+
+  const previousMember = findMember(members, actor.id);
+  const generated = await generateMemberSigningKey(previousMember);
+  const nextMembers = members.map((member) =>
+    member.id === actor.id ? generated.member : member,
+  );
+
+  return {
+    ...generated,
+    previousMember,
+    members: nextMembers,
+  };
+}
+
+export async function commitPreparedOwnSigningKeyRotation(
+  root: ProjectDirectoryHandle,
+  rotation: PreparedOwnSigningKeyRotation,
+  actor: Member | null | undefined,
+): Promise<MemberKeyResult> {
+  assertActor(actor);
+  assertPermission(actor, PERMISSION_ACTIONS.KEY_ROTATE);
+
+  privateKeys.set(actor.id, rotation.privateKey);
+
+  await writeMembers(root, rotation.members, actor, "member.key_rotated", {
+    member_id: actor.id,
+    key_id: rotation.member.key_id ?? "",
+  });
+
+  return {
+    members: rotation.members,
+    member: rotation.member,
+  };
 }
 
 export async function revokeOwnSigningKey(

@@ -9,7 +9,11 @@ import type {
   ProjectEvent,
   Task,
 } from "../../src/model/types";
-import { generateOwnSigningKey } from "../../src/services/keyManager";
+import {
+  generateOwnSigningKey,
+  prepareOwnSigningKeyRotation,
+} from "../../src/services/keyManager";
+import { prepareOwnerTransfer } from "../../src/services/auth";
 import {
   calculateChangePackageContentHash,
   type ChangePackagePayload,
@@ -1135,6 +1139,181 @@ describe("ordinary change-package write plan", () => {
 });
 
 describe("project update package write plan", () => {
+  it("applies an owner transfer package signed by the previous owner", async () => {
+    const project = createProject({
+      revision: "base-revision",
+      revision_hash: "base-revision",
+    });
+    const previousOwner = createMember(["owner"], {
+      id: "owner-1",
+      name: "Owner",
+    });
+    const nextOwner = createMember(["admin"], {
+      id: "owner-2",
+      name: "Next Owner",
+    });
+    const sourceRoot = createMemoryProjectDirectory(
+      {
+        "project.json": `${JSON.stringify(project, null, 2)}\n`,
+        "members.json": `${JSON.stringify(
+          { schema_version: 1, members: [previousOwner, nextOwner] },
+          null,
+          2,
+        )}\n`,
+        "logs/events.jsonl": "",
+      },
+      "owner-transfer-source.hproj",
+    );
+    const sourceStorage = createProjectStorage(sourceRoot);
+    const previousOwnerKey = await generateOwnSigningKey(
+      sourceRoot,
+      [previousOwner, nextOwner],
+      previousOwner,
+    );
+    const nextOwnerKey = await generateOwnSigningKey(
+      sourceRoot,
+      previousOwnerKey.members,
+      nextOwner,
+    );
+    const signingOwner = nextOwnerKey.members.find(
+      (member) => member.id === previousOwner.id,
+    )!;
+    const preparedTransfer = prepareOwnerTransfer(
+      nextOwnerKey.members,
+      signingOwner,
+      nextOwner.id,
+    );
+
+    setChangesProjectStorage(sourceStorage);
+
+    const exported = await exportChangePackage(signingOwner.id, {
+      mode: "project_update",
+      sign: true,
+      actor: signingOwner,
+      signatureMember: signingOwner,
+      projectUpdateMembers: preparedTransfer.members,
+    });
+    const packageBytes = new Uint8Array(await exported.blob.arrayBuffer());
+    const changePackage = await readChangePackage(packageBytes as unknown as Blob);
+    const receiverRoot = createMemoryProjectDirectory(
+      {
+        "project.json": `${JSON.stringify(project, null, 2)}\n`,
+        "members.json": `${JSON.stringify(
+          { schema_version: 1, members: nextOwnerKey.members },
+          null,
+          2,
+        )}\n`,
+        "logs/events.jsonl": "",
+      },
+      "owner-transfer-receiver.hproj",
+    );
+    const receiverStorage = createProjectStorage(receiverRoot);
+
+    expect(changePackage.signature?.user_id).toBe(previousOwner.id);
+    expect(changePackage.signature?.key_id).toBe(signingOwner.key_id);
+
+    setChangesProjectStorage(receiverStorage);
+
+    await expect(
+      applyChangePackage(changePackage, [], { actor: signingOwner }),
+    ).resolves.toMatchObject({
+      importedMembers: 2,
+      importedProjectSettings: 1,
+    });
+    await expect(
+      receiverStorage.readJson<{ members: Member[] }>("members.json"),
+    ).resolves.toMatchObject({
+      members: [
+        { id: previousOwner.id, roles: ["admin"] },
+        expect.objectContaining({
+          id: nextOwner.id,
+          key_id: nextOwnerKey.member.key_id,
+          roles: expect.arrayContaining(["owner", "admin"]),
+        }),
+      ],
+    });
+  });
+
+  it("applies a maintainer key transition package signed by the previous key", async () => {
+    const project = createProject({
+      revision: "base-revision",
+      revision_hash: "base-revision",
+    });
+    const owner = createMember(["owner"], { id: "owner-1", name: "Owner" });
+    const sourceRoot = createMemoryProjectDirectory(
+      {
+        "project.json": `${JSON.stringify(project, null, 2)}\n`,
+        "members.json": `${JSON.stringify(
+          { schema_version: 1, members: [owner] },
+          null,
+          2,
+        )}\n`,
+        "logs/events.jsonl": "",
+      },
+      "key-transition-source.hproj",
+    );
+    const sourceStorage = createProjectStorage(sourceRoot);
+    const previousKey = await generateOwnSigningKey(sourceRoot, [owner], owner);
+    const rotation = await prepareOwnSigningKeyRotation(
+      previousKey.members,
+      previousKey.member,
+    );
+
+    setChangesProjectStorage(sourceStorage);
+
+    const exported = await exportChangePackage(previousKey.member.id, {
+      mode: "project_update",
+      sign: true,
+      actor: previousKey.member,
+      signatureMember: previousKey.member,
+      projectUpdateMembers: rotation.members,
+    });
+    const packageBytes = new Uint8Array(await exported.blob.arrayBuffer());
+    const changePackage = await readChangePackage(packageBytes as unknown as Blob);
+    const receiverOwner: Member = {
+      ...previousKey.member,
+      password_hash: "local-password-hash",
+      password_salt: "local-password-salt",
+    };
+    const receiverRoot = createMemoryProjectDirectory(
+      {
+        "project.json": `${JSON.stringify(project, null, 2)}\n`,
+        "members.json": `${JSON.stringify(
+          { schema_version: 1, members: [receiverOwner] },
+          null,
+          2,
+        )}\n`,
+        "logs/events.jsonl": "",
+      },
+      "key-transition-receiver.hproj",
+    );
+    const receiverStorage = createProjectStorage(receiverRoot);
+
+    expect(changePackage.signature?.key_id).toBe(previousKey.member.key_id);
+
+    setChangesProjectStorage(receiverStorage);
+
+    await expect(
+      applyChangePackage(changePackage, [], { actor: receiverOwner }),
+    ).resolves.toMatchObject({
+      importedMembers: 1,
+      importedProjectSettings: 1,
+    });
+    await expect(
+      receiverStorage.readJson<{ members: Member[] }>("members.json"),
+    ).resolves.toMatchObject({
+      members: [
+        {
+          id: owner.id,
+          key_id: rotation.member.key_id,
+          public_key: rotation.member.public_key,
+          password_hash: "local-password-hash",
+          password_salt: "local-password-salt",
+        },
+      ],
+    });
+  });
+
   it("applies authoritative content, removes stale files, and preserves local credentials", async () => {
     const fixture = await createProjectUpdateFixture();
 

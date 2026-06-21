@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { Member } from "../model/types";
+import type { Member, ProjectConfig } from "../model/types";
 import {
+  completeChangePackageExport,
+  exportChangePackage,
+} from "../services/changes";
+import {
+  commitPreparedOwnSigningKeyRotation,
   exportOwnPublicKeyRegistrationFile,
   exportOwnKeyFile,
   generateOwnSigningKey,
   hasLoadedPrivateKey,
   importMemberPublicKeyRegistrationFile,
   importOwnKeyFile,
+  prepareOwnSigningKeyRotation,
   previewMemberPublicKeyRegistrationFile,
   revokeMemberPublicKey,
   revokeOwnSigningKey,
@@ -16,6 +22,7 @@ import {
 } from "../services/keyManager";
 import {
   canExportPrivateKey,
+  canExportProjectUpdatePackage,
   canGenerateKey,
   canImportPrivateKey,
   canRegisterPublicKey,
@@ -25,7 +32,7 @@ import {
   canViewKey,
 } from "../services/permissions";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
-import { saveBlob } from "../utils/saveBlob";
+import { saveBlob, saveBlobWithConfirmation } from "../utils/saveBlob";
 import { formatDateTime } from "../utils/time";
 
 const props = defineProps<{
@@ -37,6 +44,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   membersUpdated: [members: Member[]];
+  projectUpdated: [project: ProjectConfig];
 }>();
 
 const isWorking = ref(false);
@@ -54,6 +62,9 @@ const canRegisterPublic = computed(() => canRegisterPublicKey(props.currentUser)
 const canRotateKeys = computed(() => canRotateKey(props.currentUser));
 const canRevokeKeys = computed(() => canRevokeKey(props.currentUser));
 const canRevokeOwnKeys = computed(() => canRevokeOwnKey(props.currentUser));
+const canPublishProjectUpdates = computed(() =>
+  canExportProjectUpdatePackage(props.currentUser),
+);
 const ownPrivateLoaded = computed(() => hasLoadedPrivateKey(ownMember.value));
 const hasOwnPublicKey = computed(() =>
   Boolean(ownMember.value?.public_key && ownMember.value.key_id),
@@ -148,6 +159,11 @@ async function handleGenerateKey() {
 }
 
 async function handleGenerateNewKey() {
+  if (canPublishProjectUpdates.value && hasActiveOwnPublicKey.value) {
+    await handleRotateProjectUpdateSigningKey();
+    return;
+  }
+
   if (
     !window.confirm(
       "生成新的签名密钥后，项目会登记新公钥，新的修改包会使用新私钥签名。继续？",
@@ -165,6 +181,67 @@ async function handleGenerateNewKey() {
 
     emit("membersUpdated", result.members);
     return "新的签名密钥已生成。请导出新的私钥文件。";
+  });
+}
+
+async function handleRotateProjectUpdateSigningKey() {
+  if (!ownPrivateLoaded.value) {
+    errorMessage.value =
+      "负责人轮换身份密钥前，需要先导入当前旧私钥，用旧密钥签发包含新公钥的项目更新包。";
+    message.value = "";
+    return;
+  }
+
+  if (
+    !window.confirm(
+      [
+        "负责人身份密钥会影响成员接收项目更新包。",
+        "",
+        "Textile 将先生成一份由当前旧密钥签名、内容包含新公钥的项目更新包。成员接收该过渡包后，才能验证之后由新密钥签名的项目更新包。",
+        "",
+        "请确认过渡包已保存并分发后再继续。是否生成新的负责人身份密钥并导出过渡更新包？",
+      ].join("\n"),
+    )
+  ) {
+    return;
+  }
+
+  await runAction(async () => {
+    const root = getRoot();
+    const rotation = await prepareOwnSigningKeyRotation(
+      props.members,
+      props.currentUser,
+    );
+    const exported = await exportChangePackage(rotation.previousMember.id, {
+      mode: "project_update",
+      sign: true,
+      actor: rotation.previousMember,
+      projectUpdateMembers: rotation.members,
+      signatureMember: rotation.previousMember,
+    });
+    const saved = await saveBlobWithConfirmation(
+      exported.blob,
+      exported.fileName,
+      "下载已经开始。请确认密钥轮换项目更新包已经保存到电脑；只有确认后，Textile 才会切换到新身份密钥。",
+    );
+
+    if (!saved) {
+      return "密钥轮换项目更新包尚未确认保存，当前身份密钥没有变化。";
+    }
+
+    const updatedProject = await completeChangePackageExport(exported);
+    const result = await commitPreparedOwnSigningKeyRotation(
+      root,
+      rotation,
+      props.currentUser,
+    );
+
+    if (updatedProject) {
+      emit("projectUpdated", updatedProject);
+    }
+
+    emit("membersUpdated", result.members);
+    return "新的负责人身份密钥已启用。请立即导出新的私钥文件，并把刚才生成的项目更新包分发给成员。";
   });
 }
 

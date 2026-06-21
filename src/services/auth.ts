@@ -29,6 +29,13 @@ export interface RoleUpdateInput {
   roles: Role[];
 }
 
+export interface PreparedOwnerTransfer {
+  previousOwner: Member;
+  newOwner: Member;
+  previousOwnerRoles: Role[];
+  members: Member[];
+}
+
 const PASSWORD_ITERATIONS = 120000;
 const PASSWORD_KEY_LENGTH = 256;
 const ROLE_FALLBACK: Role = "readonly";
@@ -561,10 +568,22 @@ export async function transferOwner(
   targetId: string,
   previousOwnerRoles: Role[] = ["admin"],
 ): Promise<Member[]> {
+  const transfer = prepareOwnerTransfer(members, actor, targetId, previousOwnerRoles);
+
+  return commitPreparedOwnerTransfer(root, transfer, actor);
+}
+
+export function prepareOwnerTransfer(
+  members: Member[],
+  actor: Member,
+  targetId: string,
+  previousOwnerRoles: Role[] = ["admin"],
+): PreparedOwnerTransfer {
   if (!canTransferOwner(actor)) {
     throw new Error("只有项目负责人可以转让负责人。");
   }
 
+  const previousOwner = findMember(members, actor.id);
   const target = findMember(members, targetId);
 
   if (!target.active) {
@@ -606,9 +625,33 @@ export async function transferOwner(
     };
   });
 
-  return writeMembersAndEvent(root, nextMembers, actor.id, "member.owner_transferred", {
+  return {
+    previousOwner,
+    newOwner: {
+      ...target,
+      roles: normalizeRoles([
+        "owner",
+        ...target.roles.filter((role) => role !== "readonly"),
+      ]),
+      updated_at: updatedAt,
+    },
+    previousOwnerRoles: demotedRoles,
+    members: nextMembers,
+  };
+}
+
+export async function commitPreparedOwnerTransfer(
+  root: ProjectDirectoryHandle,
+  transfer: PreparedOwnerTransfer,
+  actor: Member,
+): Promise<Member[]> {
+  if (actor.id !== transfer.previousOwner.id || !canTransferOwner(actor)) {
+    throw new Error("只有当前项目负责人可以完成负责人转让。");
+  }
+
+  return writeMembersAndEvent(root, transfer.members, actor.id, "member.owner_transferred", {
     previous_owner_id: actor.id,
-    new_owner_id: target.id,
-    previous_owner_roles: demotedRoles,
+    new_owner_id: transfer.newOwner.id,
+    previous_owner_roles: transfer.previousOwnerRoles,
   });
 }

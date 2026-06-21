@@ -994,6 +994,7 @@ onBeforeUnmount(() => {
             :project-root="props.projectRoot ?? localRoot ?? undefined"
             :project-id="localProject?.project_id"
             @members-updated="handleMembersUpdated"
+            @project-updated="handleProjectUpdatedFromChild"
           />
         </section>
 
@@ -1011,6 +1012,7 @@ onBeforeUnmount(() => {
               collaborationDraft.require_signed_change_packages
             "
             @members-updated="handleMembersUpdated"
+            @project-updated="handleProjectUpdatedFromChild"
           />
         </section>
 

@@ -1410,6 +1410,7 @@ manifest 示例：
 
 - 当 `settings.collaboration.require_signed_change_packages` 为 `true` 时，member_changes、task_changes 和 maintenance_changes 必须由当前成员签名；缺少签名权限、公钥已撤销、未生成公钥或私钥未加载都会在 `exportChangePackage()` 中拒绝。
 - 当该设置为 `false` 或旧项目缺失该设置时，UI 允许成员选择是否签名；选择签名时 `exportChangePackage({ sign: true })` 仍会要求签名权限、有效公钥和已加载私钥，不能静默降级为未签名包。
+- 负责人身份密钥轮换复用 `project_update` 格式：包内公开成员信息可携带新公钥，但 `signature.json` 仍由接收端已信任的旧公钥对应私钥签出。导入端不得使用包内新公钥验证该包自身。
 
 项目更新包：
 
@@ -1613,6 +1614,10 @@ const privateKeys = new Map<string, string>();
 强制签名项目中新增成员可选择“为该成员生成身份密钥”。service 只把公钥写入 `members.json`，返回一次性私钥文件给 UI 保存；私钥不得进入项目文件、`.hproj`、修改包或项目更新包。
 
 密钥撤销分为两类权限：普通成员可撤销自己的身份密钥，用于停止继续使用旧公钥；撤销其他成员身份密钥仍需要密钥管理权限。撤销只标记 `key_revoked_at` 并卸载本机私钥，不删除历史成员信息。
+
+负责人轮换自己的项目更新签名密钥时使用两阶段提交：先在内存中生成新密钥和公开成员快照，但不写入项目；随后导出由旧签名人快照签名、成员快照包含新公钥的 `project_update`；只有 UI 确认过渡包已保存后，才写入新公钥、加载新私钥并推进本地主项目。旧私钥丢失时无法在现有签名链内安全换钥。
+
+负责人转让同样使用两阶段提交：`prepareOwnerTransfer()` 先生成转让后的公开成员快照但不写入项目；成员管理 UI 用当前旧负责人签名人快照导出 `project_update`；确认过渡包已保存后再调用 `commitPreparedOwnerTransfer()` 写入 `members.json` 和转让事件。新负责人必须已有有效公钥，导入端仍使用当前项目里旧负责人的公钥验证该过渡包。
 
 风险：
 
