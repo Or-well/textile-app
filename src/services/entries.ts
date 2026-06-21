@@ -30,11 +30,12 @@ import {
   assertCan,
   canEditEntry,
   canProofreadEntry,
-  canReviewEntry,
   canRollbackEntry,
   canRestoreEntryVersion,
   canTranslateEntry,
   getCurrentUser,
+  getReviewBlockMessage,
+  getReviewBlockReason,
 } from "./permissions";
 
 let currentProjectStorage: ProjectStorage | null = null;
@@ -630,8 +631,12 @@ function assertCanWriteEntry(
   }
 
   if (isReviewAction) {
-    if (!canReviewEntry(actor, originalEntry, workflow)) {
-      throw new Error("Permission denied.");
+    const reason = getReviewBlockReason(actor, originalEntry, workflow);
+
+    if (reason) {
+      throw new Error(
+        getReviewBlockMessage(reason) || "当前成员不能审核此词条。",
+      );
     }
     return;
   }

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyEntryTargetChange,
   applyEntryWorkflowStatus,
+  getLatestProofreader,
+  getLatestTranslator,
   getEntryProofreadCount,
   inferEntryStatus,
   isEntryProofreadComplete,
@@ -111,6 +113,28 @@ describe("legacy entry normalization", () => {
   });
 });
 
+describe("entry workflow audit actors", () => {
+  it("uses the current translator and the latest proofread record", () => {
+    expect(
+      getLatestTranslator(
+        createEntry({ translated_by: " translator-latest " }),
+      ),
+    ).toBe("translator-latest");
+    expect(
+      getLatestProofreader(
+        createEntry({
+          proofread_by: ["proofreader-1", "proofreader-2", "proofreader-1"],
+        }),
+      ),
+    ).toBe("proofreader-1");
+    expect(
+      getLatestProofreader({
+        proofread_by: " legacy-proofreader ",
+      }),
+    ).toBe("legacy-proofreader");
+  });
+});
+
 describe("applyEntryWorkflowStatus", () => {
   it("resets downstream audit fields when returning to translated", () => {
     const result = applyEntryWorkflowStatus(
@@ -157,6 +181,31 @@ describe("applyEntryWorkflowStatus", () => {
       status: "proofread",
       proofread_count: 2,
       proofread_by: ["proofreader-1", "proofreader-2"],
+    });
+  });
+
+  it("does not fabricate a proofread record when approving review", () => {
+    const result = applyEntryWorkflowStatus(
+      createEntry({
+        target: "Translated",
+        status: "proofread",
+        translated_by: "translator-1",
+        proofread_by: [],
+        proofread_count: 1,
+      }),
+      "reviewed",
+      "reviewer-1",
+      {
+        proofread_required: 1,
+        review_required: true,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "reviewed",
+      proofread_by: [],
+      proofread_count: 1,
+      reviewed_by: "reviewer-1",
     });
   });
 });

@@ -148,6 +148,71 @@ describe("entry version history", () => {
     ).resolves.toEqual([]);
   });
 
+  it("blocks review by the latest proofreader at the service boundary", async () => {
+    const actor = createMember(["reviewer"], { id: "reviewer-1" });
+    const { storage, entry } = await createEntryStorage({
+      status: "proofread",
+      translated_by: "translator-1",
+      proofread_by: ["proofreader-1", actor.id],
+      proofread_count: 2,
+    });
+
+    setEntriesProjectStorage(storage);
+
+    await expect(
+      saveEntry(
+        {
+          ...entry,
+          status: "reviewed",
+          reviewed_by: actor.id,
+        },
+        {
+          actor,
+          workflow: {
+            proofread_required: 2,
+            review_required: true,
+            allow_self_review: false,
+          },
+        },
+      ),
+    ).rejects.toThrow("最新校对者");
+  });
+
+  it("allows the translator to review when another member proofread last", async () => {
+    const actor = createMember(["reviewer"], { id: "reviewer-1" });
+    const { storage, entry } = await createEntryStorage({
+      status: "proofread",
+      translated_by: actor.id,
+      proofread_by: ["proofreader-1"],
+      proofread_count: 1,
+    });
+
+    setEntriesProjectStorage(storage);
+
+    await expect(
+      saveEntry(
+        {
+          ...entry,
+          status: "reviewed",
+          reviewed_by: actor.id,
+        },
+        {
+          actor,
+          workflow: {
+            proofread_required: 1,
+            review_required: true,
+            allow_self_review: false,
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      status: "reviewed",
+      translated_by: actor.id,
+      proofread_by: ["proofreader-1"],
+      reviewed_by: actor.id,
+    });
+  });
+
   it("rolls back the entry when the history log write fails", async () => {
     const { storage: baseStorage, entry } = await createEntryStorage();
     const storage = new FailingProjectStorage(baseStorage, 2);

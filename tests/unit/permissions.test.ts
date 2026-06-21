@@ -14,6 +14,8 @@ import {
   getEffectivePermissions,
   getProofreadBlockMessage,
   getProofreadBlockReason,
+  getReviewBlockMessage,
+  getReviewBlockReason,
   validateRolePermissionChange,
 } from "../../src/services/permissions";
 import { createEntry, createMember, createProject } from "./factories";
@@ -170,7 +172,7 @@ describe("entry workflow permissions", () => {
     ).toBeNull();
   });
 
-  it("requires completed proofread and a separate reviewer when configured", () => {
+  it("requires completed proofread and blocks only the latest proofreader", () => {
     const reviewer = createMember(["reviewer"], { id: "reviewer-1" });
     const entry = createEntry({
       target: "Translated",
@@ -203,6 +205,51 @@ describe("entry workflow permissions", () => {
           allow_self_review: false,
         },
       ),
+    ).toBe(true);
+    expect(
+      canReviewEntry(
+        reviewer,
+        {
+          ...entry,
+          proofread_by: ["proofreader-1", reviewer.id],
+          proofread_count: 2,
+        },
+        {
+          proofread_required: 2,
+          review_required: true,
+          allow_self_review: false,
+        },
+      ),
+    ).toBe(false);
+    expect(
+      canReviewEntry(
+        reviewer,
+        {
+          ...entry,
+          proofread_by: [reviewer.id, "proofreader-2"],
+          proofread_count: 2,
+        },
+        {
+          proofread_required: 2,
+          review_required: true,
+          allow_self_review: false,
+        },
+      ),
+    ).toBe(true);
+    expect(
+      canReviewEntry(
+        reviewer,
+        {
+          ...entry,
+          proofread_by: [reviewer.id, "proofreader-2", reviewer.id],
+          proofread_count: 3,
+        },
+        {
+          proofread_required: 3,
+          review_required: true,
+          allow_self_review: false,
+        },
+      ),
     ).toBe(false);
     expect(
       canReviewEntry(reviewer, entry, {
@@ -210,5 +257,40 @@ describe("entry workflow permissions", () => {
         review_required: false,
       }),
     ).toBe(false);
+  });
+
+  it("explains when the latest proofreader cannot review", () => {
+    const reviewer = createMember(["reviewer"], { id: "reviewer-1" });
+    const entry = createEntry({
+      target: "Translated",
+      status: "proofread",
+      translated_by: reviewer.id,
+      proofread_by: ["proofreader-1", reviewer.id],
+      proofread_count: 2,
+    });
+    const reason = getReviewBlockReason(reviewer, entry, {
+      proofread_required: 2,
+      review_required: true,
+      allow_self_review: false,
+    });
+
+    expect(reason).toBe("self_review_disabled");
+    expect(getReviewBlockMessage(reason)).toBe(
+      "当前用户是该译文的最新校对者，项目未允许审核自己校对的译文。",
+    );
+    expect(
+      getReviewBlockReason(
+        reviewer,
+        {
+          ...entry,
+          proofread_by: ["reviewer-1", "proofreader-2"],
+        },
+        {
+          proofread_required: 2,
+          review_required: true,
+          allow_self_review: false,
+        },
+      ),
+    ).toBeNull();
   });
 });

@@ -17,6 +17,8 @@ import {
   getProofreadBlockMessage,
   getProofreadBlockReason,
   getCurrentUser,
+  getReviewBlockMessage,
+  getReviewBlockReason,
 } from "../services/permissions";
 
 const props = defineProps<{
@@ -79,6 +81,17 @@ const canReview = computed(() =>
   !hasUnsavedTarget.value &&
   canReviewEntry(currentUser.value, props.entry, props.workflow),
 );
+const reviewBlockMessage = computed(() => {
+  const reason = getReviewBlockReason(
+    currentUser.value,
+    props.entry,
+    props.workflow,
+  );
+
+  return reason === "self_review_disabled"
+    ? getReviewBlockMessage(reason)
+    : "";
+});
 const canRollback = computed(() =>
   !hasUnsavedTarget.value &&
   canRollbackEntry(currentUser.value, props.entry),
@@ -275,6 +288,9 @@ async function copyEntryId() {
     </p>
     <p v-if="proofreadBlockMessage" class="permission-message">
       {{ proofreadBlockMessage }}
+    </p>
+    <p v-if="reviewBlockMessage" class="permission-message">
+      {{ reviewBlockMessage }}
     </p>
     <p v-if="workflowDraftMessage" class="permission-message">
       {{ workflowDraftMessage }}

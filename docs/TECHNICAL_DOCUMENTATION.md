@@ -1010,6 +1010,7 @@ owner 锁定权限：
 - `canProofreadEntry`
 - `getProofreadBlockReason` / `getProofreadBlockMessage`：统一提供校对按钮判断和用户可见的阻止原因。
 - `canReviewEntry`
+- `getReviewBlockReason` / `getReviewBlockMessage`：统一提供审核判断和用户可见的阻止原因。
 - `canCreateTask`
 - `canImportMemberChangePackage`
 - `canExportProjectUpdatePackage`
@@ -1087,11 +1088,12 @@ disputed: boolean
 翻译：
 
 - 当前保存者写 `updated_by`。
-- 首次产生译文或执行翻译动作写 `translated_by`。
+- 首次产生译文或当前译文内容变化时写 `translated_by`，该字段表示当前有效译文的最新译者。
 
 校对：
 
 - 当前成员加入 `proofread_by`。
+- `proofread_by` 按校对发生顺序保存，最后一项表示最新校对者；旧字符串按单元素数组读取。
 - `proofread_count` 增加。
 - 未达到要求次数时仍保持 translated 主状态，但 UI 显示校对中。
 - 达到次数后进入 proofread。
@@ -1110,8 +1112,8 @@ disputed: boolean
 
 默认限制：
 
-- 不允许译者自校。
-- 不允许译者自审。
+- 不允许当前有效译文的最新译者校对该译文。
+- 不允许最新校对者审核自己的校对结果；译者或更早轮次的校对者不会仅因此被阻止。
 - 不允许同一成员重复完成多轮校对。
 
 这些规则可在项目工作流设置中调整。

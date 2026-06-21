@@ -127,6 +127,18 @@ export function normalizeProofreadUsers(
   return proofreadBy?.trim() ? [proofreadBy.trim()] : [];
 }
 
+export function getLatestTranslator(entry: {
+  translated_by?: string;
+}): string {
+  return entry.translated_by?.trim() ?? "";
+}
+
+export function getLatestProofreader(entry: {
+  proofread_by?: string[] | string;
+}): string {
+  return normalizeProofreadUsers(entry.proofread_by).at(-1) ?? "";
+}
+
 export function getEntryProofreadCount(entry: {
   proofread_by?: string[] | string;
   proofread_count?: number;
@@ -304,14 +316,11 @@ export function applyEntryWorkflowStatus(
 
   if (status === "reviewed") {
     nextEntry.translated_by = entry.translated_by || userId;
-    nextEntry.proofread_by =
-      currentProofreadBy.length > 0 || settings.proofread_required === 0
-        ? currentProofreadBy
-        : [userId];
+    nextEntry.proofread_by = currentProofreadBy;
     nextEntry.proofread_count = Math.max(
       getEntryProofreadCount(entry),
       settings.proofread_required,
-      nextEntry.proofread_by.length,
+      currentProofreadBy.length,
     );
     nextEntry.reviewed_by = userId;
   }

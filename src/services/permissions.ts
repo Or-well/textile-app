@@ -8,6 +8,8 @@ import {
 } from "../model/permissions";
 import {
   getEntryProofreadCount,
+  getLatestProofreader,
+  getLatestTranslator,
   isEntryProofreadComplete,
   normalizeProofreadUsers,
   normalizeWorkflowSettings,
@@ -403,7 +405,10 @@ export function getProofreadBlockReason(
     return "proofread_complete";
   }
 
-  if (!settings.allow_self_proofread && entry.translated_by === user.id) {
+  if (
+    !settings.allow_self_proofread &&
+    getLatestTranslator(entry) === user.id
+  ) {
     return "self_proofread_disabled";
   }
 
@@ -463,29 +468,109 @@ export function canReviewEntry(
   entry: Entry | null | undefined,
   workflow?: ProjectWorkflowSettings,
 ): boolean {
-  if (
-    !entry ||
-    !user?.id ||
-    entry.disputed ||
-    entry.status === "untranslated" ||
-    entry.status === "reviewed" ||
-    !entry.target.trim() ||
-    !canUseEntryWorkflow(user, entry, PERMISSION_ACTIONS.ENTRY_REVIEW)
-  ) {
-    return false;
+  return getReviewBlockReason(user, entry, workflow) === null;
+}
+
+export type ReviewBlockReason =
+  | "missing_entry"
+  | "missing_user"
+  | "missing_permission"
+  | "entry_locked"
+  | "entry_hidden"
+  | "entry_disputed"
+  | "empty_target"
+  | "review_disabled"
+  | "proofread_incomplete"
+  | "already_reviewed"
+  | "self_review_disabled"
+  | "invalid_status";
+
+export function getReviewBlockReason(
+  user: Member | null | undefined,
+  entry: Entry | null | undefined,
+  workflow?: ProjectWorkflowSettings,
+): ReviewBlockReason | null {
+  if (!entry) {
+    return "missing_entry";
+  }
+
+  if (!user?.id) {
+    return "missing_user";
+  }
+
+  if (!can(user, PERMISSION_ACTIONS.ENTRY_REVIEW)) {
+    return "missing_permission";
+  }
+
+  if (entry.locked) {
+    return "entry_locked";
+  }
+
+  if (entry.hidden) {
+    return "entry_hidden";
+  }
+
+  if (entry.disputed) {
+    return "entry_disputed";
+  }
+
+  if (!entry.target.trim()) {
+    return "empty_target";
   }
 
   const settings = normalizeWorkflowSettings(workflow);
 
-  if (!settings.review_required || !isEntryProofreadComplete(entry, settings)) {
-    return false;
+  if (!settings.review_required) {
+    return "review_disabled";
   }
 
-  if (!settings.allow_self_review && entry.translated_by === user.id) {
-    return false;
+  if (entry.status === "reviewed") {
+    return "already_reviewed";
   }
 
-  return true;
+  if (!isEntryProofreadComplete(entry, settings)) {
+    return "proofread_incomplete";
+  }
+
+  if (
+    !settings.allow_self_review &&
+    getLatestProofreader(entry) === user.id
+  ) {
+    return "self_review_disabled";
+  }
+
+  if (entry.status !== "translated" && entry.status !== "proofread") {
+    return "invalid_status";
+  }
+
+  return null;
+}
+
+export function getReviewBlockMessage(
+  reason: ReviewBlockReason | null,
+): string {
+  switch (reason) {
+    case "entry_locked":
+      return "当前词条已锁定，不能审核。";
+    case "entry_hidden":
+      return "当前词条已隐藏，不能审核。";
+    case "entry_disputed":
+      return "当前词条存在争议，解决争议后才能审核。";
+    case "empty_target":
+      return "当前词条没有译文，不能审核。";
+    case "review_disabled":
+      return "当前项目未启用审核流程。";
+    case "proofread_incomplete":
+      return "当前词条尚未完成所需校对次数。";
+    case "already_reviewed":
+      return "当前词条已经完成审核。";
+    case "self_review_disabled":
+      return "当前用户是该译文的最新校对者，项目未允许审核自己校对的译文。";
+    case "invalid_status":
+      return "当前词条尚未进入可审核阶段。";
+    default:
+      return "";
+  }
 }
 
 export function canRollbackEntry(
