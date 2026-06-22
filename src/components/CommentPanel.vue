@@ -9,7 +9,6 @@ import {
   deleteComment,
   getCommentDeletionSet,
   loadComments,
-  markDisputed,
   reopenComment,
   replyComment,
   resolveComment,
@@ -17,13 +16,15 @@ import {
 import {
   canCreateComment,
   canDeleteComment,
-  canMarkDisputed,
   canReopenComment,
   canReplyComment,
   canResolveComment,
   canViewComment,
   getCurrentUser,
 } from "../services/permissions";
+import { compareInstants } from "../utils/time";
+
+type CommentSortOrder = "newest" | "oldest";
 
 const props = defineProps<{
   entry?: Entry;
@@ -31,7 +32,6 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  entryUpdated: [entry: Entry];
   viewEntryComment: [comment: Comment];
 }>();
 
@@ -39,7 +39,7 @@ const comments = ref<Comment[]>([]);
 const newComment = ref("");
 const replyText = ref("");
 const replyingTo = ref<Comment>();
-const disputeReason = ref("");
+const commentSortOrder = ref<CommentSortOrder>("newest");
 const isLoading = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
@@ -51,20 +51,31 @@ const canCreateComments = computed(() => canCreateComment(currentUser.value));
 const canReplyComments = computed(() => canReplyComment(currentUser.value));
 const canResolveComments = computed(() => canResolveComment(currentUser.value));
 const canReopenComments = computed(() => canReopenComment(currentUser.value));
-const canMarkEntryDisputed = computed(() =>
-  canMarkDisputed(currentUser.value, props.entry),
-);
 const commentById = computed(
   () => new Map(comments.value.map((comment) => [comment.id, comment])),
 );
 const hasUnsavedComment = computed(
   () =>
     Boolean(newComment.value.trim()) ||
-    Boolean(replyText.value.trim()) ||
-    Boolean(disputeReason.value.trim()),
+    Boolean(replyText.value.trim()),
+);
+const displayedComments = computed(() =>
+  [...comments.value].sort(compareCommentsBySortOrder),
 );
 
-useAppDraft("批注或争议说明", hasUnsavedComment);
+useAppDraft("批注或回复", hasUnsavedComment);
+
+function compareCommentsBySortOrder(left: Comment, right: Comment): number {
+  const direction = commentSortOrder.value === "newest" ? -1 : 1;
+  const timeCompare =
+    compareInstants(
+      left.created_at || left.updated_at,
+      right.created_at || right.updated_at,
+    ) ||
+    left.id.localeCompare(right.id);
+
+  return timeCompare * direction;
+}
 
 async function focusHighlightedComment() {
   if (!props.highlightCommentId || typeof document === "undefined") {
@@ -104,7 +115,6 @@ watch(
     newComment.value = "";
     replyText.value = "";
     replyingTo.value = undefined;
-    disputeReason.value = "";
     message.value = "";
     void refreshComments();
   },
@@ -150,6 +160,12 @@ function startReply(comment: Comment) {
 function cancelReply() {
   replyingTo.value = undefined;
   replyText.value = "";
+}
+
+function collapseEmptyReply() {
+  if (replyingTo.value && !replyText.value.trim()) {
+    cancelReply();
+  }
 }
 
 async function handleReplyComment() {
@@ -270,35 +286,10 @@ async function handleDeleteComment(comment: Comment) {
   }
 }
 
-async function handleMarkDisputed() {
-  if (!props.entry) {
-    return;
-  }
-
-  isSaving.value = true;
-  errorMessage.value = "";
-  message.value = "";
-
-  try {
-    const updatedEntry = await markDisputed(props.entry, disputeReason.value);
-
-    disputeReason.value = "";
-    await refreshComments();
-    emit("entryUpdated", updatedEntry);
-    message.value = "已标记为争议。";
-  } catch (error) {
-    errorMessage.value =
-      error instanceof Error ? error.message : "标记争议失败。";
-  } finally {
-    isSaving.value = false;
-  }
-}
 </script>
 
 <template>
-  <section class="comment-panel">
-    <h3>当前词条批注</h3>
-
+  <section class="comment-panel" @click="collapseEmptyReply">
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="message" class="message">{{ message }}</p>
     <p v-if="!canViewComments" class="empty-text">当前用户不能查看批注。</p>
@@ -313,34 +304,15 @@ async function handleMarkDisputed() {
       @submit="handleAddComment"
     />
 
-    <section v-if="replyingTo" class="reply-box">
-      <p>回复 {{ replyingTo.user_id }}</p>
-      <CommentEditor
-        v-model="replyText"
-        label="回复"
-        placeholder="写下回复"
-        submit-label="添加回复"
-        :disabled="isSaving"
-        @submit="handleReplyComment"
-      />
-      <button class="plain-button" type="button" :disabled="isSaving" @click="cancelReply">
-        取消
-      </button>
-    </section>
-
-    <div v-if="canMarkEntryDisputed" class="comment-form">
+    <div v-if="canViewComments" class="comment-toolbar">
+      <span>{{ comments.length }} 条批注</span>
       <label>
-        <span>争议原因</span>
-        <textarea
-          v-model="disputeReason"
-          rows="3"
-          placeholder="说明为什么需要讨论"
-          :disabled="isSaving"
-        />
+        <span>显示顺序</span>
+        <select v-model="commentSortOrder">
+          <option value="newest">由新到旧</option>
+          <option value="oldest">由旧到新</option>
+        </select>
       </label>
-      <button type="button" :disabled="isSaving" @click="handleMarkDisputed">
-        标记争议
-      </button>
     </div>
 
     <p v-if="isLoading" class="empty-text">正在加载批注...</p>
@@ -349,7 +321,7 @@ async function handleMarkDisputed() {
     </p>
 
     <ul v-else-if="canViewComments" class="comment-list">
-      <li v-for="comment in comments" :key="comment.id">
+      <li v-for="comment in displayedComments" :key="comment.id">
         <CommentListItem
           :comment="comment"
           :entry="entry"
@@ -367,7 +339,29 @@ async function handleMarkDisputed() {
           @resolve="handleResolveComment"
           @reopen="handleReopenComment"
           @delete="handleDeleteComment"
-        />
+        >
+          <template v-if="replyingTo?.id === comment.id" #reply-editor>
+            <section class="reply-box" @click.stop>
+              <p>回复 {{ replyingTo.user_id }}</p>
+              <CommentEditor
+                v-model="replyText"
+                label="回复"
+                placeholder="写下回复"
+                submit-label="添加回复"
+                :disabled="isSaving"
+                @submit="handleReplyComment"
+              />
+              <button
+                class="plain-button"
+                type="button"
+                :disabled="isSaving"
+                @click="cancelReply"
+              >
+                取消
+              </button>
+            </section>
+          </template>
+        </CommentListItem>
       </li>
     </ul>
   </section>
@@ -377,59 +371,54 @@ async function handleMarkDisputed() {
 .comment-panel {
   display: grid;
   gap: 14px;
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid #e5e7eb;
 }
 
-h3,
 p {
   margin: 0;
 }
 
-h3 {
-  font-size: 16px;
-}
-
-.comment-form,
 .reply-box {
   display: grid;
   gap: 8px;
-}
-
-.reply-box {
   padding: 12px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #f8fafb;
 }
 
-label {
+.comment-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.comment-toolbar > span {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.comment-toolbar label {
   display: grid;
   gap: 6px;
 }
 
-label span,
+.comment-toolbar label span,
 .empty-text {
   color: #5b6472;
   font-size: 13px;
 }
 
-textarea {
-  width: 100%;
-  resize: vertical;
-  padding: 10px;
+select {
+  min-height: 34px;
+  padding: 0 10px;
   border: 1px solid #c8d0dc;
   border-radius: 6px;
+  background: #ffffff;
   color: #1f2937;
   font: inherit;
-  line-height: 1.6;
-}
-
-textarea:focus {
-  outline: none;
-  border-color: #2f6f73;
-  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.14);
+  font-size: 14px;
 }
 
 button {

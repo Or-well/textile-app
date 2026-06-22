@@ -17,6 +17,7 @@ defineProps<{
   canHide: boolean;
   canDelete: boolean;
   canExportExchange: boolean;
+  isRecentlyViewed?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -36,7 +37,10 @@ const emit = defineEmits<{
 <template>
   <article class="file-row" :class="{ hidden: file.hidden, locked: file.locked }">
     <button class="file-main" type="button" @click="emit('open', file.id)">
-      <strong>{{ file.name }}</strong>
+      <span class="file-title">
+        <strong>{{ file.name }}</strong>
+        <span v-if="isRecentlyViewed" class="recent-badge">最近查看</span>
+      </span>
       <small>
         {{ file.folder || "未分组" }} · {{ totalEntries }} 词条
         <template v-if="file.hidden"> · 已隐藏</template>
@@ -156,10 +160,28 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 
+.file-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .file-main strong {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent-badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #e6f0ef;
+  color: #174346;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .file-main small,

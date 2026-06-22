@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import FileImportDialog from "../components/FileImportDialog.vue";
 import FileListItem from "../components/FileListItem.vue";
 import FileToolbar from "../components/FileToolbar.vue";
@@ -62,6 +62,7 @@ const props = defineProps<{
   project: ProjectConfig;
   projectRoot: ProjectDirectoryHandle;
   currentUser: Member | null;
+  lastViewedFileId?: string;
 }>();
 
 const emit = defineEmits<{
@@ -80,6 +81,8 @@ const isSubmitting = ref(false);
 const isExportingExchange = ref(false);
 const errorMessage = ref("");
 const noticeMessage = ref("");
+const fileListElement = ref<HTMLElement | null>(null);
+const lastAutoScrolledFileId = ref("");
 const dialogMode = ref<DialogMode | null>(null);
 const activeFileId = ref("");
 const pendingFolder = ref("");
@@ -533,12 +536,83 @@ function handleHistory() {
   noticeMessage.value = "查看历史需要历史日志视图，本页当前只提供入口。";
 }
 
+async function scrollToLastViewedFile() {
+  const fileId = props.lastViewedFileId ?? "";
+
+  if (
+    !fileId ||
+    isLoading.value ||
+    lastAutoScrolledFileId.value === fileId ||
+    typeof window === "undefined"
+  ) {
+    return;
+  }
+
+  const fileIndex = visibleFiles.value.findIndex(
+    (summary) => summary.file.id === fileId,
+  );
+
+  if (fileIndex < 0) {
+    return;
+  }
+
+  await nextTick();
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+
+  const rows = Array.from(
+    fileListElement.value?.querySelectorAll<HTMLElement>("[data-file-id]") ?? [],
+  );
+  const anchorFileId = visibleFiles.value[Math.max(0, fileIndex - 1)]?.file.id;
+  const anchorRow = rows.find(
+    (element) => element.dataset.fileId === anchorFileId,
+  );
+  const targetRow = rows.find((element) => element.dataset.fileId === fileId);
+
+  if (!targetRow) {
+    return;
+  }
+
+  const headerBottom =
+    document
+      .querySelector<HTMLElement>(".workspace-header")
+      ?.getBoundingClientRect().bottom ?? 0;
+  const anchorTop =
+    (anchorRow ?? targetRow).getBoundingClientRect().top + window.scrollY;
+
+  window.scrollTo({
+    top: Math.max(0, anchorTop - Math.max(0, headerBottom)),
+  });
+  lastAutoScrolledFileId.value = fileId;
+}
+
 watch(
   () => props.project,
   (project) => {
     currentProject.value = project;
+    lastAutoScrolledFileId.value = "";
     void loadFileSummaries();
   },
+);
+
+watch(
+  () => props.lastViewedFileId,
+  () => {
+    lastAutoScrolledFileId.value = "";
+  },
+);
+
+watch(
+  [
+    () => props.lastViewedFileId,
+    () => isLoading.value,
+    () => visibleFiles.value.map((summary) => summary.file.id).join("\0"),
+  ],
+  () => {
+    void scrollToLastViewedFile();
+  },
+  { flush: "post" },
 );
 
 onMounted(loadFileSummaries);
@@ -620,10 +694,11 @@ onMounted(loadFileSummaries);
       </div>
     </section>
 
-    <div v-else-if="visibleFiles.length > 0" class="file-list">
+    <div v-else-if="visibleFiles.length > 0" ref="fileListElement" class="file-list">
       <FileListItem
         v-for="summary in visibleFiles"
         :key="summary.file.id"
+        :data-file-id="summary.file.id"
         :file="summary.file"
         :total-entries="summary.totalEntries"
         :translated-percent="summary.translatedPercent"
@@ -638,6 +713,7 @@ onMounted(loadFileSummaries);
         :can-hide="canHide"
         :can-delete="canDelete"
         :can-export-exchange="canExportExchange && !isExportingExchange"
+        :is-recently-viewed="summary.file.id === props.lastViewedFileId"
         @open="emit('openFile', $event)"
         @manage-entries="emit('manageEntries', $event)"
         @update-source="openDialog('update', $event)"

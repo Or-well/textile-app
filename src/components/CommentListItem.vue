@@ -82,7 +82,7 @@ const emit = defineEmits<{
           v-if="props.canReply"
           type="button"
           :disabled="props.isBusy"
-          @click="emit('reply', props.comment)"
+          @click.stop="emit('reply', props.comment)"
         >
           回复
         </button>
@@ -113,6 +113,8 @@ const emit = defineEmits<{
         </button>
       </div>
     </footer>
+
+    <slot name="reply-editor" />
   </article>
 </template>
 

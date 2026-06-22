@@ -49,11 +49,6 @@ const taskStatuses: Array<{ value: TaskStatus; label: string }> = [
   { value: "completed", label: "已完成" },
 ];
 
-const submitMethods: Array<{ value: TaskSubmitMethod; label: string }> = [
-  { value: "change_package", label: "导出修改包" },
-  { value: "owner_manual", label: "由负责人处理" },
-];
-
 const form = reactive({
   title: "",
   description: "",
@@ -445,15 +440,6 @@ watch(
             </select>
           </label>
 
-          <label v-if="mode === 'edit'">
-            <span>提交方式</span>
-            <select v-model="form.submit_method">
-              <option v-for="item in submitMethods" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
-
           <label>
             <span>截止时间</span>
             <input v-model="form.due_local" type="datetime-local" />
@@ -483,10 +469,6 @@ watch(
             </select>
           </label>
 
-          <label>
-            <span>目标</span>
-            <input v-model="form.target" placeholder="例如：完成第 1-20 条翻译" />
-          </label>
         </div>
 
         <p v-if="hasLegacyDueAt" class="time-warning">

@@ -1,8 +1,8 @@
 {
-  "version": "0.6.1",
-  "latest_version": "0.6.1",
-  "build_id": "0.6.1-ea685de2db9f",
-  "assets_hash": "ea685de2db9fbd2ad6ad0d2766aa4b443b21a69d4f2f5fef909746a305e15820",
+  "version": "0.6.2",
+  "latest_version": "0.6.2",
+  "build_id": "0.6.2-22f0eb7e6e50",
+  "assets_hash": "22f0eb7e6e50041efbaad12264d1350fb2043a9176c82fc64b2d86b3c891b985",
   "schema_version": 1,
   "release_date": "2026-06-22",
   "channel": "stable",

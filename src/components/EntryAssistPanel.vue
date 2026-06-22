@@ -485,7 +485,6 @@ watch(
       <CommentPanel
         :entry="entry"
         :highlight-comment-id="highlightCommentId"
-        @entry-updated="emit('entryUpdated', $event)"
         @view-entry-comment="emit('viewEntryComment', $event)"
       />
     </section>

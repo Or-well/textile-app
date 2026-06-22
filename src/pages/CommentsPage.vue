@@ -10,8 +10,10 @@ import type { Comment, Entry, Member, ProjectConfig } from "../model/types";
 import { loadAllComments } from "../services/comments";
 import { loadAllEntries } from "../services/entries";
 import { canViewComment, getCurrentUser } from "../services/permissions";
+import { compareInstants } from "../utils/time";
 
 type CommentFilter = "all" | "recent" | "open" | "resolved" | "disputed";
+type CommentSortOrder = "newest" | "oldest";
 
 interface CommentRow {
   comment: Comment;
@@ -37,6 +39,7 @@ const entries = ref<Entry[]>([]);
 const activeFilter = ref<CommentFilter>("all");
 const selectedFileId = ref("all");
 const selectedMemberId = ref("all");
+const commentSortOrder = ref<CommentSortOrder>("newest");
 const keyword = ref("");
 const isLoading = ref(false);
 const errorMessage = ref("");
@@ -111,7 +114,13 @@ const visibleRows = computed(() => {
       .includes(searchText);
   });
 
-  return activeFilter.value === "recent" ? filteredRows.slice(0, 30) : filteredRows;
+  const rowsForDisplay =
+    activeFilter.value === "recent"
+      ? [...filteredRows].sort(compareCommentRowsByNewest).slice(0, 30)
+      : filteredRows;
+  const sortedRows = [...rowsForDisplay].sort(compareCommentRowsBySortOrder);
+
+  return sortedRows;
 });
 
 const filterTabs: Array<{ id: CommentFilter; label: string }> = [
@@ -128,6 +137,34 @@ function getFileName(fileId: string): string {
 
 function getMemberName(memberId: string): string {
   return getMemberDisplayName(props.members, memberId);
+}
+
+function compareCommentRowsBySortOrder(
+  left: CommentRow,
+  right: CommentRow,
+): number {
+  const direction = commentSortOrder.value === "newest" ? -1 : 1;
+
+  return compareCommentRowsByTime(left, right) * direction;
+}
+
+function compareCommentRowsByNewest(
+  left: CommentRow,
+  right: CommentRow,
+): number {
+  return compareCommentRowsByTime(left, right) * -1;
+}
+
+function compareCommentRowsByTime(left: CommentRow, right: CommentRow): number {
+  const leftComment = left.comment;
+  const rightComment = right.comment;
+
+  return (
+    compareInstants(
+      leftComment.created_at || leftComment.updated_at,
+      rightComment.created_at || rightComment.updated_at,
+    ) || leftComment.id.localeCompare(rightComment.id)
+  );
 }
 
 async function refreshComments() {
@@ -167,6 +204,7 @@ watch(
   () => {
     selectedFileId.value = "all";
     selectedMemberId.value = "all";
+    commentSortOrder.value = "newest";
     keyword.value = "";
     void refreshComments();
   },
@@ -225,6 +263,14 @@ watch(
             >
               {{ member.label }}
             </option>
+          </select>
+        </label>
+
+        <label>
+          <span>显示顺序</span>
+          <select v-model="commentSortOrder">
+            <option value="newest">由新到旧</option>
+            <option value="oldest">由旧到新</option>
           </select>
         </label>
 

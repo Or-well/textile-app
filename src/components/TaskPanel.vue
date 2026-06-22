@@ -53,11 +53,6 @@ const statusLabels: Record<Task["status"], string> = {
   completed: "已完成",
 };
 
-const submitMethodLabels: Record<Task["submit_method"], string> = {
-  change_package: "导出修改包",
-  owner_manual: "由负责人处理",
-};
-
 const assigneeName = computed(() => {
   return getMemberDisplayName(props.members, props.task?.assignee ?? "");
 });
@@ -132,6 +127,53 @@ const originalDueAtText = computed(() => {
 });
 
 const progressPercent = computed(() => props.progress?.progressPercent ?? 0);
+const taskNoteText = computed(() => {
+  const task = props.task;
+
+  if (!task) {
+    return "";
+  }
+
+  return task.description || task.target || "";
+});
+const progressStatChips = computed(() => {
+  const task = props.task;
+  const progress = props.progress;
+
+  if (!task || !progress?.progressAvailable) {
+    return [];
+  }
+
+  const incompleteEntries = Math.max(
+    0,
+    progress.totalEntries - progress.completedEntries,
+  );
+
+  if (task.type === "proofread") {
+    return [
+      `总 ${progress.totalEntries}`,
+      `未校对 ${incompleteEntries}`,
+      `已校对 ${progress.completedEntries}`,
+      `争议 ${progress.disputedEntries}`,
+    ];
+  }
+
+  if (task.type === "review") {
+    return [
+      `总 ${progress.totalEntries}`,
+      `未审核 ${incompleteEntries}`,
+      `已审核 ${progress.completedEntries}`,
+      `争议 ${progress.disputedEntries}`,
+    ];
+  }
+
+  return [
+    `总 ${progress.totalEntries}`,
+    `未译 ${incompleteEntries}`,
+    `已译 ${progress.completedEntries}`,
+    `争议 ${progress.disputedEntries}`,
+  ];
+});
 
 watch(
   () => props.task?.id,
@@ -182,10 +224,6 @@ watch(
               }}
             </dd>
           </div>
-          <div>
-            <dt>提交方式</dt>
-            <dd>{{ submitMethodLabels[task.submit_method] }}</dd>
-          </div>
           <div v-if="task.type === 'proofread' && task.proofread_round">
             <dt>校对轮次</dt>
             <dd>第 {{ task.proofread_round }} 轮</dd>
@@ -198,9 +236,8 @@ watch(
         </dl>
       </section>
 
-      <section v-if="task.description || task.target" class="note-card">
-        <p v-if="task.description">{{ task.description }}</p>
-        <p v-if="task.target">目标：{{ task.target }}</p>
+      <section v-if="taskNoteText" class="note-card">
+        <p>{{ taskNoteText }}</p>
       </section>
 
       <button
@@ -221,12 +258,7 @@ watch(
           <span :style="{ width: `${progressPercent}%` }"></span>
         </div>
         <div class="stat-chips">
-          <span>总 {{ progress.totalEntries }}</span>
-          <span>未译 {{ progress.untranslatedEntries }}</span>
-          <span>已译 {{ progress.translatedEntries }}</span>
-          <span>校对 {{ progress.proofreadEntries }}</span>
-          <span>审核 {{ progress.reviewedEntries }}</span>
-          <span>争议 {{ progress.disputedEntries }}</span>
+          <span v-for="chip in progressStatChips" :key="chip">{{ chip }}</span>
         </div>
       </section>
 

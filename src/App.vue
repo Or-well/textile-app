@@ -111,6 +111,7 @@ const currentUser = ref<Member | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
 const currentRecentRecordId = ref("");
 const taskCount = ref(0);
+const lastViewedFileId = ref("");
 const recentProjects = ref<RecentProjectRecord[]>(listRecentProjects());
 const isOpeningProject = ref(false);
 const isOpeningProjectFile = ref(false);
@@ -305,6 +306,7 @@ async function enterOpenedProject(
   } = {},
 ) {
   currentProject.value = project;
+  lastViewedFileId.value = "";
   configureProjectServices(project);
   await refreshProjectSummary();
 
@@ -664,6 +666,7 @@ async function handleDeleteProjectRequested() {
     currentUser.value = null;
     currentProject.value = null;
     currentRecentRecordId.value = "";
+    lastViewedFileId.value = "";
     currentStats.value = null;
     taskCount.value = 0;
     loginErrorMessage.value = "";
@@ -683,6 +686,7 @@ function handleOpenFile(fileId: string) {
     return;
   }
 
+  lastViewedFileId.value = fileId;
   navigate(
     `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files/${encodeURIComponent(fileId)}`,
   );
@@ -706,6 +710,7 @@ function handleOpenTaskTarget(fileId: string, entryId: string, entryIndex: numbe
     return;
   }
 
+  lastViewedFileId.value = fileId;
   const query = entryId
     ? `?entry=${encodeURIComponent(entryId)}`
     : entryIndex > 0
@@ -730,6 +735,7 @@ function handleOpenCommentTarget(comment: Comment) {
     return;
   }
 
+  lastViewedFileId.value = fileId;
   const query = new URLSearchParams({
     entry: comment.entry_id,
     tab: "comments",
@@ -917,6 +923,7 @@ onBeforeUnmount(() => {
         :project-root="currentProject.root"
         :project-storage="currentProject.storage"
         :current-user="currentUser"
+        :last-viewed-file-id="lastViewedFileId"
         @open-file="handleOpenFile"
         @manage-entries="handleOpenEntries"
         @project-updated="handleProjectUpdated"
