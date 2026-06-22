@@ -1,0 +1,252 @@
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const noticePath = join(root, "THIRD_PARTY_NOTICES.txt");
+const cargoTarget = "x86_64-pc-windows-msvc";
+const packages = [
+  ...collectNpmPackages(),
+  ...collectCargoPackages(),
+].sort(comparePackages);
+const documents = collectLicenseDocuments(packages);
+const packagesWithoutDocuments = packages.filter(
+  (pkg) => findLicenseFiles(pkg.directory).length === 0,
+);
+
+writeFileSync(
+  noticePath,
+  renderNotice(packages, documents, packagesWithoutDocuments),
+  "utf8",
+);
+console.log(
+  `Generated ${relative(root, noticePath)} for ${packages.length} third-party packages (${packagesWithoutDocuments.length} without a bundled license file).`,
+);
+
+function collectNpmPackages() {
+  const lock = readJson(join(root, "package-lock.json"));
+  const results = [];
+
+  for (const [lockPath, metadata] of Object.entries(lock.packages ?? {})) {
+    if (!lockPath.startsWith("node_modules/")) {
+      continue;
+    }
+
+    const packageDirectory = join(root, ...lockPath.split("/"));
+    const packageJsonPath = join(packageDirectory, "package.json");
+
+    // package-lock also records optional binaries for other platforms.
+    if (!existsSync(packageJsonPath)) {
+      continue;
+    }
+
+    const packageJson = readJson(packageJsonPath);
+
+    results.push({
+      ecosystem: "npm",
+      name: packageJson.name ?? lockPath.slice("node_modules/".length),
+      version: metadata.version ?? packageJson.version ?? "unknown",
+      license: metadata.license ?? packageJson.license ?? "UNKNOWN",
+      usage: metadata.dev === true ? "development/build" : "runtime",
+      directory: packageDirectory,
+      source: getPackageSource(packageJson),
+    });
+  }
+
+  return results;
+}
+
+function collectCargoPackages() {
+  const command = process.platform === "win32" ? "cargo.exe" : "cargo";
+  const result = spawnSync(
+    command,
+    [
+      "metadata",
+      "--format-version",
+      "1",
+      "--locked",
+      "--filter-platform",
+      cargoTarget,
+    ],
+    {
+      cwd: join(root, "src-tauri"),
+      encoding: "utf8",
+      maxBuffer: 128 * 1024 * 1024,
+    },
+  );
+
+  if (result.status !== 0) {
+    const details =
+      result.stderr?.trim() || result.error?.message || "unknown error";
+    throw new Error(`Unable to read Cargo dependency metadata: ${details}`);
+  }
+
+  const metadata = JSON.parse(result.stdout);
+  const resolvedPackageIds = new Set(
+    metadata.resolve?.nodes.map((node) => node.id) ?? [],
+  );
+
+  return metadata.packages
+    .filter((pkg) => pkg.source && resolvedPackageIds.has(pkg.id))
+    .map((pkg) => ({
+      ecosystem: "cargo",
+      name: pkg.name,
+      version: pkg.version,
+      license: pkg.license ?? "UNKNOWN",
+      usage: "desktop runtime/build",
+      directory: dirname(pkg.manifest_path),
+      source: pkg.repository ?? pkg.homepage ?? "",
+    }));
+}
+
+function collectLicenseDocuments(packageList) {
+  const documents = new Map();
+
+  for (const pkg of packageList) {
+    for (const fileName of findLicenseFiles(pkg.directory)) {
+      const content = normalizeText(
+        readFileSync(join(pkg.directory, fileName), "utf8"),
+      ).trim();
+
+      if (!content) {
+        continue;
+      }
+
+      const hash = createHash("sha256").update(content).digest("hex");
+      const existing = documents.get(hash);
+      const packageLabel = `${pkg.ecosystem}:${pkg.name}@${pkg.version} (${fileName})`;
+
+      if (existing) {
+        existing.packages.push(packageLabel);
+      } else {
+        documents.set(hash, {
+          content,
+          packages: [packageLabel],
+        });
+      }
+    }
+  }
+
+  return [...documents.values()]
+    .map((document) => ({
+      ...document,
+      packages: document.packages.sort(),
+    }))
+    .sort((left, right) =>
+      left.packages[0].localeCompare(right.packages[0], "en"),
+    );
+}
+
+function findLicenseFiles(directory) {
+  if (!existsSync(directory)) {
+    return [];
+  }
+
+  return readdirSync(directory)
+    .filter((fileName) => {
+      const filePath = join(directory, fileName);
+      return (
+        statSync(filePath).isFile() &&
+        /^(?:license|licence|copying|notice)(?:[._-].*)?$/i.test(fileName)
+      );
+    })
+    .sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function renderNotice(packageList, documents, packagesWithoutDocuments) {
+  const lines = [
+    "THIRD-PARTY SOFTWARE NOTICES",
+    "",
+    "This file lists third-party software used to build or distribute Textile.",
+    "It is generated from package-lock.json, Cargo.lock, and installed package metadata.",
+    "Do not edit this file manually. Run `npm run licenses:generate` instead.",
+    `Cargo packages are resolved for the release target ${cargoTarget}.`,
+    "",
+    "Textile itself is licensed under Apache-2.0; see LICENSE.",
+    "",
+    "PACKAGE INVENTORY",
+    "=================",
+    "",
+  ];
+
+  for (const pkg of packageList) {
+    lines.push(
+      [
+        pkg.ecosystem,
+        pkg.name,
+        pkg.version,
+        pkg.license,
+        pkg.usage,
+        pkg.source,
+      ].join("\t"),
+    );
+  }
+
+  if (packagesWithoutDocuments.length > 0) {
+    lines.push(
+      "",
+      "PACKAGES WITHOUT A BUNDLED LICENSE FILE",
+      "=======================================",
+      "",
+      "The following upstream packages declare a license in their package metadata",
+      "but do not include a separate license or notice file in the installed package.",
+      "Their declared license and source location remain listed in the inventory above.",
+      "",
+    );
+    lines.push(
+      ...packagesWithoutDocuments.map(
+        (pkg) =>
+          `${pkg.ecosystem}:${pkg.name}@${pkg.version}\t${pkg.license}\t${pkg.source}`,
+      ),
+    );
+  }
+
+  lines.push("", "LICENSE TEXTS AND NOTICES", "=========================", "");
+
+  for (const [index, document] of documents.entries()) {
+    lines.push(`Document ${index + 1}`, "-".repeat(72), "Applies to:");
+    lines.push(...document.packages.map((packageLabel) => `- ${packageLabel}`));
+    lines.push("", document.content, "");
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function comparePackages(left, right) {
+  return (
+    left.ecosystem.localeCompare(right.ecosystem, "en") ||
+    left.name.localeCompare(right.name, "en") ||
+    left.version.localeCompare(right.version, "en")
+  );
+}
+
+function normalizeText(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+function readJson(filePath) {
+  return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function getPackageSource(packageJson) {
+  if (typeof packageJson.repository === "string") {
+    return packageJson.repository;
+  }
+
+  if (
+    packageJson.repository &&
+    typeof packageJson.repository.url === "string"
+  ) {
+    return packageJson.repository.url;
+  }
+
+  return packageJson.homepage ?? "";
+}

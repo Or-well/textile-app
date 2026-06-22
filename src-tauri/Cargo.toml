@@ -1,9 +1,9 @@
 [package]
 name = "textile"
-version = "0.6.0"
+version = "0.6.1"
 description = "Textile localization collaboration desktop application"
 authors = ["Textile contributors"]
-license = "MIT"
+license = "Apache-2.0"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"

@@ -1,13 +1,14 @@
 {
   "name": "textile",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "prebuild": "node scripts/sync-app-version.mjs && node scripts/generate-version-manifest.mjs",
     "version:sync": "node scripts/sync-app-version.mjs",
     "version:manifest": "node scripts/generate-version-manifest.mjs",
+    "licenses:generate": "node scripts/generate-third-party-notices.mjs",
     "dev": "vite",
     "build": "vue-tsc -b && vite build --configLoader runner",
     "test:unit": "vitest run",

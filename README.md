@@ -145,6 +145,7 @@ scripts/            版本清单和发布检查脚本
 | `npm run build` | TypeScript 检查并构建 Web/PWA |
 | `npm run preview` | 预览 Web 构建结果 |
 | `npm run version:manifest` | 重新生成 `public/version.json` |
+| `npm run licenses:generate` | 根据锁文件重新生成第三方软件许可证通知 |
 | `npm run tauri:dev` | 启动 Tauri 开发版 |
 | `npm run tauri:build` | 构建桌面安装包和更新产物 |
 | `npm run tauri:release:check` | 检查 Tauri 发布版本、公钥和更新地址 |
@@ -161,3 +162,6 @@ scripts/            版本清单和发布检查脚本
 Copyright 2026 Or_well.
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+Third-party software license texts and notices are provided in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).

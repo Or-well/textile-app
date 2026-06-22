@@ -791,6 +791,14 @@ npm.cmd run build
 
 如果本次修改过 `docs/MANUAL.md`，发布前还要重新生成 `public/manual.pdf`。`docs/MANUAL.md` 是维护源，`public/manual.pdf` 是随程序打包给用户打开的成品文件；两者应在同一个提交中保持一致。`src-tauri/tauri.conf.json` 的 `bundle.resources` 应把 `../public/manual.pdf` 映射为 `manual.pdf`，否则发布版可能找不到内置手册。
 
+如果 `package-lock.json`、`Cargo.lock` 或依赖版本发生变化，还要重新生成第三方许可证通知：
+
+```powershell
+npm.cmd run licenses:generate
+```
+
+根目录 `THIRD_PARTY_NOTICES.txt` 是维护源。Web 构建会将其输出到 `dist/`，Tauri 会通过 `bundle.resources` 将其打入安装包；无需在程序设置页增加第三方许可证入口。GitHub Actions 发布流程也会重新生成该文件，并通过后续 `git diff --exit-code` 检查它是否已提交。
+
 生成 PDF 时可以使用临时目录或浏览器打印导出，但只保留最终的 `public/manual.pdf`。临时 HTML、临时图片、下载测试文件和中间脚本不要放进仓库。
 
 ### 7.8 运行桌面发布检查

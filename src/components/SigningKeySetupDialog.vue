@@ -166,10 +166,9 @@ function handleImportKey(event: Event): void {
 }
 
 .action-list {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   align-items: flex-start;
-  gap: 10px 12px;
+  gap: 10px;
 }
 
 .eyebrow,
@@ -222,15 +221,15 @@ h2 {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 196px;
-  min-height: 44px;
+  width: 245px;
+  min-height: 54px;
   padding: 0 16px;
   border: 1px solid #2f6f73;
   border-radius: 6px;
   background: #2f6f73;
   color: #ffffff;
   font: inherit;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -262,9 +261,10 @@ h2 {
 }
 
 .action-list > .secondary-button {
-  width: 196px;
-  min-height: 44px;
+  width: 245px;
+  min-height: 54px;
   padding: 0 16px;
+  font-size: 15px;
 }
 
 .secondary-button:hover:not(:disabled) {
@@ -278,7 +278,6 @@ h2 {
 }
 
 .field-help {
-  flex-basis: 100%;
   color: #6b7280;
   font-size: 13px;
   line-height: 1.6;

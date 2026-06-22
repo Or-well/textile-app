@@ -1,10 +1,27 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { VitePWA } from "vite-plugin-pwa";
+import { readFileSync } from "node:fs";
+
+const thirdPartyNotices = readFileSync(
+  new URL("./THIRD_PARTY_NOTICES.txt", import.meta.url),
+  "utf8",
+);
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    {
+      name: "third-party-notices",
+      apply: "build",
+      buildStart() {
+        this.emitFile({
+          type: "asset",
+          fileName: "THIRD_PARTY_NOTICES.txt",
+          source: thirdPartyNotices,
+        });
+      },
+    },
     vue(),
     VitePWA({
       registerType: "prompt",

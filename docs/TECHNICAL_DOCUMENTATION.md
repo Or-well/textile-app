@@ -1882,7 +1882,11 @@ store: projectHandles
 - Web/PWA：使用 `showSaveFilePicker()` 和 writable stream，只有 `close()` 成功才返回 saved。
 - 不支持可靠保存能力时返回带原因的 `unavailable`，不得退回 `<a download>`，也不得推进 revision、导出哈希、备份完成、成员新增、公钥切换、密钥撤销或负责人转让。
 
-设置页“关于 Textile / 更新”显示当前程序版本、更新状态和许可证信息。许可证全文通过 `LICENSE?raw` 导入到 `SettingsPage.vue` 的本地弹窗中展示，根目录 `LICENSE` 仍是唯一维护源。
+设置页“关于 Textile / 更新”显示当前程序版本、更新状态和许可证信息。许可证全文通过 `LICENSE?raw` 导入到 `SettingsPage.vue` 的本地弹窗中展示，根目录 `LICENSE` 仍是 Textile 自身许可证的唯一维护源。
+
+第三方依赖许可证不在程序界面中展示。根目录 `THIRD_PARTY_NOTICES.txt` 是第三方许可证通知的唯一维护源，由 `npm run licenses:generate` 根据 `package-lock.json`、`Cargo.lock` 和已安装依赖中的许可证文件生成。生成脚本收集实际安装的 npm 包以及 Windows x64 发布目标实际解析的 Rust/Tauri 包，并按许可证文本去重。
+
+Vite 构建会把该文件输出为 `dist/THIRD_PARTY_NOTICES.txt`；`src-tauri/tauri.conf.json` 的 `bundle.resources` 会把同一文件打入桌面安装包。依赖或锁文件变化后必须重新生成并提交通知文件，发布工作流会通过生成后的 `git diff` 检查阻止过期通知进入发布产物。
 
 ## 46. 词条编辑页滚动布局
 
