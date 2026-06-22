@@ -25,7 +25,7 @@ import {
   compareInstants,
   formatDateTime,
 } from "../utils/time";
-import { saveBlob } from "../utils/saveBlob";
+import { saveGeneratedFile } from "../utils/saveBlob";
 
 type SortMode = "alphabetical" | "created_at" | "updated_at";
 
@@ -270,13 +270,11 @@ async function handleExportTerms() {
 
   try {
     const result = await exportTermsFile();
-    const saved = await saveBlob(result.blob, result.fileName);
+    const saved = await saveGeneratedFile(result.blob, result.fileName);
 
     message.value = saved.saved
-      ? saved.method === "file-picker"
-        ? `术语文件已保存为 ${saved.fileName}。`
-        : "术语文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。"
-      : "术语文件保存已取消。";
+      ? `术语文件已保存为 ${saved.fileName}。`
+      : saved.reason;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "术语导出失败。";

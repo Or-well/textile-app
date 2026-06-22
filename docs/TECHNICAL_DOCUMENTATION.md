@@ -334,8 +334,9 @@ changes/
 2. 读取可选 `members.json`。
 3. 递归收集已存在的项目目录。
 4. 生成 Blob。
-5. 页面优先通过系统保存对话框写入文件；不支持时触发浏览器下载并要求用户确认保存结果。
-6. 只有文件写入成功或用户确认已保存后，才调用 `completeProjectPackageExport()` 清除内存项目 dirty 状态。
+5. 页面通过 `saveGeneratedFile()` 进入可确认结果的保存流程。
+6. Tauri 使用原生保存对话框和后端分块写入；Web/PWA 使用 `showSaveFilePicker()`。不支持可靠保存的环境直接返回失败，不触发浏览器原生下载。
+7. 只有文件确认写入成功后，才调用 `completeProjectPackageExport()` 清除内存项目 dirty 状态。
 
 预览：
 
@@ -389,6 +390,7 @@ changes/
   "project_id": "project_xxx",
   "revision": "rev_xxx",
   "revision_hash": "rev_xxx",
+  "trust_epoch": 0,
   "name": "样例汉化项目",
   "description": "项目说明",
   "source_language": "ja",
@@ -448,6 +450,7 @@ changes/
 - `schema_version`：项目格式版本，当前为 1。读取时缺失 schema 按 v1 兼容处理；高于当前支持版本的 schema 会阻止打开。
 - `project_id`：跨副本和修改包匹配的稳定 ID。
 - `revision`/`revision_hash`：项目更新包的线性基线。
+- `trust_epoch`：项目信任代次，可选非负整数，旧项目默认为 0；只有所有可信发布私钥都不可用、必须线下重建信任时递增。
 - `files`：项目文件索引。
 - `chunk_size`：控制新增、更新源文件和导入译文时每个 entries chunk 的最大词条数；旧的单 chunk 项目仍兼容读取。
 - `auto_save`：保留设置，当前编辑仍以显式保存为主。
@@ -664,15 +667,15 @@ comments/<file_id>/<6位entry index>.jsonl
 
 新项目创建 `exports/releases/`，`.hproj` 会打包 `exports/`。
 
-当前成品导出、术语导出和导入示例文件都通过 `utils/saveBlob.ts` 统一保存：优先使用系统保存对话框，回退到浏览器下载时必须给出下载列表或下载文件夹确认提示。导出结果不会自动写到项目的 `exports/` 目录。因此该目录目前更接近保留的项目内发布空间，而不是所有导出的自动历史。
+当前成品导出、术语导出、词条交换文件、导入示例文件、身份密钥文件、修改包和项目备份都通过 `utils/saveBlob.ts` 的 `saveGeneratedFile()` 统一保存。Tauri 使用原生保存对话框和 Rust 后端写入；Web/PWA 使用 `showSaveFilePicker()`。无法确认保存结果时返回 `unavailable`，不使用浏览器 `<a download>` 兜底。导出结果不会自动写到项目的 `exports/` 目录，因此该目录目前更接近保留的项目内发布空间，而不是所有导出的自动历史。
 
 ## 19. `changes/`
 
 新项目创建 `changes/`，`.hproj` 会打包该目录。
 
-当前普通修改包和项目更新包同样通过浏览器下载、文件选择导入，不会自动归档到 `changes/`。本地“已导出个人修改哈希”保存在浏览器存储，用于接收项目更新前判断未导出修改。
+当前普通修改包和项目更新包通过统一可靠保存流程导出、通过文件选择器导入，不会自动归档到 `changes/`。本地“已导出个人修改哈希”保存在浏览器存储，用于接收项目更新前判断未导出修改。
 
-生成修改包 Blob 不会立即写入“已导出个人修改哈希”或推进项目 revision。页面确认文件保存后调用 `completeChangePackageExport()`：普通修改包提交导出哈希，项目更新包提交新 revision。提交前会重新确认当前项目 ID 和 base revision，防止延迟确认覆盖已经变化的项目状态。
+生成修改包 Blob 不会立即写入“已导出个人修改哈希”或推进项目 revision。页面只有收到 `saveGeneratedFile()` 的明确成功结果后才调用 `completeChangePackageExport()`：普通修改包提交导出哈希，项目更新包提交新 revision。提交前会重新确认当前项目 ID 和 base revision，防止延迟确认覆盖已经变化的项目状态。
 
 不要假设 `changes/` 中一定有协作历史。
 
@@ -1403,19 +1406,22 @@ manifest 示例：
 7. 构建 manifest。
 8. 如果要求签名或导出选项显式要求签名，从内存 key manager 获取私钥。
 9. 生成 ZIP Blob。
-10. member_changes 记录本次导出内容哈希。
-11. project_update 推进主项目 revision。
+10. 页面调用 `saveGeneratedFile()` 保存 ZIP。
+11. 只有保存明确成功后，member_changes 才记录本次导出内容哈希，project_update 才推进主项目 revision。
 
 普通修改包：
 
 - 当 `settings.collaboration.require_signed_change_packages` 为 `true` 时，member_changes、task_changes 和 maintenance_changes 必须由当前成员签名；缺少签名权限、公钥已撤销、未生成公钥或私钥未加载都会在 `exportChangePackage()` 中拒绝。
 - 当该设置为 `false` 或旧项目缺失该设置时，UI 允许成员选择是否签名；选择签名时 `exportChangePackage({ sign: true })` 仍会要求签名权限、有效公钥和已加载私钥，不能静默降级为未签名包。
+- 导出页在签名前调用 `getMemberSigningReadiness()`。缺少可用密钥时，`SigningKeySetupDialog` 根据权限提供导入已有私钥或生成新密钥；已有有效公钥但本机未加载私钥时，导入必须匹配当前公钥。
+- `project_update` 已有有效公钥但缺少私钥时只允许导入当前旧私钥，不允许在发布流程中直接生成替代密钥。密钥更换必须走由旧密钥签名的轮换过渡包。
 - 负责人身份密钥轮换复用 `project_update` 格式：包内公开成员信息可携带新公钥，但 `signature.json` 仍由接收端已信任的旧公钥对应私钥签出。导入端不得使用包内新公钥验证该包自身。
 
 项目更新包：
 
 - 必须签名。
 - 当前签名人必须有发布项目更新权限。
+- 包内 `project.json.trust_epoch` 必须与接收端当前代次相同；普通项目更新包不能跨信任代次。
 
 ## 34. 修改包导入预检查
 
@@ -1545,7 +1551,7 @@ ECDSA P-256 + SHA-256
 - signature
 - key_id
 
-验签使用 `members.json` 中对应成员的公钥。
+签名时不仅按 member ID 查找内存私钥，还要求签名人 ID 等于 manifest user ID，并要求缓存中的公钥和 key ID 与当前成员记录完全一致且未撤销。验签使用接收端 `members.json` 中对应成员当前信任的公钥。
 
 项目更新包还检查签名成员当前是否拥有发布权限，避免仅有历史公钥的人继续发布。
 
@@ -1563,10 +1569,16 @@ ECDSA P-256 + SHA-256
 私钥存储：
 
 ```ts
-const privateKeys = new Map<string, string>();
+interface LoadedSigningPrivateKey {
+  privateKey: string;
+  publicKey: string;
+  keyId: string;
+}
+
+const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 ```
 
-只在当前运行内存中。
+只在当前运行内存中。`getUsableSigningPrivateKey(member)` 和 `hasLoadedPrivateKey(member)` 必须同时验证 member ID、公钥内容、key ID 和未撤销状态，防止成员公钥已经变化但旧缓存仍被用于签名。
 
 `member-key.json`：
 
@@ -1589,8 +1601,9 @@ const privateKeys = new Map<string, string>();
 2. 重新计算 key ID。
 3. 用私钥签名测试 payload。
 4. 用公钥验签。
-5. 验证通过后放入内存。
+5. 如果项目已有有效公钥，默认拒绝用不同私钥静默替换；导出页要求加载当前密钥时必须精确匹配当前公钥。
 6. 如果同一 key ID 已记录撤销时间，拒绝重新激活。
+7. 项目成员记录成功写入后才把私钥放入内存。
 
 `member-public-key.json`：
 
@@ -1611,13 +1624,37 @@ const privateKeys = new Map<string, string>();
 
 公钥登记文件不包含私钥。导入时会检查 project ID、成员 ID、key ID 和持有证明；成员已有不同公钥时必须由 UI 二次确认后以轮换方式导入。已撤销的同一 key ID 不能重新登记，必须使用新密钥。
 
-强制签名项目中新增成员可选择“为该成员生成身份密钥”。service 只把公钥写入 `members.json`，返回一次性私钥文件给 UI 保存；私钥不得进入项目文件、`.hproj`、修改包或项目更新包。
+强制签名项目中新增成员可选择“为该成员生成身份密钥”。`prepareMemberWithGeneratedKey()` 只在内存中准备成员、公钥和一次性私钥文件；UI 先保存私钥文件，成功后才调用 `commitPreparedMemberWithGeneratedKey()` 写入成员和公钥。取消或失败时成员不会被新增。私钥不得进入项目文件、`.hproj`、修改包或项目更新包。
 
 密钥撤销分为两类权限：普通成员可撤销自己的身份密钥，用于停止继续使用旧公钥；撤销其他成员身份密钥仍需要密钥管理权限。撤销只标记 `key_revoked_at` 并卸载本机私钥，不删除历史成员信息。
 
-负责人轮换自己的项目更新签名密钥时使用两阶段提交：先在内存中生成新密钥和公开成员快照，但不写入项目；随后导出由旧签名人快照签名、成员快照包含新公钥的 `project_update`；只有 UI 确认过渡包已保存后，才写入新公钥、加载新私钥并推进本地主项目。旧私钥丢失时无法在现有签名链内安全换钥。
+自己的初次密钥生成和普通轮换也使用 prepare/save/commit：先生成内存候选和 `member-key.json`，确认私钥文件保存成功后才写 `members.json` 并加载私钥。这样不会出现项目已经登记公钥但唯一私钥文件未保存的状态。
 
-负责人转让同样使用两阶段提交：`prepareOwnerTransfer()` 先生成转让后的公开成员快照但不写入项目；成员管理 UI 用当前旧负责人签名人快照导出 `project_update`；确认过渡包已保存后再调用 `commitPreparedOwnerTransfer()` 写入 `members.json` 和转让事件。新负责人必须已有有效公钥，导入端仍使用当前项目里旧负责人的公钥验证该过渡包。
+负责人轮换自己的项目更新签名密钥时先在内存中生成新密钥和公开成员快照，不写项目；UI 先保存新私钥，再导出并保存由旧密钥签名、成员快照包含新公钥的 `project_update`，最后由统一信任过渡 service 提交归档、成员、事件和 revision。旧私钥丢失时不能伪造连续轮换。
+
+有项目更新发布权限的负责人撤销自己的有效密钥时使用 `prepareOwnSigningKeyRevocation()` 构造包含撤销状态的公开成员快照，由当前旧密钥签出 `project_update`，保存成功后通过统一信任过渡 service 提交。普通成员或无发布权限成员仍可直接撤销自己的密钥；最后一把可信发布密钥不能撤销。
+
+负责人转让先由 `prepareOwnerTransfer()` 生成转让后的公开成员快照；成员管理 UI 验证新负责人的交接证明，再用当前旧负责人签名人快照导出 `project_update`；确认过渡包已保存后通过统一信任过渡 service 提交。导入端仍使用当前项目里旧负责人的公钥验证该过渡包。
+
+成员管理 UI 通过统一的 `ownerTransferBlockReason` 计算不可转让原因，覆盖权限、项目根目录、目标成员、目标公钥和当前负责人可用私钥。按钮禁用时必须同步展示该原因，不能只留下无响应按钮。
+
+### 签名信任过渡
+
+`signingTrustTransition.ts` 是发布密钥轮换、公钥恢复、发布密钥撤销和负责人转让的统一提交边界。
+
+- `commitSignedTrustTransition()` 要求输入已由当前可信发布者签名的 `project_update`。
+- 同一个 `ProjectWritePlan` 写入 `changes/transitions/<package_id>.zip`、`members.json`、`logs/events.jsonl` 和 `project.json`，其中 `project.json` 最后写入。
+- 过渡提交前重新检查项目 ID 和 base revision，写入开启逐字节校验；失败时按写入计划恢复。
+- 页面先保存新私钥文件，再保存外部过渡包，最后调用提交；提交成功后才切换内存私钥。
+- `loadLatestTrustTransitionArchive()` 用于重新保存最近归档的过渡包。
+
+可信发布者恢复不新增修改包类型。丢失私钥的成员用 `exportPreparedPublicKeyRegistrationFile()` 生成不写入项目的公钥登记文件；另一名可信发布者导入后，用自己的旧可信私钥签发包含目标新公钥的 `project_update`。
+
+所有可信发布私钥都不可用时，`prepareOfflineTrustRebuild()` 生成新 revision 并将 `trust_epoch` 加一。UI 先保存新私钥和带有新公钥、新 revision 的 `.hproj`，再由 `commitOfflineTrustRebuild()` 原子写入成员、事件和项目配置。旧副本必须废弃，项目更新导入会拒绝跨 `trust_epoch`。
+
+最后一把可信发布密钥的撤销在 `keyManager.ts` service 层阻止，不只依赖 UI。
+
+负责人交接证明使用 `textile.owner_transfer_key_proof` JSON 文件，签名内容绑定 project ID、当前 revision、成员 ID、公钥和 key ID；验证时还要求生成时间不超过 24 小时。
 
 风险：
 
@@ -1837,7 +1874,13 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
-工作台侧边栏的“使用手册”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，让系统默认 PDF 阅读器打开随包资源。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
+工作台侧边栏的“使用手册”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，解析打包资源后通过官方 `tauri-plugin-opener` 交给系统默认 PDF 阅读器，不再手写 `cmd`、`open` 或 `xdg-open` 平台命令。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
+
+所有前端生成文件经由 `utils/saveBlob.ts` 的 `saveGeneratedFile()`：
+
+- Tauri：`begin_generated_file_save` 打开原生保存对话框并创建目标文件，前端按 1 MiB 分块调用 `append_generated_file_chunk`，最后调用 `finish_generated_file_save` 执行 flush/sync 并返回实际路径；中途失败调用 `abort_generated_file_save` 关闭并删除未完成文件。
+- Web/PWA：使用 `showSaveFilePicker()` 和 writable stream，只有 `close()` 成功才返回 saved。
+- 不支持可靠保存能力时返回带原因的 `unavailable`，不得退回 `<a download>`，也不得推进 revision、导出哈希、备份完成、成员新增、公钥切换、密钥撤销或负责人转让。
 
 设置页“关于 Textile / 更新”显示当前程序版本、更新状态和许可证信息。许可证全文通过 `LICENSE?raw` 导入到 `SettingsPage.vue` 的本地弹窗中展示，根目录 `LICENSE` 仍是唯一维护源。
 
@@ -1896,7 +1939,7 @@ store: projectHandles
 - 更新状态订阅通知。
 - Web 下载页打开、PWA 刷新或 Tauri 安装重启动作。
 
-内置用户手册不进入更新状态机。手册入口位于工作台侧边栏“使用手册”，桌面版通过 Tauri `open_manual_pdf` 命令打开打包资源，Web/PWA 通过浏览器打开 `/manual.pdf`。
+内置用户手册不进入更新状态机。手册入口位于工作台侧边栏“使用手册”，桌面版通过 Tauri `open_manual_pdf` 命令和官方 opener 插件打开打包资源，Web/PWA 通过浏览器打开 `/manual.pdf`。
 
 状态机包含：
 
@@ -2242,7 +2285,7 @@ Tauri：
 npm run test:unit
 ```
 
-测试位于 `tests/unit/`。除核心业务规则外，还覆盖补偿式写入计划、`.hproj` 导入和程序更新状态展示。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
+测试位于 `tests/unit/`。除核心业务规则外，还覆盖补偿式写入计划、`.hproj` 导入、程序更新状态展示、可靠生成文件保存，以及私钥与当前成员公钥/key ID 的匹配规则。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
 
 最低完整检查：
 

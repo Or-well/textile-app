@@ -2,22 +2,29 @@
 import { computed, ref } from "vue";
 import type { Member, ProjectConfig } from "../model/types";
 import {
-  completeChangePackageExport,
   exportChangePackage,
+  getChangePackageSuggestedFileName,
+  type ExportChangePackageOptions,
 } from "../services/changes";
 import {
+  activatePreparedOwnSigningKey,
+  commitPreparedOwnSigningKeyGeneration,
   commitPreparedOwnSigningKeyRotation,
+  exportOwnOwnerTransferKeyProof,
   exportOwnPublicKeyRegistrationFile,
   exportOwnKeyFile,
-  generateOwnSigningKey,
+  exportPreparedPublicKeyRegistrationFile,
   hasLoadedPrivateKey,
   importMemberPublicKeyRegistrationFile,
   importOwnKeyFile,
+  memberKeyFileToBlob,
+  prepareMemberPublicKeyRegistration,
+  prepareOwnSigningKeyGeneration,
+  prepareOwnSigningKeyRevocation,
   prepareOwnSigningKeyRotation,
   previewMemberPublicKeyRegistrationFile,
   revokeMemberPublicKey,
   revokeOwnSigningKey,
-  rotateOwnSigningKey,
   unloadOwnSigningPrivateKey,
 } from "../services/keyManager";
 import {
@@ -30,16 +37,33 @@ import {
   canRevokeOwnKey,
   canRotateKey,
   canViewKey,
+  isOwnerMember,
 } from "../services/permissions";
 import type { ProjectDirectoryHandle } from "../services/projectFs";
-import { saveBlob, saveBlobWithConfirmation } from "../utils/saveBlob";
-import { formatDateTime } from "../utils/time";
+import {
+  commitOfflineTrustRebuild,
+  commitSignedTrustTransition,
+  getOtherTrustedProjectUpdatePublishers,
+  loadLatestTrustTransitionArchive,
+  prepareOfflineTrustRebuild,
+} from "../services/signingTrustTransition";
+import {
+  exportProjectPackage,
+  getProjectPackageSuggestedFileName,
+} from "../services/projectPackage";
+import {
+  saveGeneratedFile,
+  saveGeneratedFileFromFactory,
+  saveGeneratedFilesFromFactories,
+} from "../utils/saveBlob";
+import { formatDateTime, nowIso } from "../utils/time";
 
 const props = defineProps<{
   members: Member[];
   currentUser?: Member | null;
   projectRoot?: ProjectDirectoryHandle;
   projectId?: string;
+  project?: ProjectConfig | null;
 }>();
 
 const emit = defineEmits<{
@@ -72,12 +96,36 @@ const hasOwnPublicKey = computed(() =>
 const hasActiveOwnPublicKey = computed(
   () => hasOwnPublicKey.value && !ownMember.value?.key_revoked_at,
 );
+const otherTrustedPublishers = computed(() =>
+  props.project && props.currentUser
+    ? getOtherTrustedProjectUpdatePublishers(
+        props.members,
+        props.currentUser,
+        props.project,
+      )
+    : [],
+);
+const canRebuildTrust = computed(
+  () =>
+    Boolean(
+      props.project &&
+        props.currentUser &&
+        isOwnerMember(props.currentUser) &&
+        hasActiveOwnPublicKey.value &&
+        canPublishProjectUpdates.value &&
+        !ownPrivateLoaded.value &&
+        otherTrustedPublishers.value.length === 0,
+    ),
+);
 const ownKeyStatus = computed(() => describeKeyStatus(ownMember.value));
 const primaryKeyButtonText = computed(() =>
   hasOwnPublicKey.value ? "生成新的签名密钥" : "生成签名密钥",
 );
 const canUsePrimaryKeyAction = computed(() =>
-  hasOwnPublicKey.value ? canRotateKeys.value : canGenerateKeys.value,
+  hasOwnPublicKey.value
+    ? canRotateKeys.value &&
+      (!canPublishProjectUpdates.value || ownPrivateLoaded.value)
+    : canGenerateKeys.value,
 );
 
 function getRoot(): ProjectDirectoryHandle {
@@ -94,6 +142,20 @@ function getProjectId(): string {
   }
 
   return props.projectId;
+}
+
+function getProject(): ProjectConfig {
+  if (!props.project) {
+    throw new Error("当前项目配置不可用。");
+  }
+
+  return props.project;
+}
+
+function getProjectRevision(): string {
+  const project = getProject();
+
+  return project.revision || project.revision_hash || `schema-${project.schema_version}`;
 }
 
 function describeKeyStatus(member: Member | null | undefined): string {
@@ -147,14 +209,26 @@ async function runAction(action: () => Promise<string>): Promise<void> {
 
 async function handleGenerateKey() {
   await runAction(async () => {
-    const result = await generateOwnSigningKey(
-      getRoot(),
+    const root = getRoot();
+    const generation = await prepareOwnSigningKeyGeneration(
       props.members,
+      props.currentUser,
+    );
+    const keyFile = memberKeyFileToBlob(generation.keyFile);
+    const saved = await saveGeneratedFile(keyFile.blob, keyFile.fileName);
+
+    if (!saved.saved) {
+      return `${saved.reason} 项目中没有登记这把公钥。`;
+    }
+
+    const result = await commitPreparedOwnSigningKeyGeneration(
+      root,
+      generation,
       props.currentUser,
     );
 
     emit("membersUpdated", result.members);
-    return "签名密钥已生成。公钥已写入项目；请立即导出私钥文件并妥善保存。";
+    return `签名密钥已生成，私钥文件已保存为 ${saved.fileName}。公钥已写入项目。`;
   });
 }
 
@@ -173,14 +247,26 @@ async function handleGenerateNewKey() {
   }
 
   await runAction(async () => {
-    const result = await rotateOwnSigningKey(
-      getRoot(),
+    const root = getRoot();
+    const rotation = await prepareOwnSigningKeyRotation(
       props.members,
+      props.currentUser,
+    );
+    const keyFile = memberKeyFileToBlob(rotation.keyFile);
+    const saved = await saveGeneratedFile(keyFile.blob, keyFile.fileName);
+
+    if (!saved.saved) {
+      return `${saved.reason} 当前身份密钥没有变化。`;
+    }
+
+    const result = await commitPreparedOwnSigningKeyRotation(
+      root,
+      rotation,
       props.currentUser,
     );
 
     emit("membersUpdated", result.members);
-    return "新的签名密钥已生成。请导出新的私钥文件。";
+    return `新的签名密钥已生成，私钥文件已保存为 ${saved.fileName}。`;
   });
 }
 
@@ -212,36 +298,165 @@ async function handleRotateProjectUpdateSigningKey() {
       props.members,
       props.currentUser,
     );
-    const exported = await exportChangePackage(rotation.previousMember.id, {
+    const keyFile = memberKeyFileToBlob(rotation.keyFile);
+    const createdAt = nowIso();
+    const exportOptions: ExportChangePackageOptions = {
       mode: "project_update",
       sign: true,
       actor: rotation.previousMember,
       projectUpdateMembers: rotation.members,
       signatureMember: rotation.previousMember,
-    });
-    const saved = await saveBlobWithConfirmation(
-      exported.blob,
-      exported.fileName,
-      "下载已经开始。请确认密钥轮换项目更新包已经保存到电脑；只有确认后，Textile 才会切换到新身份密钥。",
-    );
+      createdAt,
+    };
+    let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
+    const saved = await saveGeneratedFilesFromFactories([
+      {
+        fileName: keyFile.fileName,
+        createBlob: () => keyFile.blob,
+      },
+      {
+        fileName: getChangePackageSuggestedFileName(
+          rotation.previousMember.id,
+          exportOptions,
+          createdAt,
+        ),
+        createBlob: async () => {
+          exported = await exportChangePackage(
+            rotation.previousMember.id,
+            exportOptions,
+          );
 
-    if (!saved) {
-      return "密钥轮换项目更新包尚未确认保存，当前身份密钥没有变化。";
+          return exported.blob;
+        },
+      },
+    ]);
+
+    if (!saved.saved) {
+      return `${saved.reason} 当前身份密钥没有变化。`;
     }
 
-    const updatedProject = await completeChangePackageExport(exported);
-    const result = await commitPreparedOwnSigningKeyRotation(
+    if (!exported) {
+      throw new Error("过渡更新包没有生成。");
+    }
+
+    const transition = await commitSignedTrustTransition(
       root,
-      rotation,
+      exported,
+      rotation.members,
+      rotation.previousMember,
+      "member.key_rotated",
+      {
+        member_id: rotation.member.id,
+        previous_key_id: rotation.previousMember.key_id ?? "",
+        key_id: rotation.member.key_id ?? "",
+      },
+    );
+    activatePreparedOwnSigningKey(rotation, props.currentUser);
+
+    emit("projectUpdated", transition.project);
+    emit("membersUpdated", transition.members);
+    return `新的负责人身份密钥已启用，私钥文件已保存为 ${saved.files[0]?.fileName ?? keyFile.fileName}。过渡包已归档到 ${transition.archivePath}，请分发给成员。`;
+  });
+}
+
+async function handleRebuildProjectTrust() {
+  if (
+    !window.confirm(
+      [
+        "当前旧私钥已经永久丢失，无法继续原有签名链。",
+        "",
+        "Textile 将生成新密钥和新的 .hproj 项目备份，并提升项目信任代次。所有成员都必须停止使用旧副本，改用这份新项目备份。",
+        "",
+        "这不是连续项目更新，不能通过普通项目更新包自动恢复。确认继续？",
+      ].join("\n"),
+    ) ||
+    !window.confirm("再次确认：旧项目副本之后必须全部废弃。继续重建信任？")
+  ) {
+    return;
+  }
+
+  await runAction(async () => {
+    const root = getRoot();
+    const currentProject = getProject();
+    const rotation = await prepareOwnSigningKeyRotation(
+      props.members,
       props.currentUser,
     );
+    const keyFile = memberKeyFileToBlob(rotation.keyFile);
+    const nextProject = prepareOfflineTrustRebuild(
+      currentProject,
+      rotation.members,
+      props.currentUser as Member,
+    );
+    let projectPackage: Awaited<ReturnType<typeof exportProjectPackage>> | undefined;
+    const saved = await saveGeneratedFilesFromFactories([
+      {
+        fileName: keyFile.fileName,
+        createBlob: () => keyFile.blob,
+      },
+      {
+        fileName: getProjectPackageSuggestedFileName(nextProject),
+        createBlob: async () => {
+          projectPackage = await exportProjectPackage(root, props.currentUser, {
+            project: nextProject,
+            members: rotation.members,
+          });
 
-    if (updatedProject) {
-      emit("projectUpdated", updatedProject);
+          return projectPackage.blob;
+        },
+      },
+    ]);
+
+    if (!saved.saved) {
+      return `${saved.reason} 项目信任没有变化。`;
     }
 
-    emit("membersUpdated", result.members);
-    return "新的负责人身份密钥已启用。请立即导出新的私钥文件，并把刚才生成的项目更新包分发给成员。";
+    if (!projectPackage) {
+      throw new Error("新项目备份没有生成。");
+    }
+
+    const committedProject = await commitOfflineTrustRebuild(
+      root,
+      currentProject,
+      nextProject,
+      rotation.members,
+      props.currentUser as Member,
+    );
+    activatePreparedOwnSigningKey(rotation, props.currentUser);
+    emit("projectUpdated", committedProject);
+    emit("membersUpdated", rotation.members);
+
+    return `项目信任已重建为第 ${committedProject.trust_epoch} 代。新私钥保存为 ${saved.files[0]?.fileName ?? keyFile.fileName}，新项目备份保存为 ${saved.files[1]?.fileName ?? projectPackage.fileName}。请废弃并替换所有旧副本。`;
+  });
+}
+
+async function handlePrepareTrustedPublisherRecovery() {
+  await runAction(async () => {
+    const rotation = await prepareOwnSigningKeyRotation(
+      props.members,
+      props.currentUser,
+    );
+    const keyFile = memberKeyFileToBlob(rotation.keyFile);
+    const registration = await exportPreparedPublicKeyRegistrationFile(
+      rotation,
+      getProjectId(),
+    );
+    const saved = await saveGeneratedFilesFromFactories([
+      {
+        fileName: keyFile.fileName,
+        createBlob: () => keyFile.blob,
+      },
+      {
+        fileName: registration.fileName,
+        createBlob: () => registration.blob,
+      },
+    ]);
+
+    if (!saved.saved) {
+      return `${saved.reason} 没有生成完整恢复申请。`;
+    }
+
+    return `恢复私钥已保存为 ${saved.files[0]?.fileName ?? keyFile.fileName}，公钥恢复申请已保存为 ${saved.files[1]?.fileName ?? registration.fileName}。当前项目公钥没有变化；请交给另一名可信发布者签发恢复项目更新包。`;
   });
 }
 
@@ -255,6 +470,11 @@ async function handlePrimaryKeyAction() {
 }
 
 async function handleRevokeOwnKey() {
+  if (canPublishProjectUpdates.value && hasActiveOwnPublicKey.value) {
+    await handleRevokeProjectUpdateSigningKey();
+    return;
+  }
+
   if (
     !window.confirm(
       "撤销后，项目将不再接受当前公钥对应私钥签出的新修改包。继续？",
@@ -275,6 +495,102 @@ async function handleRevokeOwnKey() {
   });
 }
 
+async function handleRevokeProjectUpdateSigningKey() {
+  if (!ownPrivateLoaded.value) {
+    errorMessage.value =
+      "负责人撤销身份密钥前，需要先导入当前私钥，用旧密钥签发包含撤销状态的项目更新包。";
+    message.value = "";
+    return;
+  }
+
+  if (
+    props.project &&
+    props.currentUser &&
+    getOtherTrustedProjectUpdatePublishers(
+      props.members,
+      props.currentUser,
+      props.project,
+    ).length === 0
+  ) {
+    errorMessage.value =
+      "不能撤销项目中最后一把可信发布密钥。请改用密钥轮换；旧私钥已经丢失时，请执行“私钥丢失，重建信任”。";
+    message.value = "";
+    return;
+  }
+
+  if (
+    !window.confirm(
+      [
+        "负责人身份密钥会影响成员接收项目更新包。",
+        "",
+        "Textile 将先导出一份由当前私钥签名、内容标记当前公钥已撤销的项目更新包。成员接收该过渡包后，将不再信任这把公钥签出的新项目更新包。",
+        "",
+        "撤销后，此项目副本不能继续发布可验证的项目更新，除非重新建立可信密钥。是否导出撤销过渡包并继续？",
+      ].join("\n"),
+    )
+  ) {
+    return;
+  }
+
+  await runAction(async () => {
+    const root = getRoot();
+    const revocation = await prepareOwnSigningKeyRevocation(
+      props.members,
+      props.currentUser,
+      props.project ?? undefined,
+    );
+    const createdAt = nowIso();
+    const exportOptions: ExportChangePackageOptions = {
+      mode: "project_update",
+      sign: true,
+      actor: revocation.previousMember,
+      projectUpdateMembers: revocation.members,
+      signatureMember: revocation.previousMember,
+      createdAt,
+    };
+    let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
+    const saved = await saveGeneratedFileFromFactory(
+      getChangePackageSuggestedFileName(
+        revocation.previousMember.id,
+        exportOptions,
+        createdAt,
+      ),
+      async () => {
+        exported = await exportChangePackage(
+          revocation.previousMember.id,
+          exportOptions,
+        );
+
+        return exported.blob;
+      },
+    );
+
+    if (!saved.saved) {
+      return `${saved.reason} 当前身份密钥没有变化。`;
+    }
+
+    if (!exported) {
+      throw new Error("撤销过渡包没有生成。");
+    }
+
+    const transition = await commitSignedTrustTransition(
+      root,
+      exported,
+      revocation.members,
+      revocation.previousMember,
+      "member.key_revoked",
+      {
+        member_id: revocation.member.id,
+        key_id: revocation.member.key_id ?? "",
+      },
+    );
+
+    emit("projectUpdated", transition.project);
+    emit("membersUpdated", transition.members);
+    return `当前负责人公钥已撤销。过渡包已归档到 ${transition.archivePath}，请分发给成员。`;
+  });
+}
+
 async function handleRevokeMemberKey(member: Member) {
   if (
     !window.confirm(
@@ -290,6 +606,7 @@ async function handleRevokeMemberKey(member: Member) {
       props.members,
       props.currentUser,
       member.id,
+      props.project ?? undefined,
     );
 
     emit("membersUpdated", result.members);
@@ -298,17 +615,13 @@ async function handleRevokeMemberKey(member: Member) {
 }
 
 async function saveKeyBlob(blob: Blob, fileName: string, label: string): Promise<string> {
-  const result = await saveBlob(blob, fileName);
+  const result = await saveGeneratedFile(blob, fileName);
 
   if (!result.saved) {
-    return `${label}保存已取消。`;
+    return `${label}保存失败：${result.reason}`;
   }
 
-  if (result.method === "file-picker") {
-    return `${label}已保存为 ${result.fileName}。`;
-  }
-
-  return `${label}下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。`;
+  return `${label}已保存为 ${result.fileName}。`;
 }
 
 async function handleExportPrivateKey() {
@@ -353,6 +666,9 @@ async function handleImportKey(event: Event) {
       props.members,
       props.currentUser,
       await file.text(),
+      {
+        requireExistingPublicKeyMatch: hasActiveOwnPublicKey.value,
+      },
     );
 
     emit("membersUpdated", result.members);
@@ -402,8 +718,7 @@ async function handleImportPublicKey(event: Event) {
       return "公钥登记已取消。";
     }
 
-    const result = await importMemberPublicKeyRegistrationFile(
-      getRoot(),
+    const prepared = await prepareMemberPublicKeyRegistration(
       props.members,
       props.currentUser,
       getProjectId(),
@@ -411,6 +726,71 @@ async function handleImportPublicKey(event: Event) {
       { allowReplace: hasDifferentPublicKey },
     );
 
+    if (hasDifferentPublicKey) {
+      const actor = ownMember.value;
+
+      if (
+        !actor ||
+        !canPublishProjectUpdates.value ||
+        !hasLoadedPrivateKey(actor)
+      ) {
+        throw new Error(
+          "替换已有公钥必须由已加载可信私钥的项目更新发布者签发恢复项目更新包。",
+        );
+      }
+
+      const createdAt = nowIso();
+      const exportOptions: ExportChangePackageOptions = {
+        mode: "project_update",
+        sign: true,
+        actor,
+        projectUpdateMembers: prepared.members,
+        signatureMember: actor,
+        createdAt,
+      };
+      let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
+      const saved = await saveGeneratedFileFromFactory(
+        getChangePackageSuggestedFileName(actor.id, exportOptions, createdAt),
+        async () => {
+          exported = await exportChangePackage(actor.id, exportOptions);
+
+          return exported.blob;
+        },
+      );
+
+      if (!saved.saved) {
+        return `${saved.reason} 公钥没有变化。`;
+      }
+
+      if (!exported) {
+        throw new Error("恢复项目更新包没有生成。");
+      }
+
+      const transition = await commitSignedTrustTransition(
+        getRoot(),
+        exported,
+        prepared.members,
+        actor,
+        "member.public_key_recovered",
+        {
+          member_id: prepared.member.id,
+          previous_key_id: prepared.previousMember.key_id ?? "",
+          key_id: prepared.member.key_id ?? "",
+        },
+      );
+
+      emit("projectUpdated", transition.project);
+      emit("membersUpdated", transition.members);
+      return `已为 ${prepared.member.name} 恢复公钥。恢复包已归档到 ${transition.archivePath}，请分发给成员。`;
+    }
+
+    const result = await importMemberPublicKeyRegistrationFile(
+      getRoot(),
+      props.members,
+      props.currentUser,
+      getProjectId(),
+      text,
+    );
     emit("membersUpdated", result.members);
     return hasDifferentPublicKey
       ? `已为 ${result.member.name} 轮换公钥。`
@@ -418,6 +798,27 @@ async function handleImportPublicKey(event: Event) {
   });
 
   input.value = "";
+}
+
+async function handleExportOwnerTransferProof() {
+  await runAction(async () => {
+    const result = await exportOwnOwnerTransferKeyProof(
+      props.members,
+      props.currentUser,
+      getProjectId(),
+      getProjectRevision(),
+    );
+
+    return saveKeyBlob(result.blob, result.fileName, "负责人交接证明");
+  });
+}
+
+async function handleResaveLatestTransition() {
+  await runAction(async () => {
+    const archive = await loadLatestTrustTransitionArchive(getRoot());
+
+    return saveKeyBlob(archive.blob, archive.fileName, "可信过渡包");
+  });
 }
 </script>
 
@@ -445,6 +846,19 @@ async function handleImportPublicKey(event: Event) {
 
       <p class="key-note">
         公钥保存在项目成员信息中，用来验签；私钥只保存在本机或私钥文件中，用来给修改包签名。私钥文件可以代表你签名修改包，请不要交给其他人。
+      </p>
+      <p
+        v-if="
+          canPublishProjectUpdates &&
+          hasActiveOwnPublicKey &&
+          !ownPrivateLoaded &&
+          otherTrustedPublishers.length > 0
+        "
+        class="key-note"
+      >
+        当前旧私钥丢失时，可先生成新密钥和公钥登记文件，再由可信发布者
+        {{ otherTrustedPublishers.map((member) => member.name).join("、") }}
+        导入登记文件并签发公钥恢复项目更新包，无需重建整个项目信任。
       </p>
 
       <div class="key-actions">
@@ -478,6 +892,16 @@ async function handleImportPublicKey(event: Event) {
         </button>
 
         <button
+          v-if="ownPrivateLoaded && projectId && project"
+          class="secondary-button"
+          type="button"
+          :disabled="isWorking || !canExportPrivate"
+          @click="handleExportOwnerTransferProof"
+        >
+          导出负责人交接证明
+        </button>
+
+        <button
           v-if="ownPrivateLoaded"
           class="secondary-button"
           type="button"
@@ -508,6 +932,40 @@ async function handleImportPublicKey(event: Event) {
           @click="handleRevokeOwnKey"
         >
           撤销当前公钥
+        </button>
+
+        <button
+          v-if="canRebuildTrust"
+          class="danger-button"
+          type="button"
+          :disabled="isWorking"
+          @click="handleRebuildProjectTrust"
+        >
+          私钥丢失，重建信任
+        </button>
+
+        <button
+          v-if="
+            canPublishProjectUpdates &&
+            hasActiveOwnPublicKey &&
+            !ownPrivateLoaded &&
+            otherTrustedPublishers.length > 0
+          "
+          class="secondary-button"
+          type="button"
+          :disabled="isWorking || !canRotateKeys"
+          @click="handlePrepareTrustedPublisherRecovery"
+        >
+          生成发布者恢复申请
+        </button>
+
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="isWorking || !projectRoot"
+          @click="handleResaveLatestTransition"
+        >
+          重新保存最近过渡包
         </button>
       </div>
 

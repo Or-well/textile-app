@@ -68,6 +68,7 @@ export interface ProjectConfig {
   project_id: string;
   revision?: string;
   revision_hash?: string;
+  trust_epoch?: number;
   name: string;
   description?: string;
   source_language: string;

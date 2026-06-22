@@ -44,6 +44,7 @@ import {
 import {
   completeProjectPackageExport,
   exportProjectPackage,
+  getProjectPackageSuggestedFileName,
 } from "../services/projectPackage";
 import {
   openProject,
@@ -70,7 +71,7 @@ import {
   getDesktopUpdateActionLabel,
 } from "../services/appUpdatePresentation";
 import { withAppOperation } from "../services/appOperation";
-import { saveBlobWithConfirmation } from "../utils/saveBlob";
+import { saveGeneratedFileFromFactory } from "../utils/saveBlob";
 import { formatDateTime } from "../utils/time";
 
 type SettingsSection =
@@ -627,14 +628,21 @@ async function handleExportProjectFile() {
 
   try {
     const outcome = await withAppOperation("导出项目备份", async () => {
-      const result = await exportProjectPackage(root);
-      const saved = await saveBlobWithConfirmation(
-        result.blob,
-        result.fileName,
-        "下载已经开始。请确认项目备份已经保存到电脑。",
+      if (!localProject.value) {
+        throw new Error("请先打开项目，再导出为 Textile 项目文件。");
+      }
+
+      let result: Awaited<ReturnType<typeof exportProjectPackage>> | undefined;
+      const saved = await saveGeneratedFileFromFactory(
+        getProjectPackageSuggestedFileName(localProject.value),
+        async () => {
+          result = await exportProjectPackage(root);
+
+          return result.blob;
+        },
       );
 
-      if (saved) {
+      if (saved.saved && result) {
         completeProjectPackageExport(root);
       }
 
@@ -642,9 +650,13 @@ async function handleExportProjectFile() {
     });
     const { result, saved } = outcome;
 
-    if (!saved) {
-      message.value = "项目备份尚未确认保存，项目仍会保持未备份提示。";
+    if (!saved.saved) {
+      message.value = saved.reason;
       return;
+    }
+
+    if (!result) {
+      throw new Error("Textile 项目文件没有生成。");
     }
 
     message.value = `已导出为 Textile 项目文件：${result.fileName}`;
@@ -993,6 +1005,7 @@ onBeforeUnmount(() => {
             :current-user="currentUser"
             :project-root="props.projectRoot ?? localRoot ?? undefined"
             :project-id="localProject?.project_id"
+            :project="localProject"
             @members-updated="handleMembersUpdated"
             @project-updated="handleProjectUpdatedFromChild"
           />
@@ -1008,6 +1021,7 @@ onBeforeUnmount(() => {
             :members="localMembers"
             :current-user="currentUser"
             :project-root="props.projectRoot ?? localRoot ?? undefined"
+            :project="localProject"
             :require-signed-change-packages="
               collaborationDraft.require_signed_change_packages
             "

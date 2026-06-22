@@ -18,11 +18,13 @@ export interface NewMemberInput {
   password: string;
 }
 
-export interface NewMemberWithKeyResult {
+export interface PreparedMemberWithGeneratedKey {
   members: Member[];
   member: Member;
   keyFile: MemberKeyFile;
 }
+
+export type NewMemberWithKeyResult = PreparedMemberWithGeneratedKey;
 
 export interface RoleUpdateInput {
   memberId: string;
@@ -351,29 +353,53 @@ export async function addMemberWithGeneratedKey(
   actor: Member,
   input: NewMemberInput,
 ): Promise<NewMemberWithKeyResult> {
+  const prepared = await prepareMemberWithGeneratedKey(members, actor, input);
+
+  return commitPreparedMemberWithGeneratedKey(root, prepared, actor);
+}
+
+export async function prepareMemberWithGeneratedKey(
+  members: Member[],
+  actor: Member,
+  input: NewMemberInput,
+): Promise<PreparedMemberWithGeneratedKey> {
   assertCanManageMembers(actor);
 
   const newMember = await createNewMemberRecord(members, input);
   const generated = await generateMemberSigningKey(newMember);
   const nextMembers = [...members, generated.member];
 
+  return {
+    members: nextMembers,
+    member: generated.member,
+    keyFile: generated.keyFile,
+  };
+}
+
+export async function commitPreparedMemberWithGeneratedKey(
+  root: ProjectDirectoryHandle,
+  prepared: PreparedMemberWithGeneratedKey,
+  actor: Member,
+): Promise<NewMemberWithKeyResult> {
+  assertCanManageMembers(actor);
+
   const savedMembers = await writeMembersAndEvent(
     root,
-    nextMembers,
+    prepared.members,
     actor.id,
     "member.created",
     {
-      member_id: generated.member.id,
-      roles: generated.member.roles,
-      key_id: generated.member.key_id ?? "",
+      member_id: prepared.member.id,
+      roles: prepared.member.roles,
+      key_id: prepared.member.key_id ?? "",
       initial_key_generated: true,
     },
   );
 
   return {
     members: savedMembers,
-    member: generated.member,
-    keyFile: generated.keyFile,
+    member: prepared.member,
+    keyFile: prepared.keyFile,
   };
 }
 

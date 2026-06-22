@@ -6,6 +6,7 @@ import type {
   UpdateChannel,
   VersionManifest,
 } from "./appUpdateTypes";
+export { isTauriRuntime } from "../utils/tauriRuntime";
 
 export interface DesktopDownloadProgress {
   downloadedBytes: number;
@@ -15,12 +16,6 @@ export interface DesktopDownloadProgress {
 
 let pendingUpdate: Update | null = null;
 let updateDownloaded = false;
-
-export function isTauriRuntime(): boolean {
-  return Boolean(
-    (globalThis as typeof globalThis & { isTauri?: boolean }).isTauri,
-  );
-}
 
 export function hasPendingTauriUpdate(): boolean {
   return Boolean(pendingUpdate);

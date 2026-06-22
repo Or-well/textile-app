@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
+import SigningKeySetupDialog from "../components/SigningKeySetupDialog.vue";
 import type {
   Member,
   ProjectConfig,
@@ -12,12 +13,14 @@ import type {
 import {
   completeProjectPackageExport,
   exportProjectPackage,
+  getProjectPackageSuggestedFileName,
 } from "../services/projectPackage";
 import {
   applyChangePackage,
   completeChangePackageExport,
   detectConflicts,
   exportChangePackage,
+  getChangePackageSuggestedFileName,
   previewChangePackage,
   readChangePackage,
   setChangesProjectStorage,
@@ -30,6 +33,7 @@ import {
 } from "../services/changes";
 import {
   exportProject,
+  getReleaseExportSuggestedFileName,
   getReleaseExportSummary,
   normalizeReleaseExportOptions,
   setExporterProjectStorage,
@@ -42,6 +46,7 @@ import {
   canExportProjectUpdatePackage,
   canExportRelease,
   canGenerateKey,
+  canImportPrivateKey,
   canImportMemberChangePackage,
   canImportMaintenanceChangePackage,
   canImportProjectUpdatePackage,
@@ -54,8 +59,13 @@ import {
 } from "../services/permissions";
 import { projectRequiresSignedChangePackages } from "../services/collaboration";
 import {
-  generateOwnSigningKey,
+  commitPreparedOwnSigningKeyGeneration,
+  exportPreparedPublicKeyRegistrationFile,
   getMemberSigningReadiness,
+  importOwnKeyFile,
+  memberKeyFileToBlob,
+  prepareOwnSigningKeyGeneration,
+  type SigningKeyReadiness,
 } from "../services/keyManager";
 import {
   loadMembersFromStorage,
@@ -66,7 +76,12 @@ import type { ProjectDirectoryHandle } from "../services/projectFs";
 import type { ProjectStorage } from "../services/projectStorage";
 import { withAppOperation } from "../services/appOperation";
 import { loadTasks, setTasksProjectStorage } from "../services/tasks";
-import { saveBlob, saveBlobWithConfirmation } from "../utils/saveBlob";
+import {
+  saveGeneratedFile,
+  saveGeneratedFileFromFactory,
+  saveGeneratedFilesFromFactories,
+} from "../utils/saveBlob";
+import { nowIso } from "../utils/time";
 
 const props = defineProps<{
   project?: ProjectConfig;
@@ -114,7 +129,13 @@ const changeExportSection = ref<HTMLElement>();
 const changeImportSection = ref<HTMLElement>();
 const changePackageInput = ref<HTMLInputElement>();
 
+type SigningKeySetupRequest = {
+  readiness: Exclude<SigningKeyReadiness, "ready">;
+  signingReason: string;
+};
+
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
+const currentProject = computed(() => props.project ?? localProject.value);
 const membersForKeys = computed(() => props.members ?? localMembers.value);
 const currentSigningMember = computed(
   () =>
@@ -139,6 +160,24 @@ const canImportProjectUpdate = computed(() =>
 );
 const canReviewPackages = computed(() => canReviewChangePackage(currentUser.value));
 const canSignPackages = computed(() => canSignChangePackage(currentUser.value));
+const canImportOwnPrivateKey = computed(() => canImportPrivateKey(currentUser.value));
+const canGenerateSigningKeyForSetup = computed(() => {
+  const hasCurrentActivePublicKey = Boolean(
+    currentSigningMember.value?.public_key &&
+      currentSigningMember.value.key_id &&
+      !currentSigningMember.value.key_revoked_at,
+  );
+
+  return Boolean(
+    currentUser.value &&
+      canGenerateKey(currentUser.value) &&
+      !(
+        exportMode.value === "project_update" &&
+        signingKeySetup.value?.readiness === "private_key_not_loaded" &&
+        hasCurrentActivePublicKey
+      ),
+  );
+});
 const canVerifyPackages = computed(() => canVerifyChangePackage(currentUser.value));
 const canDangerousImport = computed(() =>
   canDangerousImportChangePackage(currentUser.value),
@@ -290,6 +329,10 @@ const releaseOptionPayload = computed(() => ({
   include_report: releaseIncludeReport.value,
   include_manifest: releaseIncludeManifest.value,
 }));
+const signingKeySetup = ref<SigningKeySetupRequest | null>(null);
+const isPreparingSigningKey = ref(false);
+const signingKeySetupError = ref("");
+let resolveSigningKeySetup: ((ready: boolean) => void) | null = null;
 
 function applyReleaseSettings(project: ProjectConfig) {
   const options = normalizeReleaseExportOptions(project);
@@ -429,6 +472,204 @@ async function handleOpenProject() {
   }
 }
 
+function requestSigningKeySetup(
+  request: SigningKeySetupRequest,
+): Promise<boolean> {
+  resolveSigningKeySetup?.(false);
+  signingKeySetup.value = request;
+  signingKeySetupError.value = "";
+
+  return new Promise((resolve) => {
+    resolveSigningKeySetup = resolve;
+  });
+}
+
+function closeSigningKeySetup(ready: boolean): void {
+  resolveSigningKeySetup?.(ready);
+  resolveSigningKeySetup = null;
+  signingKeySetup.value = null;
+  signingKeySetupError.value = "";
+  isPreparingSigningKey.value = false;
+}
+
+function handleCancelSigningKeySetup(): void {
+  errorMessage.value = "已取消导出。请先导入私钥文件或创建签名密钥。";
+  closeSigningKeySetup(false);
+}
+
+function syncMembersAfterKeySetup(members: Member[], successMessage: string): void {
+  localMembers.value = members;
+  emit("membersUpdated", members);
+  message.value = successMessage;
+}
+
+async function handleImportSigningKey(file: File): Promise<void> {
+  const request = signingKeySetup.value;
+
+  if (!request) {
+    return;
+  }
+
+  if (!projectRootForExport.value) {
+    signingKeySetupError.value = "请先打开项目，再导入私钥文件。";
+    return;
+  }
+
+  if (!currentUser.value) {
+    signingKeySetupError.value = "请先登录。";
+    return;
+  }
+
+  if (!canImportOwnPrivateKey.value) {
+    signingKeySetupError.value = "当前成员没有导入私钥文件的权限。";
+    return;
+  }
+
+  isPreparingSigningKey.value = true;
+  signingKeySetupError.value = "";
+
+  try {
+    const result = await importOwnKeyFile(
+      projectRootForExport.value,
+      membersForKeys.value,
+      currentUser.value,
+      await file.text(),
+      {
+        requireExistingPublicKeyMatch:
+          request.readiness === "private_key_not_loaded",
+      },
+    );
+
+    syncMembersAfterKeySetup(
+      result.members,
+      "私钥文件已导入，本机可用于导出签名修改包。",
+    );
+    closeSigningKeySetup(true);
+  } catch (error) {
+    signingKeySetupError.value =
+      error instanceof Error ? error.message : "导入私钥文件失败。";
+  } finally {
+    isPreparingSigningKey.value = false;
+  }
+}
+
+async function handleGenerateSigningKey(): Promise<void> {
+  if (!signingKeySetup.value) {
+    return;
+  }
+
+  if (!projectRootForExport.value) {
+    signingKeySetupError.value = "请先打开项目，再创建身份密钥。";
+    return;
+  }
+
+  if (!currentUser.value) {
+    signingKeySetupError.value = "请先登录。";
+    return;
+  }
+
+  if (!canGenerateKey(currentUser.value)) {
+    signingKeySetupError.value = "当前成员没有生成签名密钥的权限。";
+    return;
+  }
+
+  isPreparingSigningKey.value = true;
+  signingKeySetupError.value = "";
+
+  try {
+    const hasCurrentActivePublicKey = Boolean(
+      currentSigningMember.value?.public_key &&
+        currentSigningMember.value.key_id &&
+        !currentSigningMember.value.key_revoked_at,
+    );
+
+    if (
+      exportMode.value === "project_update" &&
+      signingKeySetup.value.readiness === "private_key_not_loaded" &&
+      hasCurrentActivePublicKey
+    ) {
+      signingKeySetupError.value =
+        "项目更新包必须使用当前已登记公钥对应的旧私钥签名。请导入匹配的私钥；如果旧私钥已丢失，需要重新分发项目备份建立信任。";
+      return;
+    }
+
+    const generation = await prepareOwnSigningKeyGeneration(
+      membersForKeys.value,
+      currentUser.value,
+    );
+    const keyFile = memberKeyFileToBlob(generation.keyFile);
+
+    if (exportMode.value !== "project_update") {
+      if (!currentProject.value) {
+        signingKeySetupError.value =
+          "当前项目配置不可用。本次签名导出不会继续。";
+        return;
+      }
+
+      const registration = await exportPreparedPublicKeyRegistrationFile(
+        generation,
+        currentProject.value.project_id,
+      );
+      const savedFiles = await saveGeneratedFilesFromFactories([
+        {
+          fileName: keyFile.fileName,
+          createBlob: () => keyFile.blob,
+        },
+        {
+          fileName: registration.fileName,
+          createBlob: () => registration.blob,
+        },
+      ]);
+
+      if (!savedFiles.saved) {
+        signingKeySetupError.value =
+          `${savedFiles.reason} 项目中没有登记这把公钥，本次签名导出不会继续。`;
+        return;
+      }
+
+      syncMembersAfterKeySetup(
+        (
+          await commitPreparedOwnSigningKeyGeneration(
+            projectRootForExport.value,
+            generation,
+            currentUser.value,
+          )
+        ).members,
+        `新密钥和公钥登记文件已保存。请先把 ${savedFiles.files[1]?.fileName ?? registration.fileName} 交给负责人登记，并接收包含该公钥的可信项目更新后再导出签名修改包。`,
+      );
+
+      signingKeySetupError.value =
+        `新密钥和公钥登记文件已保存。请先把 ${savedFiles.files[1]?.fileName ?? registration.fileName} 交给负责人登记，并接收包含该公钥的可信项目更新后再导出签名修改包。`;
+      return;
+    }
+
+    const saved = await saveGeneratedFile(keyFile.blob, keyFile.fileName);
+
+    if (!saved.saved) {
+      signingKeySetupError.value = `${saved.reason} 项目中没有登记这把公钥。`;
+      return;
+    }
+
+    const result = await commitPreparedOwnSigningKeyGeneration(
+      projectRootForExport.value,
+      generation,
+      currentUser.value,
+    );
+
+    syncMembersAfterKeySetup(
+      result.members,
+      `签名密钥已创建，私钥文件已保存为 ${saved.fileName}，公钥已写入项目。`,
+    );
+
+    closeSigningKeySetup(true);
+  } catch (error) {
+    signingKeySetupError.value =
+      error instanceof Error ? error.message : "生成签名密钥失败。";
+  } finally {
+    isPreparingSigningKey.value = false;
+  }
+}
+
 async function ensureSigningKeyIfNeeded(shouldSign: boolean): Promise<boolean> {
   if (!shouldSign) {
     return true;
@@ -456,70 +697,22 @@ async function ensureSigningKeyIfNeeded(shouldSign: boolean): Promise<boolean> {
     return true;
   }
 
-  if (readiness === "private_key_not_loaded") {
-    window.alert(
-      [
-        `${signingReason}。项目里已经登记了你的公钥，但这台设备没有加载对应私钥，无法给修改包签名。`,
-        "",
-        "请到“设置 > 身份密钥”导入你的私钥文件后再导出。私钥文件通常由你自己之前导出，或由负责人创建账号时单独交给你；项目文件和 .hproj 不包含私钥。",
-      ].join("\n"),
-    );
-    errorMessage.value =
-      "请先到“身份密钥”导入私钥文件，再导出签名修改包。";
-    return false;
-  }
-
-  if (!canGenerateKey(currentUser.value)) {
+  if (
+    !canImportOwnPrivateKey.value &&
+    (readiness === "private_key_not_loaded" ||
+      !canGenerateKey(currentUser.value))
+  ) {
     errorMessage.value =
       readiness === "revoked_key"
         ? "当前项目中你的公钥已被撤销，且当前成员没有生成新签名密钥的权限。请联系负责人重新登记公钥。"
-        : `${signingReason}，但项目还没有登记你的公钥，且当前成员没有生成签名密钥的权限。请联系负责人登记公钥。`;
+        : `${signingReason}，但当前成员没有导入私钥文件或生成签名密钥所需的权限。请联系负责人处理。`;
     return false;
   }
 
-  const prompt =
-    readiness === "revoked_key"
-      ? [
-          "当前项目中你的公钥已被撤销，不能再用对应私钥签名修改包。",
-          "",
-          "如需继续导出，可以现在生成新的签名密钥。生成后新公钥会写入项目，新的私钥只会保存在本机；请稍后到“身份密钥”导出私钥文件并妥善保存。",
-          "",
-          "是否生成新的签名密钥并继续导出？",
-        ].join("\n")
-      : [
-          `${signingReason}，但项目还没有登记你的公钥。`,
-          "",
-          "签名密钥由公钥和私钥组成：",
-          "- 公钥保存在项目成员信息中，负责人用它验证你的修改包。",
-          "- 私钥只保存在你的本机或私钥文件中，用来给修改包签名。",
-          "",
-          "现在可以为你生成一组签名密钥。生成后公钥会写入项目，私钥只会保存在本机；请稍后到“身份密钥”导出私钥文件并妥善保存。",
-          "",
-          "是否生成签名密钥并继续导出？",
-        ].join("\n");
-
-  if (!window.confirm(prompt)) {
-    errorMessage.value = "已取消导出。请先创建签名密钥或导入私钥文件。";
-    return false;
-  }
-
-  if (!projectRootForExport.value) {
-    errorMessage.value = "请先打开项目，再创建身份密钥。";
-    return false;
-  }
-
-  const result = await generateOwnSigningKey(
-    projectRootForExport.value,
-    membersForKeys.value,
-    currentUser.value,
-  );
-
-  localMembers.value = result.members;
-  emit("membersUpdated", result.members);
-  message.value =
-    "签名密钥已创建，公钥已写入项目。请稍后到“身份密钥”导出私钥文件并妥善保存。";
-
-  return true;
+  return requestSigningKeySetup({
+    readiness,
+    signingReason,
+  });
 }
 
 function handleSignChangePackageToggle(event: Event): void {
@@ -555,19 +748,30 @@ async function handleExportChanges() {
 
   try {
     const outcome = await withAppOperation("导出修改包", async () => {
-      const result = await exportChangePackage(currentUser.value!.id, {
+      const createdAt = nowIso();
+      const exportOptions = {
         mode: exportMode.value,
         taskId: exportMode.value === "task_changes" ? selectedTaskIds.value[0] : undefined,
         taskIds: exportMode.value === "task_changes" ? selectedTaskIds.value : undefined,
         sign: shouldSignChangePackage.value,
         actor: currentUser.value,
-      });
-      const saved = await saveBlobWithConfirmation(
-        result.blob,
-        result.fileName,
-        "下载已经开始。请确认修改包文件已经保存到电脑；只有确认后，Textile 才会记录本次导出。",
+        createdAt,
+      };
+      let result: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
+      const saved = await saveGeneratedFileFromFactory(
+        getChangePackageSuggestedFileName(currentUser.value!.id, exportOptions, createdAt),
+        async () => {
+          result = await exportChangePackage(currentUser.value!.id, exportOptions);
+
+          return result.blob;
+        },
       );
-      const updatedProject = saved
+
+      if (!result) {
+        return { result: undefined, saved, updatedProject: undefined };
+      }
+
+      const updatedProject = saved.saved
         ? await completeChangePackageExport(result)
         : undefined;
 
@@ -575,9 +779,13 @@ async function handleExportChanges() {
     });
     const { result, saved, updatedProject } = outcome;
 
-    if (!saved) {
-      message.value = "修改包尚未确认保存，项目状态没有变化。";
+    if (!saved.saved) {
+      message.value = saved.reason;
       return;
+    }
+
+    if (!result) {
+      throw new Error("修改包没有生成。");
     }
 
     if (exportMode.value === "project_update") {
@@ -611,20 +819,41 @@ async function handleExportRelease() {
   message.value = "";
 
   try {
-    const result = await withAppOperation("导出成品", () =>
-      exportProject({
-        ...releaseOptionPayload.value,
-        exportedBy: currentUser.value?.id ?? "",
-      }),
-    );
-    const saved = await saveBlob(result.blob, result.fileName);
+    const exportedAt = nowIso();
+    const outcome = await withAppOperation("导出成品", async () => {
+      if (!currentProject.value) {
+        throw new Error("请先打开项目，再导出成品。");
+      }
+
+      let result: Awaited<ReturnType<typeof exportProject>> | undefined;
+      const saved = await saveGeneratedFileFromFactory(
+        getReleaseExportSuggestedFileName(currentProject.value.project_id, exportedAt),
+        async () => {
+          result = await exportProject({
+            ...releaseOptionPayload.value,
+            exportedBy: currentUser.value?.id ?? "",
+            exportedAt,
+          });
+
+          return result.blob;
+        },
+      );
+
+      return { result, saved };
+    });
+    const { result, saved } = outcome;
+
+    if (!saved.saved) {
+      message.value = saved.reason;
+      return;
+    }
+
+    if (!result) {
+      throw new Error("成品文件没有生成。");
+    }
 
     releaseSummary.value = result.summary;
-    message.value = saved.saved
-      ? saved.method === "file-picker"
-        ? `成品文件已保存为 ${saved.fileName}。`
-        : "成品文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。"
-      : "成品文件保存已取消。";
+    message.value = `成品文件已保存为 ${saved.fileName}。`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导出成品失败。请稍后再试。";
@@ -782,14 +1011,21 @@ async function handleExportProjectFile() {
   try {
     const projectRoot = projectRootForExport.value;
     const outcome = await withAppOperation("导出项目备份", async () => {
-      const result = await exportProjectPackage(projectRoot);
-      const saved = await saveBlobWithConfirmation(
-        result.blob,
-        result.fileName,
-        "下载已经开始。请确认项目备份已经保存到电脑。",
+      if (!currentProject.value) {
+        throw new Error("请先打开项目，再导出 Textile 项目备份。");
+      }
+
+      let result: Awaited<ReturnType<typeof exportProjectPackage>> | undefined;
+      const saved = await saveGeneratedFileFromFactory(
+        getProjectPackageSuggestedFileName(currentProject.value),
+        async () => {
+          result = await exportProjectPackage(projectRoot);
+
+          return result.blob;
+        },
       );
 
-      if (saved) {
+      if (saved.saved && result) {
         completeProjectPackageExport(projectRoot);
       }
 
@@ -797,9 +1033,13 @@ async function handleExportProjectFile() {
     });
     const { result, saved } = outcome;
 
-    if (!saved) {
-      message.value = "项目备份尚未确认保存，项目仍会保持未备份提示。";
+    if (!saved.saved) {
+      message.value = saved.reason;
       return;
+    }
+
+    if (!result) {
+      throw new Error("Textile 项目备份没有生成。");
     }
 
     message.value = `已导出 Textile 项目备份：${result.fileName}`;
@@ -983,6 +1223,7 @@ watch(
           type="button"
           :disabled="
             isExporting ||
+            Boolean(signingKeySetup) ||
             !currentUser ||
             (exportMode === 'task_changes' && selectedTaskIds.length === 0)
           "
@@ -1156,6 +1397,19 @@ watch(
       <p v-else-if="!isLoading && !errorMessage" class="empty-state">
         {{ emptyStateText }}
       </p>
+
+      <SigningKeySetupDialog
+        v-if="signingKeySetup"
+        :readiness="signingKeySetup.readiness"
+        :signing-reason="signingKeySetup.signingReason"
+        :can-import-private-key="canImportOwnPrivateKey"
+        :can-generate-key="canGenerateSigningKeyForSetup"
+        :is-busy="isPreparingSigningKey"
+        :error-message="signingKeySetupError"
+        @import-key="handleImportSigningKey"
+        @generate-key="handleGenerateSigningKey"
+        @cancel="handleCancelSigningKeySetup"
+      />
     </section>
   </main>
 </template>

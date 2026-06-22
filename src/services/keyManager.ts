@@ -1,5 +1,5 @@
 import { PERMISSION_ACTIONS } from "../model/permissions";
-import type { Member } from "../model/types";
+import type { Member, ProjectConfig } from "../model/types";
 import { nowIso } from "../utils/time";
 import {
   CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
@@ -38,6 +38,20 @@ export interface MemberPublicKeyRegistrationFile {
   proof_signature: string;
 }
 
+export interface OwnerTransferKeyProofFile {
+  schema_version: 1;
+  kind: "textile.owner_transfer_key_proof";
+  project_id: string;
+  project_revision: string;
+  member_id: string;
+  member_name?: string;
+  key_id: string;
+  public_key: string;
+  created_at: string;
+  algorithm: typeof CHANGE_PACKAGE_SIGNATURE_ALGORITHM;
+  proof_signature: string;
+}
+
 export interface MemberKeyResult {
   members: Member[];
   member: Member;
@@ -54,13 +68,38 @@ export interface PreparedOwnSigningKeyRotation extends GeneratedMemberKey {
   members: Member[];
 }
 
+export interface PreparedOwnSigningKeyGeneration extends GeneratedMemberKey {
+  previousMember: Member;
+  members: Member[];
+}
+
+export interface PreparedOwnSigningKeyRevocation {
+  previousMember: Member;
+  member: Member;
+  members: Member[];
+}
+
+export interface PreparedMemberPublicKeyRegistration {
+  members: Member[];
+  member: Member;
+  previousMember: Member;
+  file: MemberPublicKeyRegistrationFile;
+  replacesExistingKey: boolean;
+}
+
 export type SigningKeyReadiness =
   | "ready"
   | "missing_public_key"
   | "revoked_key"
   | "private_key_not_loaded";
 
-const privateKeys = new Map<string, string>();
+interface LoadedSigningPrivateKey {
+  privateKey: string;
+  publicKey: string;
+  keyId: string;
+}
+
+const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 
 function findMember(members: Member[], memberId: string): Member {
   const member = members.find((item) => item.id === memberId);
@@ -146,6 +185,12 @@ function createPublicKeyProofPayload(
   });
 }
 
+function createOwnerTransferProofPayload(
+  file: Omit<OwnerTransferKeyProofFile, "proof_signature">,
+): string {
+  return stableStringify(file);
+}
+
 async function writeMembers(
   root: ProjectDirectoryHandle,
   members: Member[],
@@ -192,8 +237,70 @@ async function updateOwnPublicKey(
   };
 }
 
+function rememberPrivateKey(
+  memberId: string,
+  privateKey: string,
+  publicKey: string,
+  keyId: string,
+): void {
+  privateKeys.set(memberId, { privateKey, publicKey, keyId });
+}
+
+export function activatePreparedOwnSigningKey(
+  prepared: PreparedOwnSigningKeyGeneration | PreparedOwnSigningKeyRotation,
+  actor: Member | null | undefined,
+): void {
+  assertActor(actor);
+
+  if (prepared.member.id !== actor.id) {
+    throw new Error("只能加载当前成员自己的身份私钥。");
+  }
+
+  rememberPrivateKey(
+    actor.id,
+    prepared.privateKey,
+    prepared.member.public_key ?? "",
+    prepared.member.key_id ?? "",
+  );
+}
+
+function loadedPrivateKeyMatchesMember(
+  member: Member | null | undefined,
+  loaded: LoadedSigningPrivateKey | undefined,
+): boolean {
+  if (
+    !member?.public_key ||
+    !member.key_id ||
+    member.key_revoked_at ||
+    !loaded
+  ) {
+    return false;
+  }
+
+  return Boolean(
+    loaded.publicKey === member.public_key &&
+      loaded.keyId === member.key_id,
+  );
+}
+
 export function getSigningPrivateKeyForMember(memberId: string): string | null {
-  return privateKeys.get(memberId) ?? null;
+  return privateKeys.get(memberId)?.privateKey ?? null;
+}
+
+export function getUsableSigningPrivateKey(
+  member: Member | null | undefined,
+): string | null {
+  if (!member?.id) {
+    return null;
+  }
+
+  const loaded = privateKeys.get(member.id);
+
+  if (!loaded || !loadedPrivateKeyMatchesMember(member, loaded)) {
+    return null;
+  }
+
+  return loaded.privateKey;
 }
 
 export function unloadSigningPrivateKeyForMember(memberId: string): void {
@@ -212,7 +319,7 @@ export function clearLoadedSigningPrivateKeys(): void {
 }
 
 export function hasLoadedPrivateKey(member: Member | null | undefined): boolean {
-  return Boolean(member?.id && privateKeys.has(member.id));
+  return Boolean(getUsableSigningPrivateKey(member));
 }
 
 export function getMemberSigningReadiness(
@@ -264,30 +371,63 @@ export function memberKeyFileToBlob(
   return createKeyFileBlob(keyFile);
 }
 
-export async function generateOwnSigningKey(
-  root: ProjectDirectoryHandle,
+export async function prepareOwnSigningKeyGeneration(
   members: Member[],
+  actor: Member | null | undefined,
+): Promise<PreparedOwnSigningKeyGeneration> {
+  assertActor(actor);
+  assertPermission(actor, PERMISSION_ACTIONS.KEY_GENERATE);
+
+  const previousMember = findMember(members, actor.id);
+  const generated = await generateMemberSigningKey(previousMember);
+  const nextMembers = members.map((member) =>
+    member.id === actor.id ? generated.member : member,
+  );
+
+  return {
+    ...generated,
+    previousMember,
+    members: nextMembers,
+  };
+}
+
+export async function commitPreparedOwnSigningKeyGeneration(
+  root: ProjectDirectoryHandle,
+  generation: PreparedOwnSigningKeyGeneration,
   actor: Member | null | undefined,
 ): Promise<MemberKeyResult> {
   assertActor(actor);
   assertPermission(actor, PERMISSION_ACTIONS.KEY_GENERATE);
 
-  const keyPair = await generateSigningKeyPair();
-  const createdAt = nowIso();
+  await writeMembers(root, generation.members, actor, "member.key_generated", {
+    member_id: actor.id,
+    key_id: generation.member.key_id ?? "",
+  });
 
-  privateKeys.set(actor.id, keyPair.privateKey);
+  rememberPrivateKey(
+    actor.id,
+    generation.privateKey,
+    generation.member.public_key ?? "",
+    generation.member.key_id ?? "",
+  );
 
-  return updateOwnPublicKey(
+  return {
+    members: generation.members,
+    member: generation.member,
+  };
+}
+
+export async function generateOwnSigningKey(
+  root: ProjectDirectoryHandle,
+  members: Member[],
+  actor: Member | null | undefined,
+): Promise<MemberKeyResult> {
+  const generation = await prepareOwnSigningKeyGeneration(members, actor);
+
+  return commitPreparedOwnSigningKeyGeneration(
     root,
-    members,
+    generation,
     actor,
-    {
-      public_key: keyPair.publicKey,
-      key_id: keyPair.keyId,
-      key_created_at: createdAt,
-      key_revoked_at: "",
-    },
-    "member.key_generated",
   );
 }
 
@@ -296,25 +436,12 @@ export async function rotateOwnSigningKey(
   members: Member[],
   actor: Member | null | undefined,
 ): Promise<MemberKeyResult> {
-  assertActor(actor);
-  assertPermission(actor, PERMISSION_ACTIONS.KEY_ROTATE);
+  const rotation = await prepareOwnSigningKeyRotation(members, actor);
 
-  const keyPair = await generateSigningKeyPair();
-  const createdAt = nowIso();
-
-  privateKeys.set(actor.id, keyPair.privateKey);
-
-  return updateOwnPublicKey(
+  return commitPreparedOwnSigningKeyRotation(
     root,
-    members,
+    rotation,
     actor,
-    {
-      public_key: keyPair.publicKey,
-      key_id: keyPair.keyId,
-      key_created_at: createdAt,
-      key_revoked_at: "",
-    },
-    "member.key_rotated",
   );
 }
 
@@ -346,12 +473,17 @@ export async function commitPreparedOwnSigningKeyRotation(
   assertActor(actor);
   assertPermission(actor, PERMISSION_ACTIONS.KEY_ROTATE);
 
-  privateKeys.set(actor.id, rotation.privateKey);
-
   await writeMembers(root, rotation.members, actor, "member.key_rotated", {
     member_id: actor.id,
     key_id: rotation.member.key_id ?? "",
   });
+
+  rememberPrivateKey(
+    actor.id,
+    rotation.privateKey,
+    rotation.member.public_key ?? "",
+    rotation.member.key_id ?? "",
+  );
 
   return {
     members: rotation.members,
@@ -359,24 +491,84 @@ export async function commitPreparedOwnSigningKeyRotation(
   };
 }
 
-export async function revokeOwnSigningKey(
-  root: ProjectDirectoryHandle,
+export async function prepareOwnSigningKeyRevocation(
   members: Member[],
+  actor: Member | null | undefined,
+  project?: ProjectConfig,
+): Promise<PreparedOwnSigningKeyRevocation> {
+  assertActor(actor);
+  assertCanRevokeOwnKey(actor);
+
+  const previousMember = findMember(members, actor.id);
+
+  if (
+    !previousMember.public_key ||
+    !previousMember.key_id ||
+    previousMember.key_revoked_at
+  ) {
+    throw new Error("当前没有可撤销的有效身份公钥。");
+  }
+
+  assertPublisherKeyCanBeRevoked(members, previousMember, project);
+
+  const updatedAt = nowIso();
+  const revokedMember: Member = {
+    ...previousMember,
+    key_revoked_at: updatedAt,
+    updated_at: updatedAt,
+  };
+  const nextMembers = members.map((member) =>
+    member.id === actor.id ? revokedMember : member,
+  );
+
+  return {
+    previousMember,
+    member: revokedMember,
+    members: nextMembers,
+  };
+}
+
+export async function commitPreparedOwnSigningKeyRevocation(
+  root: ProjectDirectoryHandle,
+  revocation: PreparedOwnSigningKeyRevocation,
   actor: Member | null | undefined,
 ): Promise<MemberKeyResult> {
   assertActor(actor);
   assertCanRevokeOwnKey(actor);
 
+  if (actor.id !== revocation.previousMember.id) {
+    throw new Error("只有当前密钥持有人可以完成身份密钥撤销。");
+  }
+
   privateKeys.delete(actor.id);
 
-  return updateOwnPublicKey(
-    root,
+  await writeMembers(root, revocation.members, actor, "member.key_revoked", {
+    member_id: actor.id,
+    key_id: revocation.member.key_id ?? "",
+  });
+
+  return {
+    members: revocation.members,
+    member: revocation.member,
+  };
+}
+
+export async function revokeOwnSigningKey(
+  root: ProjectDirectoryHandle,
+  members: Member[],
+  actor: Member | null | undefined,
+  project?: ProjectConfig,
+): Promise<MemberKeyResult> {
+  const revocation = await prepareOwnSigningKeyRevocation(
     members,
     actor,
-    {
-      key_revoked_at: nowIso(),
-    },
-    "member.key_revoked",
+    project,
+  );
+
+  return commitPreparedOwnSigningKeyRevocation(
+    root,
+    revocation,
+    actor,
   );
 }
 
@@ -385,11 +577,13 @@ export async function revokeMemberPublicKey(
   members: Member[],
   actor: Member | null | undefined,
   memberId: string,
+  project?: ProjectConfig,
 ): Promise<MemberKeyResult> {
   assertActor(actor);
   assertCanRevokeMemberKey(actor, memberId);
 
   const target = findMember(members, memberId);
+  assertPublisherKeyCanBeRevoked(members, target, project);
   const updatedMember: Member = {
     ...target,
     key_revoked_at: nowIso(),
@@ -414,6 +608,41 @@ export async function revokeMemberPublicKey(
   };
 }
 
+function assertPublisherKeyCanBeRevoked(
+  members: Member[],
+  target: Member,
+  project?: ProjectConfig,
+): void {
+  if (
+    !project ||
+    !can(
+      target,
+      PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+      project,
+    )
+  ) {
+    return;
+  }
+
+  const hasOtherTrustedPublisher = members.some(
+    (member) =>
+      member.id !== target.id &&
+      member.active &&
+      Boolean(member.public_key && member.key_id && !member.key_revoked_at) &&
+      can(
+        member,
+        PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+        project,
+      ),
+  );
+
+  if (!hasOtherTrustedPublisher) {
+    throw new Error(
+      "不能撤销项目中最后一把可信发布密钥。请先轮换密钥、建立另一名可信发布者，或在线下重建项目信任。",
+    );
+  }
+}
+
 export function exportOwnKeyFile(
   members: Member[],
   actor: Member | null | undefined,
@@ -422,7 +651,7 @@ export function exportOwnKeyFile(
   assertPermission(actor, PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE);
 
   const member = findMember(members, actor.id);
-  const privateKey = getSigningPrivateKeyForMember(actor.id);
+  const privateKey = getUsableSigningPrivateKey(member);
 
   if (!member.public_key || !member.key_id || !privateKey || member.key_revoked_at) {
     throw new Error("当前没有可导出的有效私钥文件。请先生成签名密钥或导入私钥文件。");
@@ -458,7 +687,7 @@ export async function exportOwnPublicKeyRegistrationFile(
   assertPermission(actor, PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE);
 
   const member = findMember(members, actor.id);
-  const privateKey = getSigningPrivateKeyForMember(actor.id);
+  const privateKey = getUsableSigningPrivateKey(member);
 
   if (!member.public_key || !member.key_id || !privateKey || member.key_revoked_at) {
     throw new Error("当前没有可导出的有效公钥登记文件。请先生成或导入私钥文件。");
@@ -489,6 +718,141 @@ export async function exportOwnPublicKeyRegistrationFile(
     }),
     fileName: "member-public-key.json",
   };
+}
+
+export async function exportPreparedPublicKeyRegistrationFile(
+  prepared: PreparedOwnSigningKeyGeneration | PreparedOwnSigningKeyRotation,
+  projectId: string,
+): Promise<{ blob: Blob; fileName: string }> {
+  const member = prepared.member;
+
+  if (!member.public_key || !member.key_id) {
+    throw new Error("恢复密钥尚未生成公钥。");
+  }
+
+  const unsigned: Omit<MemberPublicKeyRegistrationFile, "proof_signature"> = {
+    schema_version: 1,
+    kind: "textile.member_public_key",
+    project_id: projectId,
+    member_id: member.id,
+    member_name: member.name,
+    key_id: member.key_id,
+    public_key: member.public_key,
+    created_at: member.key_created_at || nowIso(),
+    algorithm: CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
+  };
+  const file: MemberPublicKeyRegistrationFile = {
+    ...unsigned,
+    proof_signature: await signTextWithPrivateKey(
+      prepared.privateKey,
+      createPublicKeyProofPayload(unsigned),
+    ),
+  };
+
+  return {
+    blob: new Blob([`${JSON.stringify(file, null, 2)}\n`], {
+      type: "application/json",
+    }),
+    fileName: "member-public-key.json",
+  };
+}
+
+export async function exportOwnOwnerTransferKeyProof(
+  members: Member[],
+  actor: Member | null | undefined,
+  projectId: string,
+  projectRevision: string,
+): Promise<{ blob: Blob; fileName: string }> {
+  assertActor(actor);
+  assertPermission(actor, PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE);
+
+  const member = findMember(members, actor.id);
+  const privateKey = getUsableSigningPrivateKey(member);
+
+  if (!member.public_key || !member.key_id || !privateKey || member.key_revoked_at) {
+    throw new Error("当前成员没有可用于负责人交接证明的有效私钥。");
+  }
+
+  const unsigned: Omit<OwnerTransferKeyProofFile, "proof_signature"> = {
+    schema_version: 1,
+    kind: "textile.owner_transfer_key_proof",
+    project_id: projectId,
+    project_revision: projectRevision,
+    member_id: member.id,
+    member_name: member.name,
+    key_id: member.key_id,
+    public_key: member.public_key,
+    created_at: nowIso(),
+    algorithm: CHANGE_PACKAGE_SIGNATURE_ALGORITHM,
+  };
+  const file: OwnerTransferKeyProofFile = {
+    ...unsigned,
+    proof_signature: await signTextWithPrivateKey(
+      privateKey,
+      createOwnerTransferProofPayload(unsigned),
+    ),
+  };
+
+  return {
+    blob: new Blob([`${JSON.stringify(file, null, 2)}\n`], {
+      type: "application/json",
+    }),
+    fileName: "owner-transfer-key-proof.json",
+  };
+}
+
+export async function verifyOwnerTransferKeyProof(
+  text: string,
+  member: Member,
+  projectId: string,
+  projectRevision: string,
+): Promise<OwnerTransferKeyProofFile> {
+  let file: OwnerTransferKeyProofFile;
+
+  try {
+    file = JSON.parse(text) as OwnerTransferKeyProofFile;
+  } catch {
+    throw new Error("负责人交接证明文件格式不正确。");
+  }
+
+  if (
+    file.kind !== "textile.owner_transfer_key_proof" ||
+    file.schema_version !== 1 ||
+    file.algorithm !== CHANGE_PACKAGE_SIGNATURE_ALGORITHM
+  ) {
+    throw new Error("这不是可识别的负责人交接证明文件。");
+  }
+
+  if (
+    file.project_id !== projectId ||
+    file.project_revision !== projectRevision ||
+    file.member_id !== member.id ||
+    file.key_id !== member.key_id ||
+    file.public_key !== member.public_key ||
+    member.key_revoked_at
+  ) {
+    throw new Error("负责人交接证明与当前项目、成员或公钥不匹配。");
+  }
+
+  const createdAt = Date.parse(file.created_at);
+  const age = Date.now() - createdAt;
+
+  if (!Number.isFinite(createdAt) || age < -5 * 60 * 1000 || age > 24 * 60 * 60 * 1000) {
+    throw new Error("负责人交接证明已过期，请由新负责人重新生成。");
+  }
+
+  const { proof_signature: _proofSignature, ...unsigned } = file;
+  const valid = await verifyTextSignature(
+    file.public_key,
+    createOwnerTransferProofPayload(unsigned),
+    file.proof_signature,
+  );
+
+  if (!valid) {
+    throw new Error("负责人交接证明签名无效。");
+  }
+
+  return file;
 }
 
 async function parsePublicKeyRegistrationFile(
@@ -549,6 +913,40 @@ export async function importMemberPublicKeyRegistrationFile(
   text: string,
   options: { allowReplace?: boolean } = {},
 ): Promise<MemberKeyResult> {
+  const prepared = await prepareMemberPublicKeyRegistration(
+    members,
+    actor,
+    projectId,
+    text,
+    options,
+  );
+
+  await writeMembers(
+    root,
+    prepared.members,
+    actor as Member,
+    prepared.replacesExistingKey
+      ? "member.public_key_rotated"
+      : "member.public_key_registered",
+    {
+      member_id: prepared.member.id,
+      key_id: prepared.member.key_id ?? "",
+    },
+  );
+
+  return {
+    members: prepared.members,
+    member: prepared.member,
+  };
+}
+
+export async function prepareMemberPublicKeyRegistration(
+  members: Member[],
+  actor: Member | null | undefined,
+  projectId: string,
+  text: string,
+  options: { allowReplace?: boolean } = {},
+): Promise<PreparedMemberPublicKeyRegistration> {
   assertActor(actor);
   assertPermission(actor, PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC);
 
@@ -581,20 +979,12 @@ export async function importMemberPublicKeyRegistrationFile(
     member.id === target.id ? nextMember : member,
   );
 
-  await writeMembers(
-    root,
-    nextMembers,
-    actor,
-    hasDifferentPublicKey ? "member.public_key_rotated" : "member.public_key_registered",
-    {
-      member_id: target.id,
-      key_id: file.key_id,
-    },
-  );
-
   return {
     members: nextMembers,
     member: nextMember,
+    previousMember: target,
+    file,
+    replacesExistingKey: hasDifferentPublicKey,
   };
 }
 
@@ -603,6 +993,10 @@ export async function importOwnKeyFile(
   members: Member[],
   actor: Member | null | undefined,
   text: string,
+  options: {
+    requireExistingPublicKeyMatch?: boolean;
+    allowPublicKeyReplacement?: boolean;
+  } = {},
 ): Promise<MemberKeyResult> {
   assertActor(actor);
   assertPermission(actor, PERMISSION_ACTIONS.KEY_IMPORT_PRIVATE);
@@ -625,11 +1019,26 @@ export async function importOwnKeyFile(
 
   await assertKeyFileMatches(keyFile);
   const member = findMember(members, actor.id);
+  const hasActiveDifferentPublicKey =
+    Boolean(member.public_key && member.key_id && !member.key_revoked_at) &&
+    (member.public_key !== keyFile.public_key || member.key_id !== keyFile.key_id);
+
+  if (
+    options.requireExistingPublicKeyMatch &&
+    (!member.public_key ||
+      !member.key_id ||
+      member.public_key !== keyFile.public_key ||
+      member.key_id !== keyFile.key_id)
+  ) {
+    throw new Error("私钥文件和项目中当前登记的公钥不匹配。请确认选择的是这名成员对应的私钥文件。");
+  }
+
+  if (hasActiveDifferentPublicKey && !options.allowPublicKeyReplacement) {
+    throw new Error("项目中已经登记了不同公钥。请导入当前公钥对应的私钥；如果确实要换钥，请使用生成新密钥或密钥轮换流程。");
+  }
 
   assertRevokedKeyIsNotReactivated(member, keyFile.key_id);
-  privateKeys.set(actor.id, keyFile.private_key);
-
-  return updateOwnPublicKey(
+  const result = await updateOwnPublicKey(
     root,
     members,
     actor,
@@ -641,4 +1050,13 @@ export async function importOwnKeyFile(
     },
     "member.key_imported",
   );
+
+  rememberPrivateKey(
+    actor.id,
+    keyFile.private_key,
+    keyFile.public_key,
+    keyFile.key_id,
+  );
+
+  return result;
 }

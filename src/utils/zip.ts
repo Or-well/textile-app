@@ -22,7 +22,9 @@ export async function createZip(files: ZipContent): Promise<Blob> {
   return zip.generateAsync({ type: "blob" });
 }
 
-export async function readZip(file: Blob): Promise<Record<string, string>> {
+export async function readZip(
+  file: Blob | ArrayBuffer,
+): Promise<Record<string, string>> {
   const zip = await JSZip.loadAsync(file);
   const entries: Record<string, string> = {};
 

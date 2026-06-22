@@ -270,6 +270,7 @@ function normalizeProjectConfig(config: ProjectConfig): ProjectConfig {
   return {
     ...config,
     schema_version: schemaVersion,
+    trust_epoch: Math.max(0, Math.trunc(Number(config.trust_epoch) || 0)),
     source_language: config.source_language || "ja",
     target_language: config.target_language || "zh-Hans",
     files: config.files.map((file) => {

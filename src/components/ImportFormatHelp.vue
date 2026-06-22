@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { saveBlob } from "../utils/saveBlob";
+import { saveGeneratedFile } from "../utils/saveBlob";
 
 interface ImportFormatSample {
   title: string;
@@ -29,13 +29,11 @@ async function downloadSample(item: ImportFormatSample) {
     const blob = item.buildBlob
       ? await item.buildBlob()
       : new Blob([item.sampleText ?? ""], { type: item.mimeType });
-    const saved = await saveBlob(blob, item.fileName);
+    const saved = await saveGeneratedFile(blob, item.fileName);
 
     saveMessage.value = saved.saved
-      ? saved.method === "file-picker"
-        ? `示例文件已保存为 ${saved.fileName}。`
-        : "示例文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。"
-      : "示例文件保存已取消。";
+      ? `示例文件已保存为 ${saved.fileName}。`
+      : saved.reason;
   } catch (error) {
     saveError.value =
       error instanceof Error ? error.message : "示例文件保存失败。";

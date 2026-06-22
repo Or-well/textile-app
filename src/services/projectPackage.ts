@@ -25,6 +25,11 @@ export interface ExportedProjectPackage {
   blob: Blob;
 }
 
+export interface ProjectPackageExportOverrides {
+  project?: ProjectConfig;
+  members?: Member[];
+}
+
 export interface PackedProjectInfo {
   root: ProjectDirectoryHandle;
   fileName: string;
@@ -126,7 +131,7 @@ function normalizePackagePath(path: string): string {
   return parts.join("/");
 }
 
-function buildPackageFileName(project: ProjectConfig): string {
+export function getProjectPackageSuggestedFileName(project: ProjectConfig): string {
   const safeProjectId = project.project_id
     .trim()
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
@@ -763,6 +768,7 @@ async function collectDirectory(
 export async function exportProjectPackage(
   root: ProjectDirectoryHandle,
   actor: Member | null | undefined = getCurrentUser(),
+  overrides: ProjectPackageExportOverrides = {},
 ): Promise<ExportedProjectPackage> {
   if (!canProjectBackup(actor)) {
     throw new Error("Permission denied.");
@@ -772,11 +778,21 @@ export async function exportProjectPackage(
     throw new Error("当前项目缺少项目配置，无法导出为项目文件。");
   }
 
-  const project = await readJson<ProjectConfig>(root, "project.json");
+  const project =
+    overrides.project ?? await readJson<ProjectConfig>(root, "project.json");
   const files: ZipContent = {};
 
-  files["project.json"] = await readBinaryFile(root, "project.json");
-  await addFileIfExists(root, files, "members.json");
+  files["project.json"] = new TextEncoder().encode(
+    `${JSON.stringify(project, null, 2)}\n`,
+  );
+
+  if (overrides.members) {
+    files["members.json"] = new TextEncoder().encode(
+      `${JSON.stringify({ schema_version: 1, members: overrides.members }, null, 2)}\n`,
+    );
+  } else {
+    await addFileIfExists(root, files, "members.json");
+  }
 
   for (const directory of PACKED_PROJECT_DIRECTORIES) {
     await collectDirectory(root, files, directory);
@@ -785,7 +801,7 @@ export async function exportProjectPackage(
   const blob = await createZip(files);
 
   return {
-    fileName: buildPackageFileName(project),
+    fileName: getProjectPackageSuggestedFileName(project),
     blob,
   };
 }

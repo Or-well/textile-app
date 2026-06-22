@@ -43,6 +43,7 @@ export interface ReleaseExportOptions {
 export interface ExportProjectOptions extends Partial<ReleaseExportSettings> {
   format?: ReleaseExportFormat;
   exportedBy?: string;
+  exportedAt?: string;
 }
 
 export interface ExportAdapterContext {
@@ -492,6 +493,13 @@ export async function getReleaseExportSummary(
   return buildSummary(config, allEntries, exportEntries);
 }
 
+export function getReleaseExportSuggestedFileName(
+  projectId: string,
+  exportedAt = nowIso(),
+): string {
+  return `release-${projectId}-${utcDateKey(exportedAt)}.zip`;
+}
+
 export async function exportProject(
   options: ExportProjectOptions = {},
 ): Promise<ExportProjectResult> {
@@ -509,7 +517,7 @@ export async function exportProject(
   }
 
   const terms = await loadTermsForReport();
-  const exportedAt = nowIso();
+  const exportedAt = options.exportedAt ?? nowIso();
   const manifest = buildManifest(
     config,
     files,
@@ -527,7 +535,7 @@ export async function exportProject(
   };
 
   return {
-    fileName: `release-${config.project_id}-${utcDateKey(exportedAt)}.zip`,
+    fileName: getReleaseExportSuggestedFileName(config.project_id, exportedAt),
     blob: await generateReleaseZip(data),
     manifest,
     summary: buildSummary(config, allEntries, exportEntries),

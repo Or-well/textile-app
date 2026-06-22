@@ -48,7 +48,7 @@ import {
 } from "./history";
 import {
   getMemberSigningReadiness,
-  getSigningPrivateKeyForMember,
+  getUsableSigningPrivateKey,
   type SigningKeyReadiness,
 } from "./keyManager";
 import { projectRequiresSignedChangePackages } from "./collaboration";
@@ -94,6 +94,7 @@ export interface ExportChangePackageOptions {
   actor?: Member | null;
   projectUpdateMembers?: Member[];
   signatureMember?: Member;
+  createdAt?: string;
 }
 
 export interface ExportedChangePackage {
@@ -816,7 +817,8 @@ async function createSignature(
   manifest: ChangePackageManifest,
   signer?: Member,
 ): Promise<ChangePackageSignature | undefined> {
-  const privateKey = getSigningPrivateKeyForMember(manifest.user_id);
+  const privateKey =
+    signer?.id === manifest.user_id ? getUsableSigningPrivateKey(signer) : null;
 
   if (!privateKey || !manifest.content_hash) {
     return undefined;
@@ -1331,6 +1333,17 @@ function buildFileName(
   const scope = taskId ? taskId : packageType;
 
   return `changes-${userId}-${scope}-${date}.zip`;
+}
+
+export function getChangePackageSuggestedFileName(
+  userId: string,
+  options: Pick<ExportChangePackageOptions, "mode" | "taskId">,
+  createdAt = nowIso(),
+): string {
+  const packageType: ChangePackageType =
+    options.mode === "task_changes" ? "member_changes" : options.mode;
+
+  return buildFileName(userId, packageType, createdAt, options.taskId);
 }
 
 function getDirectoryPath(path: string): string {
@@ -2195,7 +2208,7 @@ export async function exportChangePackage(
   const storage = getProjectStorage();
   const project = await storage.readJson<ProjectConfig>("project.json");
   const actor = options.actor;
-  const createdAt = nowIso();
+  const createdAt = options.createdAt ?? nowIso();
   const baseRevision = getProjectRevision(project);
   const targetRevision =
     options.mode === "project_update"
@@ -3016,6 +3029,12 @@ function assertProjectUpdateCanApply(
     nextProject.project_id !== changePackage.manifest.project_id
   ) {
     throw new Error("项目更新包中的 project.json 与当前项目不匹配，不能导入。");
+  }
+
+  if ((nextProject.trust_epoch ?? 0) !== (currentProject.trust_epoch ?? 0)) {
+    throw new Error(
+      "项目更新包属于不同的项目信任代次，不能通过普通更新跨代接收。请获取负责人重新分发的可信 .hproj 项目备份。",
+    );
   }
 
   if (getProjectRevision(nextProject) !== changePackage.manifest.target_revision) {

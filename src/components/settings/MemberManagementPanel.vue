@@ -3,33 +3,41 @@ import { computed, reactive, ref, watch } from "vue";
 import { PERMISSION_ACTIONS } from "../../model/permissions";
 import type { Member, ProjectConfig, Role } from "../../model/types";
 import {
-  completeChangePackageExport,
   exportChangePackage,
+  getChangePackageSuggestedFileName,
+  type ExportChangePackageOptions,
 } from "../../services/changes";
 import {
   addMember,
-  addMemberWithGeneratedKey,
   canManageMember,
   canTransferOwner,
   changeOwnPassword,
-  commitPreparedOwnerTransfer,
+  commitPreparedMemberWithGeneratedKey,
   deleteMember,
   disableMember,
   enableMember,
+  prepareMemberWithGeneratedKey,
   prepareOwnerTransfer,
   resetMemberPassword,
   updateMemberRoles,
 } from "../../services/auth";
 import { hasLoadedPrivateKey, memberKeyFileToBlob } from "../../services/keyManager";
+import { verifyOwnerTransferKeyProof } from "../../services/keyManager";
 import { can, isOwnerMember } from "../../services/permissions";
 import type { ProjectDirectoryHandle } from "../../services/projectFs";
-import { saveBlob, saveBlobWithConfirmation } from "../../utils/saveBlob";
+import { commitSignedTrustTransition } from "../../services/signingTrustTransition";
+import {
+  saveGeneratedFile,
+  saveGeneratedFileFromFactory,
+} from "../../utils/saveBlob";
+import { nowIso } from "../../utils/time";
 import MemberDeletionDialog from "./MemberDeletionDialog.vue";
 
 const props = defineProps<{
   members: Member[];
   currentUser: Member | null;
   projectRoot?: ProjectDirectoryHandle;
+  project?: ProjectConfig | null;
   requireSignedChangePackages: boolean;
 }>();
 
@@ -68,6 +76,8 @@ const generateKeyForNewMember = ref(false);
 const oldPassword = ref("");
 const newPassword = ref("");
 const ownerTargetId = ref("");
+const ownerTransferProofMemberId = ref("");
+const ownerTransferProofKeyId = ref("");
 const roleDrafts = reactive<Record<string, Role[]>>({});
 const resetDrafts = reactive<Record<string, string>>({});
 const memberPendingDeletion = ref<Member | null>(null);
@@ -85,6 +95,71 @@ const canManageAnyMember = computed(
 const ownerTransferTargets = computed(() =>
   activeMembers.value.filter((member) => !isOwnerMember(member)),
 );
+const selectedOwnerTransferTarget = computed(() =>
+  props.members.find((member) => member.id === ownerTargetId.value),
+);
+const ownerTransferProofStatus = computed(() => {
+  const target = selectedOwnerTransferTarget.value;
+
+  if (!ownerTransferProofMemberId.value || !ownerTransferProofKeyId.value) {
+    return "未导入交接证明";
+  }
+
+  if (
+    target &&
+    ownerTransferProofMemberId.value === target.id &&
+    ownerTransferProofKeyId.value === target.key_id
+  ) {
+    return `已导入：${target.name} / ${ownerTransferProofKeyId.value}`;
+  }
+
+  return "已导入交接证明，但与当前选择的新负责人不匹配";
+});
+const ownerTransferBlockReason = computed(() => {
+  if (isWorking.value) {
+    return "成员操作正在处理，请稍后再试。";
+  }
+
+  if (!canTransferOwner(props.currentUser)) {
+    return "只有当前项目负责人可以转让负责人。";
+  }
+
+  if (!props.projectRoot) {
+    return "请先打开项目文件夹，才能转让负责人。";
+  }
+
+  if (ownerTransferTargets.value.length === 0) {
+    return "当前没有可转让的启用成员。";
+  }
+
+  if (!ownerTargetId.value) {
+    return "请选择新的项目负责人。";
+  }
+
+  const target = selectedOwnerTransferTarget.value;
+
+  if (!target) {
+    return "没有找到新的项目负责人。";
+  }
+
+  if (!target.public_key || !target.key_id || target.key_revoked_at) {
+    return "新的项目负责人还没有有效身份公钥。请先在身份密钥页面登记该成员公钥，并确认该成员已保存对应私钥。";
+  }
+
+  if (
+    ownerTransferProofMemberId.value !== target.id ||
+    ownerTransferProofKeyId.value !== target.key_id
+  ) {
+    return "请导入由新负责人当前私钥生成、绑定当前项目版本的负责人交接证明。";
+  }
+
+  if (!props.currentUser || !hasLoadedPrivateKey(props.currentUser)) {
+    return "请先在身份密钥页面导入当前负责人的私钥，用旧负责人身份签名过渡项目更新包。";
+  }
+
+  return "";
+});
+const canStartOwnerTransfer = computed(() => ownerTransferBlockReason.value === "");
 
 function getRoot(): ProjectDirectoryHandle {
   if (!props.projectRoot) {
@@ -100,6 +175,56 @@ function getActor(): Member {
   }
 
   return props.currentUser;
+}
+
+function getProject(): ProjectConfig {
+  if (!props.project) {
+    throw new Error("当前项目配置不可用。");
+  }
+
+  return props.project;
+}
+
+function getProjectRevision(): string {
+  const project = getProject();
+
+  return project.revision || project.revision_hash || `schema-${project.schema_version}`;
+}
+
+async function handleOwnerTransferProof(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  clearAlerts();
+
+  try {
+    const target = selectedOwnerTransferTarget.value;
+
+    if (!target) {
+      throw new Error("请先选择新的项目负责人。");
+    }
+
+    const proof = await verifyOwnerTransferKeyProof(
+      await file.text(),
+      target,
+      getProject().project_id,
+      getProjectRevision(),
+    );
+    ownerTransferProofMemberId.value = proof.member_id;
+    ownerTransferProofKeyId.value = proof.key_id;
+    message.value = `已验证 ${target.name} 的负责人交接证明。`;
+  } catch (error) {
+    ownerTransferProofMemberId.value = "";
+    ownerTransferProofKeyId.value = "";
+    errorMessage.value =
+      error instanceof Error ? error.message : "负责人交接证明验证失败。";
+  } finally {
+    input.value = "";
+  }
 }
 
 function roleText(member: Member): string {
@@ -178,28 +303,33 @@ async function runMemberAction(
 async function handleAddMember() {
   isWorking.value = true;
   clearAlerts();
+  let memberAdded = false;
 
   try {
     if (props.requireSignedChangePackages && generateKeyForNewMember.value) {
-      const result = await addMemberWithGeneratedKey(
-        getRoot(),
+      const root = getRoot();
+      const actor = getActor();
+      const prepared = await prepareMemberWithGeneratedKey(
         props.members,
-        getActor(),
+        actor,
         {
           name: newMemberName.value,
           roles: newMemberRoles.value,
           password: newMemberPassword.value,
         },
       );
-      const keyBlob = memberKeyFileToBlob(result.keyFile);
-      const saved = await saveBlob(keyBlob.blob, keyBlob.fileName);
+      const keyBlob = memberKeyFileToBlob(prepared.keyFile);
+      const saved = await saveGeneratedFile(keyBlob.blob, keyBlob.fileName);
 
+      if (!saved.saved) {
+        message.value = `${saved.reason} 成员尚未新增，项目中没有登记这把公钥。`;
+        return;
+      }
+
+      const result = await commitPreparedMemberWithGeneratedKey(root, prepared, actor);
       emit("membersUpdated", result.members);
-      message.value = saved.saved
-        ? saved.method === "file-picker"
-          ? `成员已新增，私钥文件已保存为 ${saved.fileName}。请安全交给该成员本人。`
-          : "成员已新增，私钥文件下载已开始。请在浏览器下载列表或系统“下载”文件夹中确认保存结果，并安全交给该成员本人。"
-        : "成员已新增并登记公钥，但私钥文件保存已取消。该成员不能使用这把公钥签名，请撤销后重新生成或让成员自行登记公钥。";
+      message.value = `成员已新增，私钥文件已保存为 ${saved.fileName}。请安全交给该成员本人。`;
+      memberAdded = true;
     } else {
       const members = await addMember(getRoot(), props.members, getActor(), {
         name: newMemberName.value,
@@ -209,6 +339,7 @@ async function handleAddMember() {
 
       emit("membersUpdated", members);
       message.value = "成员已新增。请把初始密码告知该成员。";
+      memberAdded = true;
     }
   } catch (error) {
     errorMessage.value =
@@ -217,7 +348,7 @@ async function handleAddMember() {
     isWorking.value = false;
   }
 
-  if (!errorMessage.value) {
+  if (memberAdded) {
     newMemberName.value = "";
     newMemberPassword.value = "";
     newMemberRoles.value = ["translator"];
@@ -375,34 +506,60 @@ async function handleTransferOwner() {
       actor,
       ownerTargetId.value,
     );
-    const exported = await exportChangePackage(transfer.previousOwner.id, {
+    const createdAt = nowIso();
+    const exportOptions: ExportChangePackageOptions = {
       mode: "project_update",
       sign: true,
       actor: transfer.previousOwner,
       projectUpdateMembers: transfer.members,
       signatureMember: transfer.previousOwner,
-    });
-    const saved = await saveBlobWithConfirmation(
-      exported.blob,
-      exported.fileName,
-      "下载已经开始。请确认负责人转让项目更新包已经保存到电脑；只有确认后，Textile 才会完成本地主项目的负责人转让。",
+      createdAt,
+    };
+    let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
+    const saved = await saveGeneratedFileFromFactory(
+      getChangePackageSuggestedFileName(
+        transfer.previousOwner.id,
+        exportOptions,
+        createdAt,
+      ),
+      async () => {
+        exported = await exportChangePackage(
+          transfer.previousOwner.id,
+          exportOptions,
+        );
+
+        return exported.blob;
+      },
     );
 
-    if (!saved) {
-      message.value = "负责人转让项目更新包尚未确认保存，当前项目负责人没有变化。";
+    if (!saved.saved) {
+      message.value = `${saved.reason} 当前项目负责人没有变化。`;
       return;
     }
 
-    const updatedProject = await completeChangePackageExport(exported);
-    const members = await commitPreparedOwnerTransfer(root, transfer, actor);
-
-    if (updatedProject) {
-      emit("projectUpdated", updatedProject);
+    if (!exported) {
+      throw new Error("负责人交接过渡包没有生成。");
     }
 
-    emit("membersUpdated", members);
+    const transition = await commitSignedTrustTransition(
+      root,
+      exported,
+      transfer.members,
+      actor,
+      "member.owner_transferred",
+      {
+        previous_owner_id: actor.id,
+        new_owner_id: transfer.newOwner.id,
+        new_owner_key_id: transfer.newOwner.key_id ?? "",
+      },
+    );
+
+    emit("projectUpdated", transition.project);
+    emit("membersUpdated", transition.members);
+    ownerTransferProofMemberId.value = "";
+    ownerTransferProofKeyId.value = "";
     message.value =
-      "项目负责人已转让。请把刚才生成的项目更新包分发给成员；成员接收后才能验证新负责人后续发布的项目更新包。";
+      `项目负责人已转让。过渡包已归档到 ${transition.archivePath}，请分发给成员。`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "成员管理操作失败。请稍后再试。";
@@ -424,6 +581,11 @@ watch(
   },
   { immediate: true },
 );
+
+watch(ownerTargetId, () => {
+  ownerTransferProofMemberId.value = "";
+  ownerTransferProofKeyId.value = "";
+});
 </script>
 
 <template>
@@ -635,7 +797,7 @@ watch(
       </header>
 
       <div class="owner-transfer">
-        <label>
+        <label class="owner-transfer-target">
           <span>新的项目负责人</span>
           <select
             v-model="ownerTargetId"
@@ -650,14 +812,43 @@ watch(
             </option>
           </select>
         </label>
+        <label
+          class="file-button owner-transfer-proof-button"
+          :class="{ disabled: isWorking || !ownerTargetId }"
+        >
+          <span>导入交接证明</span>
+          <input
+            type="file"
+            accept=".json,application/json"
+            :disabled="isWorking || !ownerTargetId"
+            @change="handleOwnerTransferProof"
+          />
+        </label>
         <button
-          class="danger-button"
+          class="danger-button owner-transfer-submit"
           type="button"
-          :disabled="isWorking || !ownerTargetId || !canTransferOwner(props.currentUser)"
+          :disabled="!canStartOwnerTransfer"
           @click="handleTransferOwner"
         >
-          转让负责人
+          {{ isWorking ? "正在准备转让..." : "转让负责人" }}
         </button>
+        <p
+          class="owner-transfer-proof-status"
+          :class="{
+            valid:
+              selectedOwnerTransferTarget &&
+              ownerTransferProofMemberId === selectedOwnerTransferTarget.id &&
+              ownerTransferProofKeyId === selectedOwnerTransferTarget.key_id,
+          }"
+        >
+          {{ ownerTransferProofStatus }}
+        </p>
+        <p
+          v-if="ownerTransferBlockReason"
+          class="owner-transfer-note"
+        >
+          {{ ownerTransferBlockReason }}
+        </p>
       </div>
     </section>
 
@@ -728,12 +919,22 @@ label span {
   color: #b42318;
 }
 
-.inline-form,
-.owner-transfer {
+.inline-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   gap: 12px;
   align-items: end;
+}
+
+.owner-transfer {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto auto;
+  gap: 10px 12px;
+  align-items: end;
+}
+
+.owner-transfer-target {
+  min-width: 0;
 }
 
 label {
@@ -823,6 +1024,29 @@ select:disabled {
   line-height: 1.6;
 }
 
+.owner-transfer-note {
+  grid-column: 1 / -1;
+  padding: 9px 11px;
+  border: 1px solid #ead7d2;
+  border-radius: 6px;
+  background: #fffafa;
+  color: #b42318;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.owner-transfer-proof-status {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.owner-transfer-proof-status.valid {
+  color: #166534;
+}
+
 .role-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
@@ -863,7 +1087,11 @@ select:disabled {
 
 .primary-button,
 .secondary-button,
-.danger-button {
+.danger-button,
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 38px;
   padding: 0 12px;
   border-radius: 6px;
@@ -873,13 +1101,24 @@ select:disabled {
   cursor: pointer;
 }
 
+.owner-transfer-proof-button {
+  width: auto;
+  min-width: 150px;
+  white-space: nowrap;
+}
+
+.owner-transfer-submit {
+  white-space: nowrap;
+}
+
 .primary-button {
   border: 1px solid #2f6f73;
   background: #2f6f73;
   color: #ffffff;
 }
 
-.secondary-button {
+.secondary-button,
+.file-button {
   border: 1px solid #c8d0dc;
   background: #ffffff;
   color: #1f2937;
@@ -891,15 +1130,25 @@ select:disabled {
   color: #ffffff;
 }
 
-button:disabled {
+button:disabled,
+.file-button.disabled {
   cursor: not-allowed;
   opacity: 0.62;
+}
+
+.file-button input {
+  display: none;
 }
 
 @media (max-width: 760px) {
   .inline-form,
   .owner-transfer {
     grid-template-columns: 1fr;
+  }
+
+  .owner-transfer-proof-button,
+  .owner-transfer-submit {
+    width: 100%;
   }
 
   .reset-field {

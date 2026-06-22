@@ -35,7 +35,7 @@ import {
   compareInstants,
   formatDateTime,
 } from "../utils/time";
-import { saveBlob } from "../utils/saveBlob";
+import { saveGeneratedFile } from "../utils/saveBlob";
 
 type SortKey = "name" | "updated" | "translated" | "proofread" | "reviewed";
 type FileFilter = "visible" | "all" | "hidden" | "locked" | "disputed";
@@ -427,13 +427,11 @@ async function handleExportExchange(
       format,
       props.currentUser,
     );
-    const saved = await saveBlob(result.blob, result.fileName);
+    const saved = await saveGeneratedFile(result.blob, result.fileName);
 
     noticeMessage.value = saved.saved
-      ? saved.method === "file-picker"
-        ? `已保存词条交换文件：${saved.fileName}（${result.entryCount} 条）。`
-        : `词条交换文件下载已开始（${result.entryCount} 条）。请在浏览器下载列表或系统“下载”文件夹中确认保存结果。`
-      : "词条交换文件保存已取消。";
+      ? `已保存词条交换文件：${saved.fileName}（${result.entryCount} 条）。`
+      : saved.reason;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导出词条交换文件失败。";

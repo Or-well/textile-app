@@ -30,7 +30,11 @@
       "password_salt": "CU5oa93mziB2ufIXq7Ki8g==",
       "password_updated_at": "2026-06-20T16:46:00.810Z",
       "created_at": "2026-06-19T00:00:00.000Z",
-      "updated_at": "2026-06-20T16:46:00.810Z"
+      "updated_at": "2026-06-22T11:20:00.329Z",
+      "public_key": "{\"crv\":\"P-256\",\"ext\":true,\"key_ops\":[\"verify\"],\"kty\":\"EC\",\"x\":\"YkXuOScohtBYf2OhYxDKPxQGXNSuME5aCWCh4_L7qu4\",\"y\":\"OeYxl4bBC_ApvhZChR6hiiUzWexUEa9raTyriRqH4sU\"}",
+      "key_id": "key_57e98a9b88517765",
+      "key_created_at": "2026-06-22T11:20:00.329Z",
+      "key_revoked_at": ""
     },
     {
       "id": "leader",
@@ -49,10 +53,10 @@
       "password_salt": "dGV4dGlsZS1zYWx0LWxlYWRlcg==",
       "password_updated_at": "2026-06-19T00:00:00.000Z",
       "created_at": "2026-06-19T00:00:00.000Z",
-      "updated_at": "2026-06-21T11:41:51.970Z",
-      "public_key": "{\"crv\":\"P-256\",\"ext\":true,\"key_ops\":[\"verify\"],\"kty\":\"EC\",\"x\":\"Jur81-vUY1rIPQ6W8umuqXouvTLWgTmfZvJRyNK8QvU\",\"y\":\"vpo7lYXn4jGrReRZyPjsOmXpK3_PAXhVOx8Cgn0Oxlw\"}",
-      "key_id": "key_7b7b8c7037260578",
-      "key_created_at": "2026-06-21T11:41:51.970Z",
+      "updated_at": "2026-06-22T06:32:32.314Z",
+      "public_key": "{\"crv\":\"P-256\",\"ext\":true,\"key_ops\":[\"verify\"],\"kty\":\"EC\",\"x\":\"zwvblyJmIH6kCRIDOZs4cw5JFkNZy6jO3rJyVjqHmpA\",\"y\":\"yn7AKS64pgyHojzqc93wnVY0Dl5oRIF-UPx3B2hY7y4\"}",
+      "key_id": "key_30d9c7a9746b2ed0",
+      "key_created_at": "2026-06-22T06:32:32.314Z",
       "key_revoked_at": ""
     }
   ]
