@@ -1,4 +1,4 @@
-import type { Entry, ProjectConfig } from "../model/types";
+import type { Entry, ProjectConfig, TaskType } from "../model/types";
 import {
   hasWorkflowTarget,
   isEntryProofreadComplete,
@@ -28,6 +28,12 @@ export interface BasicProjectStats {
   progressWeights: ProgressWeights;
   proofreadRequired: number;
   reviewRequired: boolean;
+}
+
+export interface TaskTypeProgress {
+  progressAvailable: boolean;
+  completedEntries: number;
+  progressPercent: number;
 }
 
 type ProgressWeightInput = ProjectConfig["settings"]["progress_weights"];
@@ -151,6 +157,40 @@ export function calculateEntryProgress(
     progressWeights,
     proofreadRequired: workflowSettings.proofread_required,
     reviewRequired: workflowSettings.review_required,
+  };
+}
+
+export function calculateTaskTypeProgress(
+  entries: Entry[],
+  taskType: TaskType,
+  workflow?: WorkflowInput,
+): TaskTypeProgress {
+  const rows = normalizeEntries(entries);
+  const workflowSettings = normalizeWorkflowSettings(workflow);
+  const totalEntries = rows.length;
+  let completedEntries = 0;
+
+  if (taskType === "translate") {
+    completedEntries = rows.filter((entry) => hasWorkflowTarget(entry)).length;
+  } else if (taskType === "proofread") {
+    completedEntries = rows.filter((entry) =>
+      isEntryProofreadComplete(entry, workflowSettings),
+    ).length;
+  } else if (taskType === "review") {
+    completedEntries = rows.filter((entry) => entry.status === "reviewed").length;
+  } else {
+    return {
+      progressAvailable: false,
+      completedEntries: 0,
+      progressPercent: 0,
+    };
+  }
+
+  return {
+    progressAvailable: true,
+    completedEntries,
+    progressPercent:
+      totalEntries === 0 ? 0 : toPercent(completedEntries / totalEntries),
   };
 }
 

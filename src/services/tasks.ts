@@ -19,7 +19,11 @@ import {
   normalizeInstant,
   nowIso,
 } from "../utils/time";
-import { calculateEntryProgress, type ProgressWeights } from "./stats";
+import {
+  calculateEntryProgress,
+  calculateTaskTypeProgress,
+  type ProgressWeights,
+} from "./stats";
 import {
   canAssignTask,
   canCompleteTask,
@@ -40,6 +44,7 @@ import {
 
 export interface TaskProgress {
   taskId: string;
+  progressAvailable: boolean;
   totalEntries: number;
   completedEntries: number;
   untranslatedEntries: number;
@@ -61,6 +66,20 @@ export interface TaskFileEntryBounds {
   totalEntries: number;
   firstIndex: number;
   lastIndex: number;
+}
+
+export interface TaskFilesEntrySummary {
+  fileCount: number;
+  totalEntries: number;
+  files: TaskFileEntryBounds[];
+}
+
+export interface TaskOpenTarget {
+  fileId: string;
+  fileName: string;
+  entryId: string;
+  entryIndex: number;
+  entryCount: number;
 }
 
 export interface TaskDraft {
@@ -523,6 +542,47 @@ export async function getTaskFileEntryBounds(
   };
 }
 
+export async function getTaskFilesEntrySummary(
+  fileIds: string[],
+): Promise<TaskFilesEntrySummary> {
+  const uniqueFileIds = Array.from(
+    new Set(fileIds.map((fileId) => fileId.trim()).filter(Boolean)),
+  );
+  const files = await Promise.all(
+    uniqueFileIds.map((fileId) => getTaskFileEntryBounds(fileId)),
+  );
+
+  return {
+    fileCount: files.length,
+    totalEntries: files.reduce(
+      (total, file) => total + file.totalEntries,
+      0,
+    ),
+    files,
+  };
+}
+
+export async function resolveTaskRangeEntryIds(
+  fileIds: string[],
+  rangeStart: number,
+  rangeEnd: number,
+): Promise<string[]> {
+  const uniqueFileIds = Array.from(
+    new Set(fileIds.map((fileId) => fileId.trim()).filter(Boolean)),
+  );
+  const entryGroups = await Promise.all(
+    uniqueFileIds.map((fileId) => loadEntriesForFile(fileId)),
+  );
+  const entries = entryGroups.flat();
+  const start = Math.max(1, Math.floor(rangeStart));
+  const end = Math.min(
+    entries.length,
+    Math.max(start, Math.floor(rangeEnd)),
+  );
+
+  return entries.slice(start - 1, end).map((entry) => entry.id);
+}
+
 export function isEntryInTask(entry: Entry, task: Task): boolean {
   if (task.entry_ids.length > 0) {
     return task.entry_ids.includes(entry.id);
@@ -568,11 +628,69 @@ export async function getTaskProgress(taskId: string): Promise<TaskProgress> {
     project.settings?.progress_weights,
     getTaskWorkflow(project, task),
   );
+  const taskProgress = calculateTaskTypeProgress(
+    entries,
+    task.type,
+    getTaskWorkflow(project, task),
+  );
 
   return {
     taskId,
     ...progress,
+    ...taskProgress,
   };
+}
+
+export async function getTaskOpenTargets(
+  taskId: string,
+): Promise<TaskOpenTarget[]> {
+  const task = await getTaskById(taskId);
+
+  if (!task) {
+    throw new Error("没有找到这个任务。请重新打开项目后再试。");
+  }
+
+  const [project, entries] = await Promise.all([
+    loadProjectConfig(),
+    loadEntriesForTask(task),
+  ]);
+  const fileOrder = new Map(
+    project.files.map((file, index) => [file.id, index]),
+  );
+  const fileNames = new Map(
+    project.files.map((file) => [file.id, file.name]),
+  );
+  const groupedEntries = new Map<string, Entry[]>();
+
+  for (const entry of entries) {
+    const fileEntries = groupedEntries.get(entry.file_id) ?? [];
+    fileEntries.push(entry);
+    groupedEntries.set(entry.file_id, fileEntries);
+  }
+
+  return [...groupedEntries.entries()]
+    .map(([fileId, fileEntries]) => {
+      const sortedEntries = [...fileEntries].sort(
+        (left, right) =>
+          left.index - right.index || left.id.localeCompare(right.id),
+      );
+      const firstEntry = sortedEntries[0];
+
+      return {
+        fileId,
+        fileName: fileNames.get(fileId) ?? fileId,
+        entryId: firstEntry?.id ?? "",
+        entryIndex: firstEntry?.index ?? 0,
+        entryCount: sortedEntries.length,
+      };
+    })
+    .filter((target) => target.entryId)
+    .sort(
+      (left, right) =>
+        (fileOrder.get(left.fileId) ?? Number.MAX_SAFE_INTEGER) -
+          (fileOrder.get(right.fileId) ?? Number.MAX_SAFE_INTEGER) ||
+        left.fileName.localeCompare(right.fileName),
+    );
 }
 
 function mergeTaskPatch(task: Task, patch: TaskPatch): Task {

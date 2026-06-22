@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useAppDraft } from "../composables/useAppDraft";
 import { buildMemberOptions } from "../model/memberOptions";
+import { TASK_TYPE_OPTIONS } from "../model/taskPresentation";
 import type {
   Member,
   ProjectConfig,
@@ -12,9 +13,10 @@ import type {
   TaskType,
 } from "../model/types";
 import {
-  getTaskFileEntryBounds,
+  getTaskFilesEntrySummary,
+  resolveTaskRangeEntryIds,
   type TaskDraft,
-  type TaskFileEntryBounds,
+  type TaskFilesEntrySummary,
 } from "../services/tasks";
 import {
   formatDateTimeLocalInput,
@@ -38,14 +40,6 @@ const emit = defineEmits<{
   close: [];
   save: [draft: TaskDraft];
 }>();
-
-const taskTypes: Array<{ value: TaskType; label: string }> = [
-  { value: "translate", label: "翻译" },
-  { value: "proofread", label: "校对" },
-  { value: "review", label: "审校" },
-  { value: "term", label: "术语" },
-  { value: "custom", label: "自定义" },
-];
 
 const taskStatuses: Array<{ value: TaskStatus; label: string }> = [
   { value: "unassigned", label: "未分配" },
@@ -79,9 +73,10 @@ const form = reactive({
   due_disambiguation: "earlier" as Exclude<DateTimeDisambiguation, "reject">,
 });
 const timeZoneOptions = getSupportedTimeZones();
-const fileEntryBounds = ref<TaskFileEntryBounds>();
-const isLoadingFileBounds = ref(false);
+const filesEntrySummary = ref<TaskFilesEntrySummary>();
+const isLoadingFileSummary = ref(false);
 const boundsErrorMessage = ref("");
+const scopeErrorMessage = ref("");
 const dueErrorMessage = ref("");
 const hasLegacyDueAt = ref(false);
 const initialFormSnapshot = ref("");
@@ -99,35 +94,43 @@ const proofreadRoundOptions = computed(() => {
 
   return [1, 2, 3].filter((round) => round <= maxRound) as ProofreadRequired[];
 });
-const lastEntryLabel = computed(() => {
-  if (!form.file_id) {
-    return "未关联文件";
+const selectedFilesLabel = computed(() => {
+  if (form.file_ids.length === 0) {
+    return "未选择文件";
   }
 
-  if (isLoadingFileBounds.value) {
-    return "正在读取最后一条...";
+  if (isLoadingFileSummary.value) {
+    return `已选 ${form.file_ids.length} 个文件，正在统计...`;
   }
 
   if (boundsErrorMessage.value) {
     return boundsErrorMessage.value;
   }
 
-  if (!fileEntryBounds.value || fileEntryBounds.value.totalEntries === 0) {
-    return "暂无词条";
+  const summary = filesEntrySummary.value;
+
+  if (!summary || summary.totalEntries === 0) {
+    return `已选 ${form.file_ids.length} 个文件，共 0 条`;
   }
 
-  return `最后一条：${fileEntryBounds.value.lastIndex}`;
+  return `已选 ${summary.fileCount} 个文件，共 ${summary.totalEntries} 条`;
 });
+const explicitEntryIds = computed(() =>
+  form.entry_ids_text
+    .split(/[\n,，\s]+/)
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 const canSaveTask = computed(() => {
   if (!form.title.trim()) {
     return false;
   }
 
-  if (props.mode === "edit") {
+  if (explicitEntryIds.value.length > 0 || form.file_ids.length === 0) {
     return true;
   }
 
-  return !form.file_id || Boolean(fileEntryBounds.value?.lastIndex);
+  return Boolean(filesEntrySummary.value?.totalEntries);
 });
 const currentFormSnapshot = computed(() => JSON.stringify(form));
 const dueCandidates = computed(() => {
@@ -185,48 +188,61 @@ function syncForm() {
 async function initializeForm() {
   isInitializingForm.value = true;
   syncForm();
-  await refreshFileEntryBounds();
+  await refreshFilesEntrySummary(false);
+  if (
+    props.mode === "create" ||
+    (props.task?.file_ids?.length && props.task.entry_ids.length === 0)
+  ) {
+    setFullSelectedRange();
+  }
   initialFormSnapshot.value = currentFormSnapshot.value;
   isInitializingForm.value = false;
 }
 
-async function refreshFileEntryBounds() {
-  const fileId = form.file_id;
+function setFullSelectedRange() {
+  const totalEntries = filesEntrySummary.value?.totalEntries ?? 0;
 
-  fileEntryBounds.value = undefined;
+  if (totalEntries > 0) {
+    form.range_start = 1;
+    form.range_end = totalEntries;
+  }
+}
+
+async function refreshFilesEntrySummary(resetRange: boolean) {
+  const fileIds = [...form.file_ids];
+
+  filesEntrySummary.value = undefined;
   boundsErrorMessage.value = "";
 
-  if (!fileId) {
+  if (fileIds.length === 0) {
     return;
   }
 
-  isLoadingFileBounds.value = true;
+  isLoadingFileSummary.value = true;
 
   try {
-    const bounds = await getTaskFileEntryBounds(fileId);
+    const summary = await getTaskFilesEntrySummary(fileIds);
 
-    if (form.file_id !== fileId) {
+    if (form.file_ids.join("\0") !== fileIds.join("\0")) {
       return;
     }
 
-    fileEntryBounds.value = bounds;
-
-    if (props.mode === "create" && bounds.lastIndex > 0) {
-      form.range_start = bounds.firstIndex || 1;
-      form.range_end = bounds.lastIndex;
+    filesEntrySummary.value = summary;
+    if (resetRange) {
+      setFullSelectedRange();
     }
   } catch {
-    if (form.file_id === fileId) {
-      boundsErrorMessage.value = "无法读取最后一条";
+    if (form.file_ids.join("\0") === fileIds.join("\0")) {
+      boundsErrorMessage.value = "无法读取所选文件词条";
     }
   } finally {
-    if (form.file_id === fileId) {
-      isLoadingFileBounds.value = false;
+    if (form.file_ids.join("\0") === fileIds.join("\0")) {
+      isLoadingFileSummary.value = false;
     }
   }
 }
 
-function handleSubmit() {
+async function handleSubmit() {
   const title = form.title.trim();
 
   if (!title || !canSaveTask.value) {
@@ -234,8 +250,10 @@ function handleSubmit() {
   }
 
   let dueAt = "";
+  let entryIds = explicitEntryIds.value;
 
   dueErrorMessage.value = "";
+  scopeErrorMessage.value = "";
 
   try {
     dueAt = form.due_local
@@ -251,18 +269,47 @@ function handleSubmit() {
     return;
   }
 
+  const totalEntries = filesEntrySummary.value?.totalEntries ?? 0;
+  const rangeStart =
+    totalEntries > 0
+      ? Math.min(totalEntries, Math.max(1, Number(form.range_start) || 1))
+      : 1;
+  const rangeEnd = Math.min(
+    totalEntries,
+    Math.max(rangeStart, Number(form.range_end) || rangeStart),
+  );
+
+  if (
+    entryIds.length === 0 &&
+    form.file_ids.length > 0 &&
+    totalEntries > 0 &&
+    (rangeStart !== 1 || rangeEnd !== totalEntries)
+  ) {
+    try {
+      entryIds = await resolveTaskRangeEntryIds(
+        form.file_ids,
+        rangeStart,
+        rangeEnd,
+      );
+      if (entryIds.length === 0) {
+        scopeErrorMessage.value = "所选范围内没有词条，请调整起止词条。";
+        return;
+      }
+    } catch {
+      scopeErrorMessage.value = "无法解析所选文件范围，请重新选择后再试。";
+      return;
+    }
+  }
+
   emit("save", {
     title,
     description: form.description.trim(),
     type: form.type,
     file_id: form.file_ids.length === 1 ? form.file_ids[0] : "",
     file_ids: form.file_ids,
-    range_start: Number(form.range_start) || 1,
-    range_end: Number(form.range_end) || Number(form.range_start) || 1,
-    entry_ids: form.entry_ids_text
-      .split(/[\n,，\s]+/)
-      .map((id) => id.trim())
-      .filter(Boolean),
+    range_start: rangeStart,
+    range_end: rangeEnd || rangeStart,
+    entry_ids: entryIds,
     assignee: props.mode === "edit" ? form.assignee : "",
     status: props.mode === "edit" ? form.status : undefined,
     target: form.target.trim(),
@@ -285,18 +332,12 @@ watch(
 );
 
 watch(
-  () => form.file_id,
-  () => {
-    if (props.open && !isInitializingForm.value) {
-      void refreshFileEntryBounds();
-    }
-  },
-);
-
-watch(
   () => form.file_ids,
   () => {
     form.file_id = form.file_ids.length === 1 ? form.file_ids[0] : "";
+    if (props.open && !isInitializingForm.value) {
+      void refreshFilesEntrySummary(true);
+    }
   },
   { deep: true },
 );
@@ -330,7 +371,7 @@ watch(
           <label>
             <span>类型</span>
             <select v-model="form.type">
-              <option v-for="item in taskTypes" :key="item.value" :value="item.value">
+              <option v-for="item in TASK_TYPE_OPTIONS" :key="item.value" :value="item.value">
                 {{ item.label }}
               </option>
             </select>
@@ -345,14 +386,18 @@ watch(
             </select>
           </label>
 
-          <label>
-            <span>文件</span>
-            <select v-model="form.file_ids" multiple size="5">
-              <option v-for="file in project.files" :key="file.id" :value="file.id">
-                {{ file.name }}
-              </option>
-            </select>
-          </label>
+          <fieldset class="file-field wide-field">
+            <legend>
+              <span>文件</span>
+              <small>{{ selectedFilesLabel }}</small>
+            </legend>
+            <div class="file-options">
+              <label v-for="file in project.files" :key="file.id" class="file-option">
+                <input v-model="form.file_ids" type="checkbox" :value="file.id" />
+                <span>{{ file.name }}</span>
+              </label>
+            </div>
+          </fieldset>
 
           <label v-if="mode === 'edit'">
             <span>成员</span>
@@ -371,19 +416,23 @@ watch(
 
           <label>
             <span>起始词条</span>
-            <input v-model.number="form.range_start" min="1" type="number" />
+            <input
+              v-model.number="form.range_start"
+              min="1"
+              type="number"
+              :max="filesEntrySummary?.totalEntries || undefined"
+              :disabled="explicitEntryIds.length > 0"
+            />
           </label>
 
           <label>
-            <span class="range-label">
-              <span>结束词条</span>
-              <small>{{ lastEntryLabel }}</small>
-            </span>
+            <span>结束词条</span>
             <input
               v-model.number="form.range_end"
               min="1"
               type="number"
-              :max="fileEntryBounds?.lastIndex || undefined"
+              :max="filesEntrySummary?.totalEntries || undefined"
+              :disabled="explicitEntryIds.length > 0"
             />
           </label>
 
@@ -444,6 +493,7 @@ watch(
           旧任务未记录截止时区。保存时将按上方时区转换为 UTC。
         </p>
         <p v-if="dueErrorMessage" class="error-message">{{ dueErrorMessage }}</p>
+        <p v-if="scopeErrorMessage" class="error-message">{{ scopeErrorMessage }}</p>
 
         <label class="wide-field">
           <span>指定词条编号</span>
@@ -452,6 +502,7 @@ watch(
             rows="2"
             placeholder="每行一个词条编号；留空时使用文件范围"
           />
+          <small>填写后将优先使用这些词条编号，起止范围暂不生效。</small>
         </label>
 
         <footer class="dialog-actions">
@@ -530,6 +581,7 @@ h2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+  align-items: start;
 }
 
 label {
@@ -542,17 +594,63 @@ label span {
   font-size: 13px;
 }
 
-.range-label {
+.file-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.file-field legend {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 0;
 }
 
-.range-label small {
+.file-field legend small {
   color: #2f6f73;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
+}
+
+.file-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 2px 12px;
+  height: 132px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.file-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+}
+
+.file-option input {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+}
+
+.file-option span {
+  overflow: hidden;
+  color: #172033;
+  font-size: 14px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -560,7 +658,7 @@ label span {
   grid-column: 1 / -1;
 }
 
-input,
+input:not([type="checkbox"]),
 select,
 textarea {
   width: 100%;
@@ -571,6 +669,22 @@ textarea {
   background: #ffffff;
   color: #172033;
   font: inherit;
+}
+
+input:not([type="checkbox"]),
+select {
+  height: 40px;
+}
+
+input:disabled {
+  background: #f2f4f7;
+  color: #7a8493;
+}
+
+.wide-field small {
+  color: #5b6472;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 textarea {
@@ -633,6 +747,10 @@ textarea {
 
 @media (max-width: 720px) {
   .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .file-options {
     grid-template-columns: 1fr;
   }
 }

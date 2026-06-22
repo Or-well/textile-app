@@ -4,6 +4,7 @@ import {
   buildMemberOptions,
   getMemberDisplayName,
 } from "../model/memberOptions";
+import { getTaskTypeLabel } from "../model/taskPresentation";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
 import {
@@ -52,14 +53,6 @@ const statusLabels: Record<Task["status"], string> = {
   completed: "已完成",
 };
 
-const typeLabels: Record<Task["type"], string> = {
-  translate: "翻译",
-  proofread: "校对",
-  review: "审校",
-  term: "术语",
-  custom: "自定义",
-};
-
 const submitMethodLabels: Record<Task["submit_method"], string> = {
   change_package: "导出修改包",
   owner_manual: "由负责人处理",
@@ -100,7 +93,7 @@ const taskSummary = computed(() => {
     return "";
   }
 
-  return `${typeLabels[props.task.type]} · ${statusLabels[props.task.status]} · ${assigneeName.value}`;
+  return `${getTaskTypeLabel(props.task.type)} · ${statusLabels[props.task.status]} · ${assigneeName.value}`;
 });
 
 const dueAtText = computed(() => {
@@ -211,7 +204,7 @@ watch(
       </section>
 
       <button
-        v-if="task.file_id"
+        v-if="task.file_id || task.file_ids?.length || task.entry_ids.length"
         class="secondary-button open-entry-button"
         type="button"
         @click="emit('openTarget', task)"
@@ -219,9 +212,9 @@ watch(
         打开关联词条
       </button>
 
-      <section v-if="progress" class="progress-card">
+      <section v-if="progress?.progressAvailable" class="progress-card">
         <div class="progress-heading">
-          <span>任务进度</span>
+          <span>{{ getTaskTypeLabel(task.type) }}任务进度</span>
           <strong>{{ progress.progressPercent }}%</strong>
         </div>
         <div class="progress-track" aria-label="任务进度">
@@ -232,7 +225,7 @@ watch(
           <span>未译 {{ progress.untranslatedEntries }}</span>
           <span>已译 {{ progress.translatedEntries }}</span>
           <span>校对 {{ progress.proofreadEntries }}</span>
-          <span>审校 {{ progress.reviewedEntries }}</span>
+          <span>审核 {{ progress.reviewedEntries }}</span>
           <span>争议 {{ progress.disputedEntries }}</span>
         </div>
       </section>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { getMemberDisplayName } from "../model/memberOptions";
+import { getTaskTypeLabel } from "../model/taskPresentation";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
 
@@ -21,14 +22,6 @@ const statusLabels: Record<Task["status"], string> = {
   in_progress: "进行中",
   submitted: "已提交",
   completed: "已完成",
-};
-
-const typeLabels: Record<Task["type"], string> = {
-  translate: "翻译",
-  proofread: "校对",
-  review: "审校",
-  term: "术语",
-  custom: "自定义",
 };
 
 function getMemberName(memberId: string): string {
@@ -59,7 +52,7 @@ function getTaskFileText(task: Task): string {
   >
     <span class="task-title">{{ task.title }}</span>
     <span class="task-meta">
-      <span>{{ typeLabels[task.type] }}</span>
+      <span>{{ getTaskTypeLabel(task.type) }}</span>
       <span>{{ statusLabels[task.status] }}</span>
       <span>{{ getMemberName(task.assignee) }}</span>
     </span>
@@ -69,7 +62,11 @@ function getTaskFileText(task: Task): string {
       <template v-else-if="task.file_ids?.length"> · 全部词条</template>
       <template v-else-if="task.file_id"> · {{ task.range_start }}-{{ task.range_end }}</template>
     </span>
-    <span v-if="progress" class="progress-track" aria-label="任务进度">
+    <span
+      v-if="progress?.progressAvailable"
+      class="progress-track"
+      aria-label="任务进度"
+    >
       <span :style="{ width: `${progress.progressPercent}%` }"></span>
     </span>
   </button>

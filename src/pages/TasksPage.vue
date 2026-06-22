@@ -26,6 +26,7 @@ import {
   completeTask,
   createTask,
   deleteTask,
+  getTaskOpenTargets,
   getTaskProgress,
   loadTasks,
   reclaimTask,
@@ -33,6 +34,7 @@ import {
   submitTask,
   updateTask,
   type TaskDraft,
+  type TaskOpenTarget,
   type TaskProgress,
 } from "../services/tasks";
 
@@ -62,6 +64,9 @@ const savedMessage = ref("");
 const dialogOpen = ref(false);
 const dialogMode = ref<"create" | "edit">("create");
 const editingTask = ref<Task>();
+const openTargets = ref<TaskOpenTarget[]>([]);
+const openTargetsDialogOpen = ref(false);
+const openTargetsTaskTitle = ref("");
 
 const currentUser = computed(() => props.currentUser ?? getCurrentUser());
 const canView = computed(() => canViewTask(currentUser.value));
@@ -292,13 +297,36 @@ function handleDeleteTask(taskId: string) {
   void runTaskAction(() => deleteTask(taskId), "任务已删除。");
 }
 
-function handleOpenTarget(task: Task) {
+function openResolvedTarget(target: TaskOpenTarget) {
+  openTargetsDialogOpen.value = false;
   emit(
     "openTaskTarget",
-    task.file_id || task.file_ids?.[0] || "",
-    task.entry_ids[0] ?? "",
-    task.range_start,
+    target.fileId,
+    target.entryId,
+    target.entryIndex,
   );
+}
+
+async function handleOpenTarget(task: Task) {
+  try {
+    const targets = await getTaskOpenTargets(task.id);
+
+    if (targets.length === 0) {
+      showError(undefined, "任务范围内没有可打开的词条。");
+      return;
+    }
+
+    if (targets.length === 1) {
+      openResolvedTarget(targets[0]);
+      return;
+    }
+
+    openTargets.value = targets;
+    openTargetsTaskTitle.value = task.title;
+    openTargetsDialogOpen.value = true;
+  } catch (error) {
+    showError(error, "无法读取任务关联词条。");
+  }
 }
 
 watch(
@@ -439,6 +467,58 @@ watch(visibleTasks, (nextTasks) => {
       @close="dialogOpen = false"
       @save="handleSaveTask"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="openTargetsDialogOpen"
+        class="dialog-backdrop"
+        role="presentation"
+        @click.self="openTargetsDialogOpen = false"
+      >
+        <section
+          class="target-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="task-target-dialog-title"
+        >
+          <header class="target-dialog-header">
+            <div>
+              <p>打开关联词条</p>
+              <h2 id="task-target-dialog-title">{{ openTargetsTaskTitle }}</h2>
+            </div>
+            <button
+              class="close-button"
+              type="button"
+              aria-label="关闭"
+              @click="openTargetsDialogOpen = false"
+            >
+              ×
+            </button>
+          </header>
+          <div class="target-options">
+            <button
+              v-for="target in openTargets"
+              :key="target.fileId"
+              class="target-option"
+              type="button"
+              @click="openResolvedTarget(target)"
+            >
+              <span>{{ target.fileName }}</span>
+              <small>{{ target.entryCount }} 条任务词条</small>
+            </button>
+          </div>
+          <footer class="target-dialog-actions">
+            <button
+              class="cancel-button"
+              type="button"
+              @click="openTargetsDialogOpen = false"
+            >
+              取消
+            </button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -595,6 +675,119 @@ select {
   .task-list {
     max-height: none;
   }
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(17, 24, 39, 0.42);
+}
+
+.target-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(520px, 100%);
+  max-height: min(640px, calc(100vh - 32px));
+  padding: 16px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
+}
+
+.target-dialog-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: start;
+  gap: 12px;
+}
+
+.target-dialog-header p,
+.target-dialog-header h2 {
+  margin: 0;
+}
+
+.target-dialog-header p {
+  color: #5b6472;
+  font-size: 13px;
+}
+
+.target-dialog-header h2 {
+  margin-top: 4px;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.close-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #ccd4df;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #344054;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.target-options {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.target-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  text-align: left;
+  cursor: pointer;
+}
+
+.target-option:hover {
+  border-color: #2f6f73;
+  background: #f1f8f7;
+}
+
+.target-option span {
+  overflow: hidden;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-option small {
+  color: #5b6472;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.target-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cancel-button {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #172033;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 </style>

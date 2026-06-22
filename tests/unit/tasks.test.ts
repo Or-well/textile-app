@@ -1,4 +1,8 @@
-import type { Entry } from "../../src/model/types";
+import type {
+  Entry,
+  ProjectConfig,
+  ProjectFile,
+} from "../../src/model/types";
 import { setCurrentUser } from "../../src/services/permissions";
 import { describe, expect, it, afterEach } from "vitest";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
@@ -6,7 +10,10 @@ import { createProjectStorage } from "../../src/services/projectStorage";
 import {
   completeTask,
   createTask,
+  getTaskFilesEntrySummary,
+  getTaskOpenTargets,
   getTaskProgress,
+  resolveTaskRangeEntryIds,
   loadTasks,
   setTasksProjectStorage,
   submitTask,
@@ -16,6 +23,9 @@ import { createEntry, createMember, createProject } from "./factories";
 async function createTaskProjectStorage(options: {
   enableTasks?: boolean;
   entries?: Entry[];
+  entriesByFile?: Record<string, Entry[]>;
+  files?: ProjectFile[];
+  workflow?: ProjectConfig["settings"]["workflow"];
 } = {}) {
   const root = createMemoryProjectDirectory({}, "tasks.hproj");
   const storage = createProjectStorage(root);
@@ -26,30 +36,43 @@ async function createTaskProjectStorage(options: {
       createEntry({ id: "entry-2", index: 2 }),
     ];
 
+  const files =
+    options.files ??
+    [
+      {
+        id: "file-1",
+        name: "script.txt",
+        source_path: "source/file-1.txt",
+        entries_path: "entries/file-1",
+        type: "txt",
+        hidden: false,
+        locked: false,
+      },
+    ];
+  const entriesByFile = options.entriesByFile ?? {
+    "file-1": entries,
+  };
+
   await storage.writeJson(
     "project.json",
     createProject({
-      files: [
-        {
-          id: "file-1",
-          name: "script.txt",
-          source_path: "source/file-1.txt",
-          entries_path: "entries/file-1",
-          type: "txt",
-          hidden: false,
-          locked: false,
-        },
-      ],
+      files,
       settings: {
         workflow: {
           enable_tasks: options.enableTasks ?? true,
           proofread_required: 0,
           review_required: false,
+          ...options.workflow,
         },
       },
     }),
   );
-  await storage.writeJsonl("entries/file-1/chunk_0001.jsonl", entries);
+  for (const [fileId, fileEntries] of Object.entries(entriesByFile)) {
+    await storage.writeJsonl(
+      `entries/${fileId}/chunk_0001.jsonl`,
+      fileEntries,
+    );
+  }
   setTasksProjectStorage(storage);
   setCurrentUser(createMember(["owner"], { id: "owner-1" }));
 
@@ -162,6 +185,206 @@ describe("task storage integrity", () => {
     expect(progress.totalEntries).toBe(2);
     expect(progress.translatedEntries).toBe(1);
     expect(progress.untranslatedEntries).toBe(1);
+  });
+
+  it("resolves a continuous range across multiple selected files", async () => {
+    await createTaskProjectStorage({
+      files: [
+        {
+          id: "file-1",
+          name: "first.txt",
+          source_path: "source/file-1.txt",
+          entries_path: "entries/file-1",
+          type: "txt",
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: "file-2",
+          name: "second.txt",
+          source_path: "source/file-2.txt",
+          entries_path: "entries/file-2",
+          type: "txt",
+          hidden: false,
+          locked: false,
+        },
+      ],
+      entriesByFile: {
+        "file-1": [
+          createEntry({ id: "file-1-entry-1", file_id: "file-1", index: 1 }),
+          createEntry({ id: "file-1-entry-2", file_id: "file-1", index: 2 }),
+        ],
+        "file-2": [
+          createEntry({ id: "file-2-entry-1", file_id: "file-2", index: 1 }),
+          createEntry({ id: "file-2-entry-2", file_id: "file-2", index: 2 }),
+        ],
+      },
+    });
+
+    await expect(
+      getTaskFilesEntrySummary(["file-1", "file-2"]),
+    ).resolves.toMatchObject({
+      fileCount: 2,
+      totalEntries: 4,
+    });
+    await expect(
+      resolveTaskRangeEntryIds(["file-1", "file-2"], 2, 3),
+    ).resolves.toEqual(["file-1-entry-2", "file-2-entry-1"]);
+  });
+
+  it("calculates progress by the selected task type", async () => {
+    await createTaskProjectStorage({
+      workflow: {
+        proofread_required: 2,
+        review_required: true,
+      },
+      entries: [
+        createEntry({
+          id: "translated",
+          index: 1,
+          target: "Translated",
+          status: "translated",
+        }),
+        createEntry({
+          id: "proofread-once",
+          index: 2,
+          target: "Proofread once",
+          status: "proofread",
+          proofread_count: 1,
+          proofread_by: ["proofreader-1"],
+        }),
+        createEntry({
+          id: "reviewed",
+          index: 3,
+          target: "Reviewed",
+          status: "reviewed",
+          proofread_count: 2,
+          proofread_by: ["proofreader-1", "proofreader-2"],
+          reviewed_by: "reviewer-1",
+        }),
+      ],
+    });
+    const baseDraft = {
+      file_ids: ["file-1"],
+      range_start: 1,
+      range_end: 3,
+    };
+    const translateTask = await createTask(
+      {
+        ...baseDraft,
+        title: "Translate",
+        type: "translate",
+      },
+      "owner-1",
+    );
+    const proofreadTask = await createTask(
+      {
+        ...baseDraft,
+        title: "Proofread",
+        type: "proofread",
+        proofread_round: 2,
+      },
+      "owner-1",
+    );
+    const reviewTask = await createTask(
+      {
+        ...baseDraft,
+        title: "Review",
+        type: "review",
+      },
+      "owner-1",
+    );
+    const termTask = await createTask(
+      {
+        ...baseDraft,
+        title: "Terms",
+        type: "term",
+      },
+      "owner-1",
+    );
+
+    await expect(getTaskProgress(translateTask.id)).resolves.toMatchObject({
+      progressAvailable: true,
+      completedEntries: 3,
+      progressPercent: 100,
+    });
+    await expect(getTaskProgress(proofreadTask.id)).resolves.toMatchObject({
+      progressAvailable: true,
+      completedEntries: 1,
+      progressPercent: 33,
+    });
+    await expect(getTaskProgress(reviewTask.id)).resolves.toMatchObject({
+      progressAvailable: true,
+      completedEntries: 1,
+      progressPercent: 33,
+    });
+    await expect(getTaskProgress(termTask.id)).resolves.toMatchObject({
+      progressAvailable: false,
+      completedEntries: 0,
+      progressPercent: 0,
+    });
+  });
+
+  it("returns one open target for each file covered by the task", async () => {
+    await createTaskProjectStorage({
+      files: [
+        {
+          id: "file-1",
+          name: "First",
+          source_path: "source/file-1.txt",
+          entries_path: "entries/file-1",
+          type: "txt",
+          hidden: false,
+          locked: false,
+        },
+        {
+          id: "file-2",
+          name: "Second",
+          source_path: "source/file-2.txt",
+          entries_path: "entries/file-2",
+          type: "txt",
+          hidden: false,
+          locked: false,
+        },
+      ],
+      entriesByFile: {
+        "file-1": [
+          createEntry({ id: "first-2", file_id: "file-1", index: 2 }),
+        ],
+        "file-2": [
+          createEntry({ id: "second-3", file_id: "file-2", index: 3 }),
+          createEntry({ id: "second-4", file_id: "file-2", index: 4 }),
+        ],
+      },
+    });
+    const task = await createTask(
+      {
+        title: "Selected entries",
+        type: "translate",
+        file_ids: ["file-1", "file-2"],
+        range_start: 1,
+        range_end: 3,
+        entry_ids: ["second-4", "first-2", "second-3"],
+      },
+      "owner-1",
+    );
+
+    await expect(getTaskOpenTargets(task.id)).resolves.toEqual([
+      {
+        fileId: "file-1",
+        fileName: "First",
+        entryId: "first-2",
+        entryIndex: 2,
+        entryCount: 1,
+      },
+      {
+        fileId: "file-2",
+        fileName: "Second",
+        entryId: "second-3",
+        entryIndex: 3,
+        entryCount: 2,
+      },
+    ]);
   });
 
   it("rejects task scopes that reference missing entries", async () => {
