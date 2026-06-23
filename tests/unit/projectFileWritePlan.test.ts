@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { PERMISSION_ACTIONS } from "../../src/model/permissions";
 import type { ProjectConfig } from "../../src/model/types";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import {
   addSourceFileToStorage,
   deleteProjectFileFromStorage,
+  updateProjectFile,
   updateSourceFileInStorage,
 } from "../../src/services/project";
 import {
@@ -91,6 +93,37 @@ describe("source file write plan", () => {
     await expect(storage.readText(result.file.source_path)).resolves.toBe(
       "Replacement",
     );
+  });
+
+  it("requires folder permission when adding or regrouping a file", async () => {
+    const { storage, config } = await createFileStorage();
+    const actor = createMember(["translator"], {
+      allow_permissions: [
+        PERMISSION_ACTIONS.FILE_CREATE,
+        PERMISSION_ACTIONS.FILE_RENAME,
+        PERMISSION_ACTIONS.FILE_UPDATE,
+      ],
+    });
+
+    await expect(
+      addSourceFileToStorage(
+        storage,
+        config,
+        new File(["Grouped"], "grouped.txt", { type: "text/plain" }),
+        "Main",
+        actor,
+      ),
+    ).rejects.toThrow("当前成员没有执行此操作的权限");
+
+    await expect(
+      updateProjectFile(
+        storage.root,
+        config,
+        "file-1",
+        { name: "renamed.txt", folder: "Main" },
+        actor,
+      ),
+    ).rejects.toThrow("当前成员没有执行此操作的权限");
   });
 
   it("commits source, chunks, and project config together", async () => {

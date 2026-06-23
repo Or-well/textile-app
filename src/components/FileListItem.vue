@@ -15,12 +15,15 @@ defineProps<{
   canRename: boolean;
   canLock: boolean;
   canHide: boolean;
+  canManageFolder: boolean;
   canDelete: boolean;
   canExportExchange: boolean;
   isRecentlyViewed?: boolean;
+  selected?: boolean;
 }>();
 
 const emit = defineEmits<{
+  select: [fileId: string];
   open: [fileId: string];
   manageEntries: [fileId: string];
   updateSource: [fileId: string];
@@ -28,6 +31,7 @@ const emit = defineEmits<{
   rename: [fileId: string];
   toggleHidden: [fileId: string];
   toggleLocked: [fileId: string];
+  changeFolder: [fileId: string];
   delete: [fileId: string];
   history: [fileId: string];
   exportExchange: [fileId: string, format: "json" | "jsonl"];
@@ -35,7 +39,21 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <article class="file-row" :class="{ hidden: file.hidden, locked: file.locked }">
+  <article
+    class="file-row"
+    :class="{
+      hidden: file.hidden,
+      locked: file.locked,
+      selected,
+    }"
+  >
+    <input
+      class="file-selector"
+      type="checkbox"
+      :checked="selected"
+      :aria-label="`选择文件 ${file.name}`"
+      @change="emit('select', file.id)"
+    />
     <button class="file-main" type="button" @click="emit('open', file.id)">
       <span class="file-title">
         <strong>{{ file.name }}</strong>
@@ -104,6 +122,13 @@ const emit = defineEmits<{
           >
             {{ file.locked ? "解锁" : "锁定" }}
           </button>
+          <button
+            type="button"
+            :disabled="!canManageFolder"
+            @click="emit('changeFolder', file.id)"
+          >
+            调整分组
+          </button>
           <button type="button" :disabled="!canDelete" @click="emit('delete', file.id)">
             删除
           </button>
@@ -131,7 +156,7 @@ const emit = defineEmits<{
 <style scoped>
 .file-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.2fr) minmax(126px, 0.6fr) minmax(126px, 0.6fr) minmax(126px, 0.6fr) minmax(78px, 0.32fr) minmax(132px, 0.48fr) minmax(230px, 0.7fr);
+  grid-template-columns: 24px minmax(220px, 1.2fr) minmax(126px, 0.6fr) minmax(126px, 0.6fr) minmax(126px, 0.6fr) minmax(78px, 0.32fr) minmax(132px, 0.48fr) minmax(230px, 0.7fr);
   gap: 12px;
   align-items: center;
   min-height: 78px;
@@ -149,6 +174,11 @@ const emit = defineEmits<{
   border-color: #d7c49a;
 }
 
+.file-row.selected {
+  border-color: #2f6f73;
+  background: #f0f8f6;
+}
+
 .file-main {
   display: grid;
   gap: 4px;
@@ -158,6 +188,12 @@ const emit = defineEmits<{
   color: #111827;
   text-align: left;
   cursor: pointer;
+}
+
+.file-selector {
+  width: 18px;
+  height: 18px;
+  margin: 0;
 }
 
 .file-title {
@@ -260,7 +296,11 @@ button:disabled {
 
 @media (max-width: 1180px) {
   .file-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .file-row > :not(.file-selector) {
+    grid-column: 2;
   }
 
   .row-actions {

@@ -540,6 +540,10 @@ export async function loadTerms(): Promise<Term[]> {
     return cachedTerms;
   }
 
+  return loadTermsFresh();
+}
+
+export async function loadTermsFresh(): Promise<Term[]> {
   try {
     cachedTerms = sortTerms(
       (await getProjectStorage().readJsonl<Partial<Term>>(TERMS_PATH)).map(

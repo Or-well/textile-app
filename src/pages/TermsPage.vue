@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import BatchPreviewDialog from "../components/BatchPreviewDialog.vue";
+import BatchSelectionBar from "../components/BatchSelectionBar.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import TermEditDialog from "../components/TermEditDialog.vue";
 import TermImportDialog from "../components/TermImportDialog.vue";
@@ -22,12 +24,24 @@ import {
   type TermInput,
 } from "../services/terms";
 import {
+  executeTermBatch,
+  previewTermBatch,
+  type TermBatchOperation,
+  type TermBatchPreview,
+} from "../services/termBatch";
+import {
   compareInstants,
   formatDateTime,
 } from "../utils/time";
 import { saveGeneratedFile } from "../utils/saveBlob";
 
 type SortMode = "alphabetical" | "created_at" | "updated_at";
+
+interface TermBatchActionOption {
+  value: TermBatchOperation;
+  label: string;
+  permission: "update" | "delete";
+}
 
 const partOfSpeechOptions = [
   "全部词性",
@@ -48,16 +62,28 @@ const sortOptions: Array<{ value: SortMode; label: string }> = [
   { value: "created_at", label: "按创建时间" },
   { value: "updated_at", label: "按更新时间" },
 ];
+const termBatchActionOptions: TermBatchActionOption[] = [
+  { value: "set_part_of_speech", label: "统一设置词性", permission: "update" },
+  { value: "set_case_sensitive", label: "设为区分大小写", permission: "update" },
+  { value: "clear_case_sensitive", label: "设为忽略大小写", permission: "update" },
+  { value: "delete", label: "删除术语", permission: "delete" },
+];
 
 const terms = ref<Term[]>([]);
 const searchText = ref("");
 const partOfSpeechFilter = ref("全部词性");
 const sortMode = ref<SortMode>("alphabetical");
+const selectedTermIds = ref(new Set<string>());
+const selectedBatchOperation = ref<TermBatchOperation>("set_part_of_speech");
+const batchPartOfSpeech = ref("名词");
+const batchPreview = ref<TermBatchPreview | null>(null);
 const editingTerm = ref<Term>();
 const isDialogOpen = ref(false);
 const isImportDialogOpen = ref(false);
 const isLoading = ref(false);
 const isSaving = ref(false);
+const isPreviewingBatch = ref(false);
+const isExecutingBatch = ref(false);
 const errorMessage = ref("");
 const message = ref("");
 const currentUser = ref(getCurrentUser());
@@ -74,6 +100,11 @@ const hasManagementActions = computed(
     canDelete.value ||
     canImport.value ||
     canExport.value,
+);
+const availableBatchActions = computed(() =>
+  termBatchActionOptions.filter((option) =>
+    option.permission === "update" ? canUpdate.value : canDelete.value,
+  ),
 );
 
 const filteredTerms = computed(() => {
@@ -117,9 +148,117 @@ const filteredTerms = computed(() => {
     );
   });
 });
+const selectedCount = computed(() => selectedTermIds.value.size);
+const selectedFilteredCount = computed(() =>
+  filteredTerms.value.reduce(
+    (count, term) => count + (selectedTermIds.value.has(term.id) ? 1 : 0),
+    0,
+  ),
+);
+const hiddenSelectedCount = computed(
+  () => selectedCount.value - selectedFilteredCount.value,
+);
+const selectedBatchLabel = computed(
+  () =>
+    termBatchActionOptions.find(
+      (option) => option.value === selectedBatchOperation.value,
+    )?.label ?? "术语批量操作",
+);
+const batchNeedsPartOfSpeech = computed(
+  () => selectedBatchOperation.value === "set_part_of_speech",
+);
+const batchRequest = computed(() => ({
+  termIds: Array.from(selectedTermIds.value),
+  operation: selectedBatchOperation.value,
+  actor: currentUser.value,
+  value: batchNeedsPartOfSpeech.value ? batchPartOfSpeech.value : undefined,
+}));
 
 function getCurrentUserId(): string {
   return currentUser.value?.id ?? "unknown_user";
+}
+
+function replaceSelection(ids: Iterable<string>) {
+  selectedTermIds.value = new Set(ids);
+}
+
+function toggleTerm(termId: string) {
+  const nextIds = new Set(selectedTermIds.value);
+
+  if (nextIds.has(termId)) {
+    nextIds.delete(termId);
+  } else {
+    nextIds.add(termId);
+  }
+
+  replaceSelection(nextIds);
+}
+
+function selectAllFilteredTerms() {
+  const nextIds = new Set(selectedTermIds.value);
+
+  for (const term of filteredTerms.value) {
+    nextIds.add(term.id);
+  }
+
+  replaceSelection(nextIds);
+}
+
+function clearTermSelection() {
+  replaceSelection([]);
+}
+
+function closeBatchPreview() {
+  if (!isExecutingBatch.value) {
+    batchPreview.value = null;
+  }
+}
+
+async function handlePreviewTermBatch() {
+  if (selectedCount.value === 0) {
+    return;
+  }
+
+  isPreviewingBatch.value = true;
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    batchPreview.value = await previewTermBatch(batchRequest.value);
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "术语批量操作预检失败。";
+  } finally {
+    isPreviewingBatch.value = false;
+  }
+}
+
+async function handleExecuteTermBatch() {
+  if (!batchPreview.value) {
+    return;
+  }
+
+  isExecutingBatch.value = true;
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    const result = await executeTermBatch(batchRequest.value);
+
+    message.value =
+      `术语批量操作完成：处理 ${result.applicableTermIds.length} 条` +
+      (result.skipped.length > 0
+        ? `，跳过 ${result.skipped.length} 条。`
+        : "。");
+    batchPreview.value = null;
+    clearTermSelection();
+    terms.value = await loadTerms();
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "术语批量操作执行失败。";
+  } finally {
+    isExecutingBatch.value = false;
+  }
 }
 
 async function loadTermRows() {
@@ -213,6 +352,9 @@ async function handleDeleteTerm(term: Term) {
 
   try {
     await deleteTerm(term.id);
+    const nextIds = new Set(selectedTermIds.value);
+    nextIds.delete(term.id);
+    replaceSelection(nextIds);
     terms.value = await loadTerms();
     message.value = "术语已删除。";
   } catch (error) {
@@ -281,6 +423,19 @@ async function handleExportTerms() {
   }
 }
 
+watch(
+  availableBatchActions,
+  (actions) => {
+    if (
+      actions.length > 0 &&
+      !actions.some((action) => action.value === selectedBatchOperation.value)
+    ) {
+      selectedBatchOperation.value = actions[0].value;
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(loadTermRows);
 </script>
 
@@ -347,6 +502,54 @@ onMounted(loadTermRows);
       </div>
     </section>
 
+    <BatchSelectionBar
+      :selected-count="selectedCount"
+      :hidden-selected-count="hiddenSelectedCount"
+      :filtered-count="filteredTerms.length"
+      :busy="isPreviewingBatch"
+      :submit-disabled="
+        availableBatchActions.length === 0 ||
+        (batchNeedsPartOfSpeech && !batchPartOfSpeech.trim())
+      "
+      submit-label="预检并执行"
+      :permission-message="
+        availableBatchActions.length === 0
+          ? '当前成员没有可用的术语批量操作权限。'
+          : undefined
+      "
+      @select-all="selectAllFilteredTerms"
+      @clear="clearTermSelection"
+      @submit="handlePreviewTermBatch"
+    >
+      <select
+        v-model="selectedBatchOperation"
+        class="batch-operation-select"
+        aria-label="术语批量操作"
+      >
+        <option
+          v-for="action in availableBatchActions"
+          :key="action.value"
+          :value="action.value"
+        >
+          {{ action.label }}
+        </option>
+      </select>
+      <select
+        v-if="batchNeedsPartOfSpeech"
+        v-model="batchPartOfSpeech"
+        class="batch-value-select"
+        aria-label="批量设置词性"
+      >
+        <option
+          v-for="option in partOfSpeechOptions.slice(1)"
+          :key="option"
+          :value="option"
+        >
+          {{ option }}
+        </option>
+      </select>
+    </BatchSelectionBar>
+
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
     <p v-if="message" class="message">{{ message }}</p>
 
@@ -357,7 +560,20 @@ onMounted(loadTermRows);
     <p v-if="isLoading" class="empty-state">正在加载术语...</p>
 
     <div v-else-if="filteredTerms.length > 0" class="term-list">
-      <article v-for="term in filteredTerms" :key="term.id" class="term-card">
+      <article
+        v-for="term in filteredTerms"
+        :key="term.id"
+        class="term-card"
+        :class="{ selected: selectedTermIds.has(term.id) }"
+      >
+        <label class="term-selector">
+          <input
+            type="checkbox"
+            :checked="selectedTermIds.has(term.id)"
+            :aria-label="`选择术语 ${term.source}`"
+            @change="toggleTerm(term.id)"
+          />
+        </label>
         <div class="term-main">
           <div>
             <span class="field-label">原文</span>
@@ -445,6 +661,20 @@ onMounted(loadTermRows);
       @cancel="closeImportDialog"
       @submit="handleImportTerms"
     />
+
+    <BatchPreviewDialog
+      :open="batchPreview !== null"
+      :title="selectedBatchLabel"
+      item-unit="条"
+      :selected-count="batchPreview?.selectedCount ?? 0"
+      :applicable-count="batchPreview?.applicableTermIds.length ?? 0"
+      :skipped-reason-counts="batchPreview?.skippedReasonCounts ?? []"
+      :is-executing="isExecutingBatch"
+      :danger="selectedBatchOperation === 'delete'"
+      note="执行时会重新读取术语表并再次校验；不存在、无变化或权限不符的术语不会被写入。"
+      @cancel="closeBatchPreview"
+      @confirm="handleExecuteTermBatch"
+    />
   </section>
 </template>
 
@@ -496,6 +726,12 @@ dd {
   gap: 10px;
   align-items: center;
   padding: 12px;
+}
+
+.batch-operation-select,
+.batch-value-select {
+  width: auto;
+  min-width: 150px;
 }
 
 .toolbar-actions,
@@ -597,9 +833,28 @@ button:disabled {
 }
 
 .term-card {
+  position: relative;
   display: grid;
   gap: 12px;
-  padding: 16px;
+  padding: 16px 16px 16px 50px;
+}
+
+.term-card.selected {
+  border-color: #2f6f73;
+  background: #f0f8f6;
+}
+
+.term-selector {
+  position: absolute;
+  top: 18px;
+  left: 16px;
+}
+
+.term-selector input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
 }
 
 .term-main {

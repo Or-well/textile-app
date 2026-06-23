@@ -696,6 +696,9 @@ export async function addSourceFileToStorage(
   const writeActor = resolveProjectActor(actor);
 
   assertCan(writeActor, PERMISSION_ACTIONS.FILE_CREATE, config);
+  if (folder?.trim()) {
+    assertCan(writeActor, PERMISSION_ACTIONS.FILE_MANAGE_FOLDER, config);
+  }
   assertSupportedImportFile(file.name);
 
   const sourceText = await file.text();
@@ -949,11 +952,19 @@ export async function updateProjectFile(
       ? PERMISSION_ACTIONS.FILE_LOCK
       : patch.hidden !== undefined
         ? PERMISSION_ACTIONS.FILE_HIDE
-        : PERMISSION_ACTIONS.FILE_UPDATE);
+        : patch.folder !== undefined
+          ? PERMISSION_ACTIONS.FILE_MANAGE_FOLDER
+          : PERMISSION_ACTIONS.FILE_UPDATE);
 
   const writeActor = resolveProjectActor(actor);
 
   assertCan(writeActor, action, config);
+  if (
+    patch.folder !== undefined &&
+    action !== PERMISSION_ACTIONS.FILE_MANAGE_FOLDER
+  ) {
+    assertCan(writeActor, PERMISSION_ACTIONS.FILE_MANAGE_FOLDER, config);
+  }
 
   let found = false;
   let previousFile: ProjectFile | undefined;

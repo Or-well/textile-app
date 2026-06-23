@@ -3,6 +3,8 @@ const props = defineProps<{
   searchText: string;
   sortKey: string;
   statusFilter: string;
+  groupFilter: string;
+  groups: Array<{ name: string; fileCount: number }>;
   canCreate: boolean;
   canManageFolder: boolean;
 }>();
@@ -11,10 +13,11 @@ const emit = defineEmits<{
   addSource: [];
   batchAddSource: [];
   batchImportTranslation: [];
-  createFolder: [];
+  addGroupedSources: [];
   updateSearchText: [value: string];
   updateSortKey: [value: string];
   updateStatusFilter: [value: string];
+  updateGroupFilter: [value: string];
 }>();
 </script>
 
@@ -42,10 +45,10 @@ const emit = defineEmits<{
     <button
       class="secondary-button"
       type="button"
-      :disabled="!canManageFolder"
-      @click="emit('createFolder')"
+      :disabled="!canCreate || !canManageFolder"
+      @click="emit('addGroupedSources')"
     >
-      新建文件夹
+      按分组添加
     </button>
 
     <select
@@ -58,6 +61,18 @@ const emit = defineEmits<{
       <option value="hidden">只看隐藏</option>
       <option value="locked">只看锁定</option>
       <option value="disputed">有争议</option>
+    </select>
+
+    <select
+      :value="props.groupFilter"
+      aria-label="文件分组"
+      @change="emit('updateGroupFilter', ($event.target as HTMLSelectElement).value)"
+    >
+      <option value="">全部分组</option>
+      <option value="__ungrouped__">未分组</option>
+      <option v-for="group in groups" :key="group.name" :value="group.name">
+        {{ group.name }}（{{ group.fileCount }}）
+      </option>
     </select>
 
     <input
@@ -84,7 +99,7 @@ const emit = defineEmits<{
 <style scoped>
 .file-toolbar {
   display: grid;
-  grid-template-columns: minmax(130px, auto) minmax(120px, auto) minmax(130px, auto) minmax(220px, 1fr) minmax(140px, auto);
+  grid-template-columns: minmax(130px, auto) minmax(120px, auto) minmax(130px, auto) minmax(150px, auto) minmax(200px, 1fr) minmax(140px, auto);
   gap: 10px;
   align-items: center;
   padding: 12px;
