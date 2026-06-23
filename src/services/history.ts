@@ -9,7 +9,7 @@ import {
   type EntryWorkflowOperation,
 } from "../model/status";
 import { createId } from "../utils/id";
-import { nowIso } from "../utils/time";
+import { compareInstants, nowIso } from "../utils/time";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import {
   createProjectStorage,
@@ -57,9 +57,20 @@ export interface EntryVersionEvent extends ProjectEvent {
 
 export interface ProjectEventFilter {
   entryId?: string;
+  fileId?: string;
   taskId?: string;
   userId?: string;
   type?: string;
+}
+
+export interface FileHistoryRow {
+  id: string;
+  type: string;
+  label: string;
+  userId: string;
+  createdAt: string;
+  entryId?: string;
+  detail: Record<string, unknown>;
 }
 
 export interface EntryWorkflowAudit {
@@ -103,6 +114,10 @@ export async function loadEvents(
       return false;
     }
 
+    if (filter.fileId && !isEventForFile(event, filter.fileId)) {
+      return false;
+    }
+
     if (filter.taskId && event.task_id !== filter.taskId) {
       return false;
     }
@@ -117,6 +132,29 @@ export async function loadEvents(
 
     return true;
   });
+}
+
+export async function getFileHistory(fileId: string): Promise<FileHistoryRow[]> {
+  const normalizedFileId = fileId.trim();
+
+  if (!normalizedFileId) {
+    return [];
+  }
+
+  return (await loadEvents({ fileId: normalizedFileId }))
+    .map((event) => ({
+      id: event.id,
+      type: event.type,
+      label: getFileHistoryLabel(event.type),
+      userId: event.user_id,
+      createdAt: event.created_at,
+      entryId: event.entry_id,
+      detail: event.detail ?? {},
+    }))
+    .sort((left, right) =>
+      compareInstants(right.createdAt, left.createdAt) ||
+      right.id.localeCompare(left.id),
+    );
 }
 
 export async function appendEvent(event: ProjectEventInput): Promise<ProjectEvent> {
@@ -268,4 +306,45 @@ export function isEntryVersionEvent(
       (detail.after_reviewed_by === undefined ||
         typeof detail.after_reviewed_by === "string"),
   );
+}
+
+function isEventForFile(event: ProjectEvent, fileId: string): boolean {
+  if (event.file_id === fileId) {
+    return true;
+  }
+
+  if (event.entry_id?.startsWith(`${fileId}:`)) {
+    return true;
+  }
+
+  const detailFileId = event.detail?.file_id;
+
+  return typeof detailFileId === "string" && detailFileId === fileId;
+}
+
+function getFileHistoryLabel(type: string): string {
+  const labels: Record<string, string> = {
+    "file.added": "添加源文件",
+    "file.source_updated": "更新源文件",
+    "file.translation_imported": "导入译文",
+    "file.renamed": "重命名文件",
+    "file.folder_updated": "调整文件分组",
+    "file.hidden": "隐藏文件",
+    "file.unhidden": "取消隐藏文件",
+    "file.locked": "锁定文件",
+    "file.unlocked": "解锁文件",
+    "file.updated": "更新文件信息",
+    "file.deleted": "删除文件",
+    "entry.updated": "更新词条",
+    "entry.restored": "恢复历史译文",
+    "entry.mark_disputed": "标记争议",
+    "entry.resolve_dispute": "解决争议",
+    "comment.added": "新增批注",
+    "comment.replied": "回复批注",
+    "comment.resolved": "解决批注",
+    "comment.reopened": "重新打开批注",
+    "comment.deleted": "删除批注",
+  };
+
+  return labels[type] ?? type;
 }

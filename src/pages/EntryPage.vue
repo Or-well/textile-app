@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 import EntryAssistPanel from "../components/EntryAssistPanel.vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntrySideList from "../components/EntrySideList.vue";
+import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import { useAppDraft } from "../composables/useAppDraft";
 import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
@@ -16,6 +17,7 @@ import { getCurrentUser } from "../services/permissions";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
 type AssistTab = "terms" | "comments" | "context" | "history";
+const ENTRY_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 800] as const;
 
 const props = defineProps<{
   project: ProjectConfig;
@@ -24,10 +26,12 @@ const props = defineProps<{
   targetEntryIndex?: number;
   targetAssistTab?: AssistTab;
   targetCommentId?: string;
+  lastViewedEntryId?: string;
 }>();
 
 const emit = defineEmits<{
   openCommentTarget: [comment: Comment];
+  entryViewed: [fileId: string, entryId: string];
 }>();
 
 const entries = ref<Entry[]>([]);
@@ -40,6 +44,8 @@ const isLoading = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
 const savedMessage = ref("");
+const entryWindowStartIndex = ref(0);
+const entryPageSize = ref<(typeof ENTRY_PAGE_SIZE_OPTIONS)[number]>(50);
 
 const currentFile = computed(() =>
   props.project.files.find((file) => file.id === props.fileId),
@@ -85,10 +91,45 @@ const filteredEntries = computed(() => {
   });
 });
 
-const selectedIndex = computed(() =>
-  selectedEntry.value
-    ? filteredEntries.value.findIndex((entry) => entry.id === selectedEntry.value?.id)
-    : -1,
+const totalEntryPages = computed(() =>
+  Math.max(1, Math.ceil(filteredEntries.value.length / entryPageSize.value)),
+);
+const currentEntryPage = computed(() => {
+  if (
+    filteredEntries.value.length > 0 &&
+    entryWindowStartIndex.value >= getMaxWindowStartIndex()
+  ) {
+    return totalEntryPages.value;
+  }
+
+  return Math.min(
+    totalEntryPages.value,
+    Math.floor(entryWindowStartIndex.value / entryPageSize.value) + 1,
+  );
+});
+const selectedIndex = computed(() => {
+  if (!selectedEntry.value) {
+    return -1;
+  }
+
+  return filteredEntries.value.findIndex(
+    (entry) => entry.id === selectedEntry.value?.id,
+  );
+});
+const pagedEntries = computed(() =>
+  filteredEntries.value.slice(
+    entryWindowStartIndex.value,
+    entryWindowStartIndex.value + entryPageSize.value,
+  ),
+);
+const pageStart = computed(() =>
+  filteredEntries.value.length === 0 ? 0 : entryWindowStartIndex.value + 1,
+);
+const pageEnd = computed(() =>
+  Math.min(
+    filteredEntries.value.length,
+    entryWindowStartIndex.value + pagedEntries.value.length,
+  ),
 );
 const canGoPrevious = computed(() => selectedIndex.value > 0);
 const canGoNext = computed(
@@ -129,6 +170,121 @@ function getRequestedEntry(loadedEntries: Entry[]): Entry | undefined {
   return undefined;
 }
 
+function getInitialEntry(loadedEntries: Entry[]): Entry | undefined {
+  const requestedEntry = getRequestedEntry(loadedEntries);
+
+  if (requestedEntry) {
+    return requestedEntry;
+  }
+
+  if (props.lastViewedEntryId) {
+    return loadedEntries.find((entry) => entry.id === props.lastViewedEntryId);
+  }
+
+  return loadedEntries[0];
+}
+
+function getMaxWindowStartIndex(): number {
+  return Math.max(0, filteredEntries.value.length - entryPageSize.value);
+}
+
+function clampWindowStartIndex(index: number): number {
+  return Math.min(Math.max(0, index), getMaxWindowStartIndex());
+}
+
+function getEntryIndex(entry: Entry | undefined): number {
+  if (!entry) {
+    return -1;
+  }
+
+  return filteredEntries.value.findIndex((item) => item.id === entry.id);
+}
+
+function alignWindowToEntrySecondRow(entry: Entry | undefined) {
+  const index = getEntryIndex(entry);
+
+  if (index < 0) {
+    entryWindowStartIndex.value = 0;
+    return;
+  }
+
+  entryWindowStartIndex.value = clampWindowStartIndex(Math.max(0, index - 1));
+}
+
+function keepEntryVisible(entry: Entry | undefined) {
+  const index = getEntryIndex(entry);
+
+  if (index < 0) {
+    entryWindowStartIndex.value = 0;
+    return;
+  }
+
+  const windowStart = entryWindowStartIndex.value;
+  const windowEnd = windowStart + entryPageSize.value;
+
+  if (index < windowStart || index >= windowEnd) {
+    alignWindowToEntrySecondRow(entry);
+  }
+}
+
+function rememberViewedEntry(entry: Entry | undefined) {
+  if (entry) {
+    emit("entryViewed", props.fileId, entry.id);
+  }
+}
+
+function setSelectedEntry(
+  entry: Entry | undefined,
+  options: { alignToSecondRow?: boolean; remember?: boolean } = {},
+) {
+  selectedEntry.value = entry;
+  draftTarget.value = entry?.target ?? "";
+
+  if (options.alignToSecondRow) {
+    alignWindowToEntrySecondRow(entry);
+  } else {
+    keepEntryVisible(entry);
+  }
+
+  if (options.remember !== false) {
+    rememberViewedEntry(entry);
+  }
+}
+
+function handleUpdatePage(page: number) {
+  if (page <= 1) {
+    entryWindowStartIndex.value = 0;
+    return;
+  }
+
+  if (page >= totalEntryPages.value) {
+    entryWindowStartIndex.value = getMaxWindowStartIndex();
+    return;
+  }
+
+  if (page > currentEntryPage.value) {
+    entryWindowStartIndex.value = clampWindowStartIndex(
+      entryWindowStartIndex.value + entryPageSize.value,
+    );
+    return;
+  }
+
+  if (page < currentEntryPage.value) {
+    entryWindowStartIndex.value = clampWindowStartIndex(
+      entryWindowStartIndex.value - entryPageSize.value,
+    );
+  }
+}
+
+function handleUpdatePageSize(pageSize: number) {
+  if (!ENTRY_PAGE_SIZE_OPTIONS.includes(pageSize as (typeof ENTRY_PAGE_SIZE_OPTIONS)[number])) {
+    return;
+  }
+
+  entryPageSize.value = pageSize as (typeof ENTRY_PAGE_SIZE_OPTIONS)[number];
+  alignWindowToEntrySecondRow(selectedEntry.value);
+}
+
 async function loadFileEntries() {
   isLoading.value = true;
   errorMessage.value = "";
@@ -139,8 +295,7 @@ async function loadFileEntries() {
   try {
     const loadedEntries = await loadEntries(props.fileId);
     entries.value = loadedEntries;
-    selectedEntry.value = getRequestedEntry(entries.value) ?? entries.value[0];
-    draftTarget.value = selectedEntry.value?.target ?? "";
+    setSelectedEntry(getInitialEntry(entries.value), { alignToSecondRow: true });
     if (props.targetAssistTab) {
       assistTab.value = props.targetAssistTab;
     }
@@ -156,8 +311,7 @@ async function loadFileEntries() {
 }
 
 async function handleSelectEntry(entry: Entry) {
-  selectedEntry.value = (await getEntryById(entry.id)) ?? entry;
-  draftTarget.value = selectedEntry.value.target;
+  setSelectedEntry((await getEntryById(entry.id)) ?? entry);
   savedMessage.value = "";
 }
 
@@ -165,8 +319,7 @@ function replaceEntry(savedEntry: Entry) {
   entries.value = entries.value.map((entry) =>
     entry.id === savedEntry.id ? savedEntry : entry,
   );
-  selectedEntry.value = savedEntry;
-  draftTarget.value = savedEntry.target;
+  setSelectedEntry(savedEntry);
 }
 
 function selectEntryByOffset(offset: -1 | 1) {
@@ -341,7 +494,24 @@ watch(
     const requestedEntry = getRequestedEntry(entries.value);
 
     if (requestedEntry) {
-      void handleSelectEntry(requestedEntry);
+      setSelectedEntry(requestedEntry, { alignToSecondRow: true });
+    }
+  },
+);
+
+watch(
+  () => props.lastViewedEntryId,
+  () => {
+    if (selectedEntry.value || props.targetEntryId || props.targetEntryIndex) {
+      return;
+    }
+
+    const lastViewedEntry = entries.value.find(
+      (entry) => entry.id === props.lastViewedEntryId,
+    );
+
+    if (lastViewedEntry) {
+      setSelectedEntry(lastViewedEntry, { alignToSecondRow: true });
     }
   },
 );
@@ -361,11 +531,15 @@ watch(filteredEntries, (nextEntries) => {
     selectedEntry.value &&
     nextEntries.some((entry) => entry.id === selectedEntry.value?.id)
   ) {
+    alignWindowToEntrySecondRow(selectedEntry.value);
     return;
   }
 
-  selectedEntry.value = nextEntries[0];
-  draftTarget.value = selectedEntry.value?.target ?? "";
+  setSelectedEntry(nextEntries[0], { alignToSecondRow: true });
+});
+
+watch(totalEntryPages, () => {
+  entryWindowStartIndex.value = clampWindowStartIndex(entryWindowStartIndex.value);
 });
 
 onMounted(loadFileEntries);
@@ -373,13 +547,15 @@ onMounted(loadFileEntries);
 
 <template>
   <section class="entry-page">
-    <header class="entry-page-header">
-      <div>
-        <p class="eyebrow">文件词条</p>
-        <h1>{{ currentFile?.name || fileId }}</h1>
-      </div>
-      <p class="entry-count">{{ entryCountLabel }}</p>
-    </header>
+    <ProjectPageHeader
+      eyebrow="文件词条"
+      :title="currentFile?.name || fileId"
+      summary="编辑当前文件的译文、状态、批注、术语和上下文。"
+    >
+      <template #actions>
+        <p class="entry-count">{{ entryCountLabel }}</p>
+      </template>
+    </ProjectPageHeader>
 
     <div class="entry-page-body">
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
@@ -388,17 +564,26 @@ onMounted(loadFileEntries);
 
       <section v-else-if="entries.length > 0" class="entry-workspace">
         <EntrySideList
-          :entries="filteredEntries"
+          :entries="pagedEntries"
           :selected-entry-id="selectedEntry?.id"
           :search-text="searchText"
           :status-filter="statusFilter"
           :total-count="entries.length"
+          :filtered-count="filteredEntries.length"
+          :page="currentEntryPage"
+          :page-size="entryPageSize"
+          :page-size-options="ENTRY_PAGE_SIZE_OPTIONS"
+          :total-pages="totalEntryPages"
+          :page-start="pageStart"
+          :page-end="pageEnd"
           :workflow="project.settings.workflow"
           :file-locked="currentFile?.locked"
           :file-hidden="currentFile?.hidden"
           @select="handleSelectEntry"
           @update-search-text="searchText = $event"
           @update-status-filter="statusFilter = $event"
+          @update-page="handleUpdatePage"
+          @update-page-size="handleUpdatePageSize"
         />
 
         <EntryEditor
@@ -444,34 +629,11 @@ onMounted(loadFileEntries);
 <style scoped>
 .entry-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
-  height: calc(100vh - 108px);
-  min-height: 640px;
+  gap: 16px;
 }
 
-.entry-page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.eyebrow {
-  margin: 0 0 6px;
-  color: #5b6472;
-  font-size: 14px;
-}
-
-h1,
 p {
   margin: 0;
-}
-
-h1 {
-  color: #111827;
-  font-size: 28px;
-  line-height: 1.2;
 }
 
 .entry-count {
@@ -509,22 +671,30 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
   min-height: 0;
 }
 
 .entry-workspace {
   display: grid;
-  grid-template-columns: minmax(240px, 0.75fr) minmax(360px, 1.35fr) minmax(280px, 0.9fr);
-  flex: 1 1 auto;
+  grid-template-columns:
+    minmax(300px, 0.82fr)
+    minmax(340px, 1.34fr)
+    minmax(250px, 0.84fr);
   gap: 14px;
+  min-width: 0;
+  height: calc(100vh - 196px);
   min-height: 0;
-  overflow: hidden;
+  overflow-x: clip;
+  overflow-y: hidden;
+}
+
+.entry-workspace > * {
+  min-width: 0;
 }
 
 @media (max-width: 1180px) {
   .entry-page {
-    grid-template-rows: auto;
-    height: auto;
     min-height: 0;
   }
 
@@ -534,6 +704,8 @@ h1 {
 
   .entry-workspace {
     grid-template-columns: 1fr;
+    height: auto;
+    min-height: 0;
     overflow: visible;
   }
 }

@@ -2,6 +2,7 @@ import type {
   Member,
   ProjectCollaborationSettings,
   ProjectConfig,
+  ProjectEvent,
   ProjectFile,
   ProofreadRequired,
 } from "../model/types";
@@ -25,8 +26,8 @@ import {
   clearCachedEntriesForFile,
   importEntryTranslations,
   parseEntriesFromSourceFile,
+  prepareEntriesWrite,
   prepareUpdatedEntriesFromSourceFile,
-  writeEntriesForFileToStorage,
 } from "./entries";
 import {
   createProjectRootFromPackage,
@@ -331,6 +332,106 @@ export async function saveProjectToStorage(
   setPermissionProject(config);
 }
 
+async function readProjectEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
+  return (await storage.fileExists("logs/events.jsonl"))
+    ? storage.readJsonl<ProjectEvent>("logs/events.jsonl")
+    : [];
+}
+
+function createFileProjectEvent(
+  type: string,
+  userId: string,
+  fileId: string,
+  detail: Record<string, unknown> = {},
+): ProjectEvent {
+  return {
+    id: createId("event"),
+    type,
+    user_id: userId,
+    file_id: fileId,
+    created_at: nowIso(),
+    detail: {
+      file_id: fileId,
+      ...detail,
+    },
+  };
+}
+
+function appendFileEventToPlan(
+  writePlan: ReturnType<typeof createProjectWritePlan>,
+  existingEvents: ProjectEvent[],
+  event: ProjectEvent,
+): void {
+  writePlan.writeJsonl("logs/events.jsonl", [...existingEvents, event]);
+}
+
+function getFileUpdateEventType(
+  before: ProjectFile | undefined,
+  after: ProjectFile | undefined,
+  action: PermissionAction,
+): string {
+  if (action === PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION) {
+    return "file.translation_imported";
+  }
+
+  if (!before || !after) {
+    return "file.updated";
+  }
+
+  if (before.name !== after.name) {
+    return "file.renamed";
+  }
+
+  if ((before.folder ?? "") !== (after.folder ?? "")) {
+    return "file.folder_updated";
+  }
+
+  if (before.hidden !== after.hidden) {
+    return after.hidden ? "file.hidden" : "file.unhidden";
+  }
+
+  if (before.locked !== after.locked) {
+    return after.locked ? "file.locked" : "file.unlocked";
+  }
+
+  return "file.updated";
+}
+
+function createFileUpdateDetail(
+  before: ProjectFile | undefined,
+  after: ProjectFile | undefined,
+): Record<string, unknown> {
+  if (!before || !after) {
+    return {};
+  }
+
+  const detail: Record<string, unknown> = {
+    file_name: after.name,
+  };
+
+  if (before.name !== after.name) {
+    detail.before_name = before.name;
+    detail.after_name = after.name;
+  }
+
+  if ((before.folder ?? "") !== (after.folder ?? "")) {
+    detail.before_folder = before.folder ?? "";
+    detail.after_folder = after.folder ?? "";
+  }
+
+  if (before.hidden !== after.hidden) {
+    detail.before_hidden = before.hidden;
+    detail.after_hidden = after.hidden;
+  }
+
+  if (before.locked !== after.locked) {
+    detail.before_locked = before.locked;
+    detail.after_locked = after.locked;
+  }
+
+  return detail;
+}
+
 export async function loadMembers(
   root: ProjectDirectoryHandle,
 ): Promise<Member[]> {
@@ -592,7 +693,9 @@ export async function addSourceFileToStorage(
   folder?: string,
   actor?: Member | null,
 ): Promise<ProjectFileImportResult> {
-  assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_CREATE, config);
+  const writeActor = resolveProjectActor(actor);
+
+  assertCan(writeActor, PERMISSION_ACTIONS.FILE_CREATE, config);
   assertSupportedImportFile(file.name);
 
   const sourceText = await file.text();
@@ -620,14 +723,45 @@ export async function addSourceFileToStorage(
     ...config,
     files: [...config.files, addedFile],
   };
+  const preparedEntries = await prepareEntriesWrite(
+    storage,
+    addedFile.id,
+    entries,
+    {
+      chunkSize: config.settings.chunk_size,
+    },
+  );
+  const writePlan = createProjectWritePlan(storage);
+  const existingEvents = await readProjectEvents(storage);
+
+  writePlan.ensureDirectory("source");
+  writePlan.writeText(addedFile.source_path, sourceText);
+
+  for (const write of preparedEntries.writes) {
+    writePlan.writeJsonl(write.path, write.rows);
+  }
+
+  for (const path of preparedEntries.deletes) {
+    writePlan.deleteFile(path);
+  }
+
+  writePlan.writeJson("project.json", nextConfig);
+  appendFileEventToPlan(
+    writePlan,
+    existingEvents,
+    createFileProjectEvent("file.added", writeActor.id, addedFile.id, {
+      file_name: addedFile.name,
+      folder: addedFile.folder ?? "",
+      source_path: addedFile.source_path,
+      entries_path: addedFile.entries_path,
+      entry_count: entries.length,
+    }),
+  );
 
   try {
-    await storage.ensureDirectory("source");
-    await storage.writeText(addedFile.source_path, sourceText);
-    await writeEntriesForFileToStorage(storage, addedFile.id, entries, {
-      chunkSize: config.settings.chunk_size,
-    });
-    await saveProjectToStorage(storage, nextConfig);
+    await writePlan.execute();
+    cacheEntriesForFile(addedFile.id, entries);
+    setPermissionProject(nextConfig);
   } catch (error) {
     const residualPaths = await cleanupFailedSourceImport(storage, addedFile);
     clearCachedEntriesForFile(addedFile.id);
@@ -696,7 +830,9 @@ export async function updateSourceFileInStorage(
   sourceFile: File,
   actor?: Member | null,
 ): Promise<ProjectFileUpdateResult> {
-  assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_UPDATE, config);
+  const writeActor = resolveProjectActor(actor);
+
+  assertCan(writeActor, PERMISSION_ACTIONS.FILE_UPDATE, config);
   assertSupportedImportFile(sourceFile.name);
 
   const projectFile = config.files.find((file) => file.id === fileId);
@@ -727,6 +863,7 @@ export async function updateSourceFileInStorage(
     ),
   };
   const writePlan = createProjectWritePlan(storage);
+  const existingEvents = await readProjectEvents(storage);
 
   for (const write of preparedEntries.writes) {
     writePlan.writeJsonl(write.path, write.rows);
@@ -738,6 +875,15 @@ export async function updateSourceFileInStorage(
 
   writePlan.writeText(projectFile.source_path, sourceText);
   writePlan.writeJson("project.json", nextConfig);
+  appendFileEventToPlan(
+    writePlan,
+    existingEvents,
+    createFileProjectEvent("file.source_updated", writeActor.id, fileId, {
+      file_name: projectFile.name,
+      source_file_name: sourceFile.name,
+      entry_count: preparedEntries.entries.length,
+    }),
+  );
 
   await writePlan.execute();
   cacheEntriesForFile(projectFile.id, preparedEntries.entries);
@@ -805,9 +951,13 @@ export async function updateProjectFile(
         ? PERMISSION_ACTIONS.FILE_HIDE
         : PERMISSION_ACTIONS.FILE_UPDATE);
 
-  assertCan(resolveProjectActor(actor), action, config);
+  const writeActor = resolveProjectActor(actor);
+
+  assertCan(writeActor, action, config);
 
   let found = false;
+  let previousFile: ProjectFile | undefined;
+  let updatedFile: ProjectFile | undefined;
   const nextConfig: ProjectConfig = {
     ...config,
     files: config.files.map((file) => {
@@ -816,8 +966,9 @@ export async function updateProjectFile(
       }
 
       found = true;
+      previousFile = file;
 
-      return {
+      updatedFile = {
         ...file,
         ...patch,
         name: patch.name ? normalizeProjectFileName(patch.name) : file.name,
@@ -827,6 +978,8 @@ export async function updateProjectFile(
             : file.folder,
         updated_at: patch.updated_at ?? nowIso(),
       };
+
+      return updatedFile;
     }),
   };
 
@@ -834,7 +987,23 @@ export async function updateProjectFile(
     throw new Error("没有找到要更新的文件。");
   }
 
-  await saveProjectToStorage(storage, nextConfig);
+  const writePlan = createProjectWritePlan(storage);
+  const existingEvents = await readProjectEvents(storage);
+
+  writePlan.writeJson("project.json", nextConfig);
+  appendFileEventToPlan(
+    writePlan,
+    existingEvents,
+    createFileProjectEvent(
+      getFileUpdateEventType(previousFile, updatedFile, action),
+      writeActor.id,
+      fileId,
+      createFileUpdateDetail(previousFile, updatedFile),
+    ),
+  );
+
+  await writePlan.execute();
+  setPermissionProject(nextConfig);
 
   return nextConfig;
 }
@@ -856,7 +1025,9 @@ export async function deleteProjectFileFromStorage(
   fileId: string,
   actor?: Member | null,
 ): Promise<ProjectConfig> {
-  assertCan(resolveProjectActor(actor), PERMISSION_ACTIONS.FILE_DELETE, config);
+  const writeActor = resolveProjectActor(actor);
+
+  assertCan(writeActor, PERMISSION_ACTIONS.FILE_DELETE, config);
 
   const file = config.files.find((item) => item.id === fileId);
 
@@ -887,9 +1058,20 @@ export async function deleteProjectFileFromStorage(
     writePlan.deleteFile(file.source_path);
   }
   writePlan.writeJson("project.json", nextConfig);
+  appendFileEventToPlan(
+    writePlan,
+    await readProjectEvents(storage),
+    createFileProjectEvent("file.deleted", writeActor.id, fileId, {
+      file_name: file.name,
+      folder: file.folder ?? "",
+      source_path: file.source_path,
+      entries_path: file.entries_path,
+    }),
+  );
 
   await writePlan.execute();
   clearCachedEntriesForFile(file.id);
+  setPermissionProject(nextConfig);
 
   return nextConfig;
 }

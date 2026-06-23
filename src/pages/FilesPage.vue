@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import FileHistoryDialog from "../components/FileHistoryDialog.vue";
 import FileImportDialog from "../components/FileImportDialog.vue";
 import FileListItem from "../components/FileListItem.vue";
 import FileToolbar from "../components/FileToolbar.vue";
@@ -30,6 +31,10 @@ import {
   canRenameFile,
   canUpdateFile,
 } from "../services/permissions";
+import {
+  getFileHistory,
+  type FileHistoryRow,
+} from "../services/history";
 import { calculateEntryProgress } from "../services/stats";
 import {
   compareInstants,
@@ -88,6 +93,11 @@ const activeFileId = ref("");
 const pendingFolder = ref("");
 const batchSuccessCount = ref(0);
 const batchFailures = ref<BatchFailure[]>([]);
+const historyDialogOpen = ref(false);
+const historyFileName = ref("");
+const historyRows = ref<FileHistoryRow[]>([]);
+const isLoadingHistory = ref(false);
+const historyErrorMessage = ref("");
 
 const canViewFiles = computed(() => can(props.currentUser, PERMISSION_ACTIONS.FILE_VIEW));
 const canCreate = computed(() => canCreateFile(props.currentUser));
@@ -532,8 +542,23 @@ async function handleDelete(fileId: string) {
   }
 }
 
-function handleHistory() {
-  noticeMessage.value = "查看历史需要历史日志视图，本页当前只提供入口。";
+async function handleHistory(fileId: string) {
+  const file = currentProject.value.files.find((item) => item.id === fileId);
+
+  historyDialogOpen.value = true;
+  historyFileName.value = file?.name ?? fileId;
+  historyRows.value = [];
+  historyErrorMessage.value = "";
+  isLoadingHistory.value = true;
+
+  try {
+    historyRows.value = await getFileHistory(fileId);
+  } catch (error) {
+    historyErrorMessage.value =
+      error instanceof Error ? error.message : "文件历史加载失败。";
+  } finally {
+    isLoadingHistory.value = false;
+  }
 }
 
 async function scrollToLastViewedFile() {
@@ -564,7 +589,7 @@ async function scrollToLastViewedFile() {
   const rows = Array.from(
     fileListElement.value?.querySelectorAll<HTMLElement>("[data-file-id]") ?? [],
   );
-  const anchorFileId = visibleFiles.value[Math.max(0, fileIndex - 1)]?.file.id;
+  const anchorFileId = visibleFiles.value[Math.max(0, fileIndex - 2)]?.file.id;
   const anchorRow = rows.find(
     (element) => element.dataset.fileId === anchorFileId,
   );
@@ -746,6 +771,15 @@ onMounted(loadFileSummaries);
       "
       @cancel="closeDialog"
       @submit="handleDialogSubmit"
+    />
+
+    <FileHistoryDialog
+      :open="historyDialogOpen"
+      :file-name="historyFileName"
+      :rows="historyRows"
+      :is-loading="isLoadingHistory"
+      :error-message="historyErrorMessage"
+      @close="historyDialogOpen = false"
     />
   </section>
 </template>

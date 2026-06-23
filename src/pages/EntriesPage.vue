@@ -451,12 +451,12 @@ onMounted(loadPageData);
     </ProjectPageHeader>
 
     <div
+      v-if="errorMessage || noticeMessage"
       class="message-row"
-      :class="{ empty: !errorMessage && !noticeMessage }"
       aria-live="polite"
     >
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
-      <p v-else-if="noticeMessage" class="notice-message">{{ noticeMessage }}</p>
+      <p v-else class="notice-message">{{ noticeMessage }}</p>
     </div>
 
     <section class="filter-bar" aria-label="词条筛选">
@@ -809,8 +809,8 @@ onMounted(loadPageData);
 <style scoped>
 .entries-page {
   display: grid;
-  grid-template-rows: auto 24px auto auto minmax(0, 1fr);
-  gap: 10px;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 16px;
   height: calc(100vh - 108px);
   min-height: 0;
   overflow: hidden;
@@ -877,10 +877,6 @@ h3 {
   min-width: 0;
   overflow: hidden;
   line-height: 1.4;
-}
-
-.message-row.empty {
-  visibility: hidden;
 }
 
 label {

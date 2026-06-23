@@ -483,11 +483,11 @@ async function copyEntryId() {
 .empty-editor {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 9px;
   height: 100%;
   min-height: 0;
   overflow: auto;
-  padding: 20px;
+  padding: 14px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #ffffff;
@@ -495,8 +495,9 @@ async function copyEntryId() {
 
 .editor-header {
   display: flex;
+  align-items: start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 h1,
@@ -507,10 +508,10 @@ dd {
 }
 
 h1 {
-  margin-top: 8px;
+  margin-top: 5px;
   color: #111827;
-  font-size: 24px;
-  line-height: 1.25;
+  font-size: 22px;
+  line-height: 1.18;
 }
 
 .status-row {
@@ -523,8 +524,8 @@ h1 {
 .dispute-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 26px;
-  padding: 0 9px;
+  min-height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
   font-size: 13px;
   font-weight: 700;
@@ -555,7 +556,7 @@ h1 {
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .workflow-actions {
@@ -566,11 +567,11 @@ h1 {
 .source-panel,
 .target-panel {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .source-panel {
-  padding: 16px;
+  padding: 10px 12px;
   border-radius: 8px;
   background: #f8fafb;
 }
@@ -580,7 +581,7 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid #d7dde5;
   border-radius: 8px;
   background: #f8fafb;
@@ -605,22 +606,28 @@ dt {
 }
 
 .source-panel p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: auto;
+  max-height: 6.8em;
   color: #111827;
-  font-size: 17px;
-  line-height: 1.7;
+  font-size: 16px;
+  line-height: 1.55;
 }
 
 textarea {
   width: 100%;
-  min-height: 150px;
-  height: 160px;
+  min-height: 96px;
+  height: 96px;
+  max-height: 30vh;
   resize: vertical;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid #c8d0dc;
   border-radius: 8px;
   color: #1f2937;
   font: inherit;
-  line-height: 1.7;
+  line-height: 1.55;
 }
 
 textarea:focus {
@@ -641,12 +648,12 @@ textarea:disabled {
 .meta-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(88px, 0.45fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .meta-grid div {
   min-width: 0;
-  padding: 10px;
+  padding: 8px;
   border-radius: 6px;
   background: #f8fafb;
 }
@@ -659,8 +666,8 @@ dd {
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 12px;
   border-radius: 6px;
   font: inherit;
   cursor: pointer;

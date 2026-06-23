@@ -525,6 +525,7 @@ watch(visibleTasks, (nextTasks) => {
 <style scoped>
 .tasks-page {
   display: grid;
+  align-content: start;
   gap: 16px;
   min-height: calc(100vh - 108px);
 }

@@ -112,6 +112,7 @@ const currentStats = ref<BasicProjectStats | null>(null);
 const currentRecentRecordId = ref("");
 const taskCount = ref(0);
 const lastViewedFileId = ref("");
+const lastViewedEntryByFileId = ref<Record<string, string>>({});
 const recentProjects = ref<RecentProjectRecord[]>(listRecentProjects());
 const isOpeningProject = ref(false);
 const isOpeningProjectFile = ref(false);
@@ -307,6 +308,7 @@ async function enterOpenedProject(
 ) {
   currentProject.value = project;
   lastViewedFileId.value = "";
+  lastViewedEntryByFileId.value = {};
   configureProjectServices(project);
   await refreshProjectSummary();
 
@@ -667,6 +669,7 @@ async function handleDeleteProjectRequested() {
     currentProject.value = null;
     currentRecentRecordId.value = "";
     lastViewedFileId.value = "";
+    lastViewedEntryByFileId.value = {};
     currentStats.value = null;
     taskCount.value = 0;
     loginErrorMessage.value = "";
@@ -745,6 +748,18 @@ function handleOpenCommentTarget(comment: Comment) {
   navigate(
     `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files/${encodeURIComponent(fileId)}?${query.toString()}`,
   );
+}
+
+function handleEntryViewed(fileId: string, entryId: string) {
+  if (!fileId || !entryId) {
+    return;
+  }
+
+  lastViewedFileId.value = fileId;
+  lastViewedEntryByFileId.value = {
+    ...lastViewedEntryByFileId.value,
+    [fileId]: entryId,
+  };
 }
 
 function handlePackedProjectDirty() {
@@ -947,7 +962,9 @@ onBeforeUnmount(() => {
         :target-entry-index="route.entryIndex"
         :target-assist-tab="route.assistTab"
         :target-comment-id="route.commentId"
+        :last-viewed-entry-id="lastViewedEntryByFileId[route.fileId]"
         @open-comment-target="handleOpenCommentTarget"
+        @entry-viewed="handleEntryViewed"
       />
 
       <TasksPage

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type { Entry, EntryStatus, ProjectWorkflowSettings } from "../model/types";
 import { getEntryWorkflowLabel } from "../model/status";
 
@@ -11,6 +11,13 @@ const props = defineProps<{
   searchText: string;
   statusFilter: EntryFilter;
   totalCount: number;
+  filteredCount: number;
+  page: number;
+  pageSize: number;
+  pageSizeOptions: readonly number[];
+  totalPages: number;
+  pageStart: number;
+  pageEnd: number;
   workflow?: ProjectWorkflowSettings;
 }>();
 
@@ -18,19 +25,63 @@ const emit = defineEmits<{
   select: [entry: Entry];
   updateSearchText: [value: string];
   updateStatusFilter: [value: EntryFilter];
+  updatePage: [value: number];
+  updatePageSize: [value: number];
 }>();
 
+const listRef = ref<HTMLElement | null>(null);
+
 function summarize(text: string): string {
-  return text.length > 54 ? `${text.slice(0, 54)}...` : text;
+  return text.length > 68 ? `${text.slice(0, 68)}...` : text;
 }
 
 const countLabel = computed(() => {
   const isFiltered = props.statusFilter !== "all" || Boolean(props.searchText.trim());
 
   return isFiltered
-    ? `匹配 ${props.entries.length} 条 / 共 ${props.totalCount} 条`
+    ? `匹配 ${props.filteredCount} 条 / 共 ${props.totalCount} 条`
     : `共 ${props.totalCount} 条`;
 });
+
+const pageRangeLabel = computed(() => {
+  if (props.filteredCount === 0) {
+    return "0 / 0";
+  }
+
+  return `${props.pageStart}-${props.pageEnd} / ${props.filteredCount}`;
+});
+
+function scrollSelectedEntryIntoSecondRow() {
+  void nextTick(() => {
+    const list = listRef.value;
+
+    if (!list || !props.selectedEntryId) {
+      return;
+    }
+
+    const rows = Array.from(
+      list.querySelectorAll<HTMLElement>("[data-entry-id]"),
+    );
+    const selectedRow = rows.find(
+      (row) => row.dataset.entryId === props.selectedEntryId,
+    );
+
+    if (!selectedRow) {
+      list.scrollTop = 0;
+      return;
+    }
+
+    const previousRow = selectedRow.previousElementSibling as HTMLElement | null;
+
+    list.scrollTop = previousRow ? previousRow.offsetTop : selectedRow.offsetTop;
+  });
+}
+
+watch(
+  () => [props.selectedEntryId, props.entries.map((entry) => entry.id).join("|")],
+  scrollSelectedEntryIntoSecondRow,
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -62,12 +113,13 @@ const countLabel = computed(() => {
       </label>
     </div>
 
-    <div class="entry-list" role="list">
+    <div ref="listRef" class="entry-list" role="list">
       <button
         v-for="entry in entries"
         :key="entry.id"
         class="entry-row"
         :class="{ selected: entry.id === selectedEntryId, disputed: entry.disputed }"
+        :data-entry-id="entry.id"
         type="button"
         @click="emit('select', entry)"
       >
@@ -80,7 +132,65 @@ const countLabel = computed(() => {
       </button>
     </div>
 
-    <p class="list-count">{{ countLabel }}</p>
+    <footer class="entry-pagination" aria-label="词条分页">
+      <div class="pagination-controls">
+        <button
+          type="button"
+          :disabled="page <= 1"
+          aria-label="第一页"
+          @click="emit('updatePage', 1)"
+        >
+          «
+        </button>
+        <button
+          type="button"
+          :disabled="page <= 1"
+          aria-label="上一页"
+          @click="emit('updatePage', page - 1)"
+        >
+          ‹
+        </button>
+
+        <span class="page-indicator">{{ page }} / {{ totalPages }}</span>
+
+        <button
+          type="button"
+          :disabled="page >= totalPages"
+          aria-label="下一页"
+          @click="emit('updatePage', page + 1)"
+        >
+          ›
+        </button>
+        <button
+          type="button"
+          :disabled="page >= totalPages"
+          aria-label="最后一页"
+          @click="emit('updatePage', totalPages)"
+        >
+          »
+        </button>
+
+        <select
+          class="page-size-select"
+          :value="pageSize"
+          aria-label="每页词条数"
+          @change="emit('updatePageSize', Number(($event.target as HTMLSelectElement).value))"
+        >
+          <option
+            v-for="option in pageSizeOptions"
+            :key="option"
+            :value="option"
+          >
+            {{ option }}
+          </option>
+        </select>
+      </div>
+
+      <p class="pagination-summary">
+        <span>{{ countLabel }}</span>
+        <span>{{ pageRangeLabel }}</span>
+      </p>
+    </footer>
   </aside>
 </template>
 
@@ -98,14 +208,14 @@ const countLabel = computed(() => {
 
 .list-tools {
   display: grid;
-  gap: 12px;
-  padding: 14px;
+  gap: 9px;
+  padding: 10px 12px;
   border-bottom: 1px solid #e5e7eb;
 }
 
 label {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 label span {
@@ -116,7 +226,7 @@ label span {
 input,
 select {
   width: 100%;
-  min-height: 38px;
+  min-height: 34px;
   padding: 0 10px;
   border: 1px solid #c8d0dc;
   border-radius: 6px;
@@ -127,22 +237,25 @@ select {
 .entry-list {
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 10px;
+  padding: 0;
   scrollbar-gutter: stable;
 }
 
 .entry-row {
   display: grid;
-  gap: 7px;
+  gap: 4px;
   width: 100%;
-  min-height: 72px;
-  padding: 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  min-height: 58px;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  border-left: 3px solid transparent;
+  border-radius: 0;
   background: #ffffff;
   color: #1f2937;
   text-align: left;
@@ -151,50 +264,117 @@ select {
 
 .entry-row:hover,
 .entry-row.selected {
-  border-color: #2f6f73;
+  border-left-color: #2f6f73;
   background: #f0f8f6;
 }
 
 .entry-row.disputed {
-  border-left: 4px solid #b45309;
+  border-left-color: #b45309;
+}
+
+.entry-row.selected.disputed {
+  border-left-color: #2f6f73;
 }
 
 .entry-source {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
   color: #111827;
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .entry-row-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .entry-row-meta span {
-  padding: 2px 6px;
+  padding: 1px 6px;
   border-radius: 999px;
   background: #f3f5f7;
   color: #5b6472;
   font-size: 12px;
 }
 
-.list-count {
-  margin: 0;
-  padding: 11px 14px;
+.entry-pagination {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
   border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.pagination-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
   color: #5b6472;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pagination-controls {
+  display: grid;
+  grid-template-columns: 30px 30px minmax(54px, 1fr) 30px 30px 56px;
+  gap: 5px;
+  align-items: center;
+  min-width: 0;
+}
+
+.pagination-controls button,
+.page-size-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2937;
+}
+
+.pagination-controls button {
+  padding: 0;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.pagination-controls button:not(:disabled):hover {
+  border-color: #2f6f73;
+  background: #eef7f5;
+}
+
+.pagination-controls button:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.page-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 0;
+  border: 1px solid #c8d0dc;
+  border-radius: 6px;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.page-size-select {
+  padding: 0 4px;
   font-size: 13px;
 }
 
 @media (max-width: 1180px) {
   .entry-side-list {
-    height: auto;
-  }
-
-  .entry-list {
-    overflow: visible;
+    height: min(72vh, 680px);
   }
 }
 </style>

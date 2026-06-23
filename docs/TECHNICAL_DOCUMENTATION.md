@@ -2,11 +2,11 @@
 
 本文档面向维护 Textile 的开发者。它描述当前代码的真实结构、数据流、存储格式、权限、工作流、修改包、更新机制和已知限制。
 
-本文档不是理想架构提案。若早期设计文档与当前代码冲突，以当前代码、本文档和根目录 `AGENTS.md` 为准。
+本文档不是理想架构提案。若早期设计文档与当前代码冲突，以当前代码和本文档为准。
 
-## 0. 文档分工与维护索引
+## 0. 文档定位与当前结构索引
 
-文档分工：
+相关文档：
 
 - `D:\documents\Textile_Project\vue-typescript-project-tutorial.md` 是长期稳定的 Vue 3 + TypeScript 学习教程，放在项目仓库外，不算 Textile 项目本体的一部分。
 - 本文档承接当前实现细节，包括目录结构、文件清单、模块职责、数据流、业务流程、导入导出、权限、统计、签名密钥、更新机制和维护注意事项。
@@ -176,22 +176,6 @@ src-tauri/
 - `src-tauri/tauri.conf.json`：桌面窗口、打包资源、Tauri Updater 公钥和 GitHub Releases 更新端点。
 - `src-tauri/src/lib.rs`：注册打开内置手册、生成文件保存会话、分块写入、完成保存、取消保存等 Tauri 命令。
 - `src-tauri/capabilities/default.json`：启用 core 默认权限、updater 默认权限和 process restart。
-
-程序修改后的文档更新优先级：
-
-1. 用户操作、提示、流程或概念变化：优先更新 `docs/MANUAL.md`。
-2. 代码结构、模块职责、数据格式、权限、统计、签名密钥、导入导出、更新机制变化：优先更新本文档。
-3. 公开命令、依赖、启动方式、文档入口变化：更新 `README.md`。
-4. 用户可见行为、兼容性、数据语义或重要修复变化：更新 `CHANGELOG.md` 的 `[Unreleased]`。
-5. 只影响 Vue/TypeScript 通用学习方法且长期稳定：更新仓库外的 `D:\documents\Textile_Project\vue-typescript-project-tutorial.md`。
-
-维护原则：
-
-- 不把完整文件清单、函数细节、当前业务流程塞进长期教程。
-- 不把零基础教程写进用户手册。
-- 不在 README 中复制技术文档的大段内容。
-- 新增文件、页面、service、数据格式或 Tauri 命令后，要同步更新本文档对应章节。
-- 如果无法确认某项实现，必须标注“需要进一步确认”，不要按预期架构编造。
 
 ## 1. 项目定位与架构原则
 
@@ -840,6 +824,19 @@ comments/<file_id>/<6位entry index>.jsonl
 - 恢复事件额外保存 `restored_from_event_id` 和 `restored_from_snapshot`，明确恢复的是该事件的修改前或修改后快照。
 - 旧日志缺少译文或状态快照时继续作为普通审计事件读取，但不能恢复；仅缺少译者快照时仍可恢复，译者按未知处理。
 
+文件历史事件：
+
+- `file.added`：添加源文件。
+- `file.source_updated`：更新源文件。
+- `file.translation_imported`：通过文件页导入译文。
+- `file.renamed`：重命名文件。
+- `file.folder_updated`：修改文件分组。
+- `file.hidden` / `file.unhidden`：隐藏或取消隐藏文件。
+- `file.locked` / `file.unlocked`：锁定或解锁文件。
+- `file.deleted`：删除文件。
+
+`history.ts` 的 `getFileHistory(fileId)` 会按 `event.file_id`、旧日志中的 `entry_id` 文件前缀和 `detail.file_id` 聚合文件相关事件，并映射为只读 `FileHistoryRow`。文件页“更多 > 查看历史”只展示历史，不做恢复或回滚。源文件更新、文件元数据更新和文件删除会把文件事件与业务写入放入同一个 `ProjectWritePlan`；添加源文件也通过写入计划提交 source、entries、`project.json` 和文件事件。
+
 当前日志追加实现会读取整个 JSONL、加入新事件后重写文件。日志很大时会有性能和并发风险。
 
 ## 17. `source/`
@@ -848,7 +845,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 `ProjectFile.source_path` 指向实际路径。新增文件使用基于唯一 `file_id` 的 source 路径，不依赖显示文件名保持唯一。旧项目中共享同一 `source_path` 的记录仍兼容读取，删除文件时只有不存在其他引用才删除源文件。
 
-添加源文件时会先解析内存内容，再写 source 和 entries，最后更新 `project.json`。
+添加源文件时会先解析内存内容，再通过 `ProjectWritePlan` 一次提交 source、entries、`project.json` 和 `file.added` 事件。
 
 项目更新包会包含源文件，`.hproj` 也会递归打包 source。
 
@@ -920,7 +917,7 @@ comments/<file_id>/<6位entry index>.jsonl
 - 暴露文本、二进制、JSON、JSONL、目录、存在性和删除操作。
 - 保留 `root` 作为底层 adapter 兼容出口，供项目包打包、最近项目句柄等低层能力使用。
 
-维护原则：
+实现边界：
 
 - 新增业务 service 应优先接收或读取 `ProjectStorage`。
 - 不要在页面中直接调用 storage 写项目文件，页面仍应调用 service。
@@ -972,12 +969,12 @@ comments/<file_id>/<6位entry index>.jsonl
 
 数据一致性：
 
-- 添加源文件先解析，写 source，再写 entries，最后写 project。
+- 添加源文件先解析，再用同一个写入计划写 source、entries、`project.json` 和文件历史事件。
 - 添加失败时尝试删除中间 source/entries，并报告残留。
-- 项目初始化、源文件更新、文件删除和普通修改包导入使用 `projectWritePlan.ts` 的补偿式写入计划。
+- 项目初始化、添加源文件、源文件更新、文件删除和普通修改包导入使用 `projectWritePlan.ts` 的补偿式写入计划。
 - 写入计划在修改前保存目标文件原始字节，失败时按反序恢复；本次创建的文件和空目录会清理。
-- 源文件更新把 entries chunks、source 和 `project.json` 放在同一计划，缓存只在提交成功后更新。
-- 删除文件逐个记录并删除 entries 文件，最后更新 `project.json`。
+- 源文件更新把 entries chunks、source、`project.json` 和 `file.source_updated` 事件放在同一计划，缓存只在提交成功后更新。
+- 删除文件逐个记录并删除 entries 文件，最后同时更新 `project.json` 和 `file.deleted` 事件。
 
 已知风险：
 
@@ -2080,7 +2077,9 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
-`App.vue` 维护当前会话最近查看文件 ID，并传给 `FilesPage` 用于滚动定位和“最近查看”标注；该状态不写入项目数据，也不属于 `recentProjects` 持久记录。
+`App.vue` 维护当前会话最近查看文件 ID，并传给 `FilesPage` 用于滚动定位和“最近查看”标注；该状态不写入项目数据，也不属于 `recentProjects` 持久记录。`FilesPage` 自动滚动时优先用最近查看文件前方第二个文件作为锚点，让最近查看文件停在列表第三行；前方不足两个文件时按可用文件靠前定位。
+
+`App.vue` 还维护当前会话内的每文件最近查看词条 ID，并传给 `EntryPage`。`EntryPage` 在 URL 没有显式 `entry` 或 `index` 参数时优先选中该文件上次查看的词条；如果词条不存在，则回退到当前文件第一条。该状态同样不写入项目数据，也不属于 `recentProjects` 持久记录。
 
 工作台侧边栏的“使用手册”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，解析打包资源后通过官方 `tauri-plugin-opener` 交给系统默认 PDF 阅读器，不再手写 `cmd`、`open` 或 `xdg-open` 平台命令。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
 
@@ -2098,19 +2097,21 @@ Vite 构建会把该文件输出为 `dist/THIRD_PARTY_NOTICES.txt`；`src-tauri/
 
 ## 46. 词条编辑页滚动布局
 
-`EntryPage` 桌面端使用固定视口剩余高度：标题区占自然高度，内容区使用 `minmax(0, 1fr)`。内容区内部通过 flex 将提示消息作为自然高度，将三栏工作区作为剩余高度。
+`EntryPage` 桌面端使用固定视口剩余高度：标题区占自然高度，三栏工作区使用确定的剩余视口高度，内部组件各自滚动。
 
 滚动边界：
 
-- `EntrySideList` 只有词条列表滚动，搜索、筛选和数量统计不进入滚动区。
+- `EntrySideList` 只有词条列表滚动，搜索、筛选和分页区不进入滚动区；分页区固定在组件底部。
 - `EntryEditor` 在桌面三栏中独立滚动，避免内容被工作区裁掉。
 - `EntryAssistPanel` 只有当前 tab 内容滚动，tab 按钮保持可见。
 - `1180px` 以下改为单列和页面整体滚动，不保留桌面端内部滚动约束。
 
-维护要求：
+实现边界：
 
-- 新增词条页提示、工具栏或面板时，不能破坏 `height -> min-height: 0 -> overflow` 的高度链。
-- 搜索和筛选不引入分页；列表底部文案只表示匹配数量和总数。
+- 新增词条页提示、工具栏或面板时，需要保持 `height -> min-height: 0 -> overflow` 的高度链。
+- 左侧文件词条列表由 `EntryPage` 管理分页窗口起点和每页数量，`EntrySideList` 只接收当前窗口词条并负责组件内滚动定位。桌面端默认每页 50 条，可切换 20、100、200、500 或 800 条。列表行采用密集行样式，分页控件固定在列表组件底部。
+- 打开文件时，`EntryPage` 将分页窗口起点定位到目标词条前一条；`EntrySideList` 再在自身滚动区内把选中词条尽量滚动到第二行。前方没有词条时停在第一行。
+- 中间 `EntryEditor` 采用紧凑布局，原文和译文区域限制默认高度，尽量让常规词条一屏显示；长文本仍允许编辑器内部滚动兜底。
 - 右侧术语、批注、上下文和历史面板与左侧列表共享同一桌面高度约束。
 
 词条管理页使用独立的全宽紧凑表格：筛选和批量工具栏保持在表格外，表头在表格滚动区内固定，分页区保持可见。桌面端默认每页 50 条，可切换 20、100、200、500 或 800 条；窄屏保留横向表格滚动，不把批量操作塞进原有三栏编辑侧栏。
@@ -2379,10 +2380,10 @@ GitHub Release 应上传：
 
 已实现：
 
-- 添加源文件最后更新 project 索引。
+- 添加源文件通过补偿式写入计划提交 source、entries、project 索引和文件历史事件。
 - 添加失败尝试清理中间文件。
 - 项目创建失败会清理本次创建的初始化文件和空目录。
-- 源文件更新和删除通过补偿式写入计划恢复 source、entries 和 project 索引。
+- 源文件更新和删除通过补偿式写入计划恢复 source、entries、project 索引和文件历史事件。
 - 普通修改包先计算最终内容，再通过同一个写入计划提交。
 - 修改包预检查失败不写入。
 - 项目更新包最后推进 project revision。
@@ -2399,7 +2400,7 @@ GitHub Release 应上传：
 - 多标签页同时编辑同一项目没有锁和合并。
 - 直接磁盘修改无法被权限系统阻止。
 
-维护原则：
+写入风险控制：
 
 1. 先读取、解析和验证。
 2. 先写正文，最后写索引或 revision。
@@ -2506,7 +2507,7 @@ npm run test:unit
 npm run build
 ```
 
-注意 `npm run build` 会通过 prebuild 更新 `public/version.json`。纯文档任务若要求不改运行文件，不应运行 build，除非允许该生成文件变化。
+注意 `npm run build` 会通过 prebuild 更新 `public/version.json`。
 
 建议手动回归：
 
@@ -2549,5 +2550,3 @@ npm run build
 
 1. 发布前复核 Tauri Updater 公钥、HTTPS 更新端点和更新清单。
 2. 增加端到端手动测试清单或 Playwright 流程。
-
-任何维护都应遵守根目录 `AGENTS.md`：保持本地优先、service 分层、统一权限、统一统计、修改包协作和最小范围修改。
