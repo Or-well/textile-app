@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import BatchSelectionBar from "../components/BatchSelectionBar.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import {
   buildMemberOptions,
@@ -538,61 +539,44 @@ onMounted(loadPageData);
       </label>
     </section>
 
-    <section class="batch-bar" aria-label="批量操作">
-      <div class="selection-summary">
-        <strong>已选 {{ selectedCount }} 条</strong>
-        <span v-if="hiddenSelectedCount > 0">
-          其中 {{ hiddenSelectedCount }} 条不在当前筛选结果中
-        </span>
-      </div>
-
-      <div class="selection-actions">
-        <button
-          type="button"
-          class="secondary-button"
-          :disabled="filteredEntries.length === 0"
-          @click="selectAllFiltered"
+    <BatchSelectionBar
+      :selected-count="selectedCount"
+      :hidden-selected-count="hiddenSelectedCount"
+      :filtered-count="filteredEntries.length"
+      item-unit="条"
+      :busy="isPreviewing"
+      submit-label="预检并执行"
+      :permission-message="
+        availableBatchActions.length === 0
+          ? '当前成员没有可用的批量操作权限。'
+          : undefined
+      "
+      @select-all="selectAllFiltered"
+      @clear="clearSelection"
+      @submit="handlePreviewBatch"
+    >
+      <select
+        v-model="selectedOperation"
+        class="batch-operation-select"
+        aria-label="批量操作"
+      >
+        <option
+          v-for="action in availableBatchActions"
+          :key="action.value"
+          :value="action.value"
         >
-          选择全部筛选结果
-        </button>
-        <button
-          type="button"
-          class="secondary-button"
-          :disabled="selectedCount === 0"
-          @click="clearSelection"
-        >
-          清空选择
-        </button>
-      </div>
-
-      <div v-if="availableBatchActions.length > 0" class="batch-controls">
-        <select v-model="selectedOperation" aria-label="批量操作">
-          <option
-            v-for="action in availableBatchActions"
-            :key="action.value"
-            :value="action.value"
-          >
-            {{ action.label }}
-          </option>
-        </select>
-        <input
-          v-if="batchNeedsNote"
-          v-model="batchNote"
-          type="text"
-          maxlength="500"
-          placeholder="统一说明（可选，将写入每条词条批注）"
-        />
-        <button
-          type="button"
-          class="primary-button"
-          :disabled="selectedCount === 0 || isPreviewing"
-          @click="handlePreviewBatch"
-        >
-          {{ isPreviewing ? "正在预检..." : "预检并执行" }}
-        </button>
-      </div>
-      <p v-else class="permission-message">当前成员没有可用的批量操作权限。</p>
-    </section>
+          {{ action.label }}
+        </option>
+      </select>
+      <input
+        v-if="batchNeedsNote"
+        v-model="batchNote"
+        class="batch-note-input"
+        type="text"
+        maxlength="500"
+        placeholder="统一说明（可选，将写入每条词条批注）"
+      />
+    </BatchSelectionBar>
 
     <p v-if="isLoading" class="empty-state">正在加载项目词条...</p>
 
@@ -808,16 +792,14 @@ onMounted(loadPageData);
 
 <style scoped>
 .entries-page {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 16px;
   height: calc(100vh - 108px);
   min-height: 0;
   overflow: hidden;
 }
 
-.batch-controls,
-.selection-actions,
 .pagination,
 .batch-dialog header,
 .batch-dialog footer {
@@ -910,61 +892,11 @@ input[type="checkbox"] {
   padding: 0;
 }
 
-.batch-bar {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.8fr) auto minmax(360px, 1.4fr);
-  align-items: center;
-  gap: 8px 12px;
-  min-height: 52px;
-  padding: 8px 12px;
-  overflow: hidden;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #f8fafb;
+.batch-operation-select {
+  min-width: 116px;
 }
 
-.selection-summary {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.selection-summary strong {
-  color: #174346;
-  font-size: 14px;
-}
-
-.selection-summary span,
-.permission-message {
-  color: #5b6472;
-  font-size: 12px;
-}
-
-.selection-summary strong,
-.selection-summary span,
-.permission-message {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.selection-actions,
-.batch-controls {
-  gap: 8px;
-  min-width: 0;
-}
-
-.batch-controls {
-  min-width: 0;
-  justify-content: flex-end;
-}
-
-.batch-controls select {
-  flex: 0 0 116px;
-}
-
-.batch-controls input {
+.batch-note-input {
   flex: 1 1 260px;
   max-width: 360px;
 }
@@ -1019,9 +951,9 @@ button:disabled {
 }
 
 .table-frame {
+  flex: 1 1 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  height: 100%;
   min-height: 0;
   overflow: hidden;
   border: 1px solid #d7dde5;
@@ -1315,27 +1247,12 @@ tbody tr.selected {
   .search-field {
     grid-column: span 2;
   }
-
-  .batch-bar {
-    grid-template-columns: minmax(150px, 1fr) minmax(250px, auto);
-  }
-
-  .batch-controls {
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-  }
-
-  .batch-controls input {
-    max-width: none;
-  }
 }
 
 @media (max-width: 840px) {
   .entries-page {
-    grid-template-rows: auto 24px auto auto minmax(560px, 1fr);
     height: auto;
     min-height: 0;
-    overflow: visible;
   }
 
   .filter-bar {
@@ -1346,23 +1263,10 @@ tbody tr.selected {
     grid-column: 1 / -1;
   }
 
-  .batch-controls {
-    justify-content: stretch;
-  }
-
-  .batch-controls > * {
-    flex: 1 1 100%;
+  .batch-operation-select,
+  .batch-note-input {
+    width: 100%;
     max-width: none;
-  }
-
-  .batch-bar {
-    grid-template-columns: 1fr;
-    overflow: visible;
-  }
-
-  .selection-actions,
-  .batch-controls {
-    flex-wrap: wrap;
   }
 
   .table-frame {

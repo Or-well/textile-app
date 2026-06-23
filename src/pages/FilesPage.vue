@@ -1137,6 +1137,7 @@ onMounted(loadFileSummaries);
       :selected-count="selectedCount"
       :hidden-selected-count="hiddenSelectedCount"
       :filtered-count="visibleFiles.length"
+      item-unit="个"
       :busy="isPreviewingBatch"
       :submit-disabled="
         availableBatchActions.length === 0 ||

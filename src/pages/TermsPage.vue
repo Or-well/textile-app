@@ -506,6 +506,7 @@ onMounted(loadTermRows);
       :selected-count="selectedCount"
       :hidden-selected-count="hiddenSelectedCount"
       :filtered-count="filteredTerms.length"
+      item-unit="条"
       :busy="isPreviewingBatch"
       :submit-disabled="
         availableBatchActions.length === 0 ||

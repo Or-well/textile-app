@@ -3,6 +3,7 @@ defineProps<{
   selectedCount: number;
   hiddenSelectedCount?: number;
   filteredCount: number;
+  itemUnit?: string;
   busy?: boolean;
   submitDisabled?: boolean;
   submitLabel: string;
@@ -19,9 +20,9 @@ const emit = defineEmits<{
 <template>
   <section class="batch-selection-bar" aria-label="批量操作">
     <div class="selection-summary">
-      <strong>已选 {{ selectedCount }} 项</strong>
+      <strong>已选 {{ selectedCount }} {{ itemUnit ?? "项" }}</strong>
       <span v-if="hiddenSelectedCount">
-        其中 {{ hiddenSelectedCount }} 项不在当前筛选结果中
+        其中 {{ hiddenSelectedCount }} {{ itemUnit ?? "项" }}不在当前筛选结果中
       </span>
     </div>
 
@@ -74,12 +75,21 @@ const emit = defineEmits<{
 .selection-summary {
   display: grid;
   gap: 3px;
+  min-width: 0;
 }
 
 .selection-summary span,
 .permission-message {
   color: #5b6472;
   font-size: 13px;
+}
+
+.selection-summary strong,
+.selection-summary span,
+.permission-message {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .selection-actions,
