@@ -22,15 +22,17 @@ const selectedFiles = ref<File[]>([]);
 
 const legacyJsonSample = `[
   {
-    "key": "KEY 键值",
-    "original": "source text 原文",
-    "translation": "translation text 译文",
-    "context": "Context 上下文 optional"
+    "key": "line_000001",
+    "speaker": "角色名",
+    "source": "原文内容",
+    "target": "译文内容",
+    "context": "上下文，可留空"
   },
   {
-    "key": "KEY 键值 2",
-    "original": "source text 原文 2",
-    "translation": "translation text 译文 2"
+    "key": "line_000002",
+    "speaker": "",
+    "source": "第二条原文",
+    "target": ""
   }
 ]`;
 
@@ -43,22 +45,20 @@ const exchangeJsonSample = `[
     "target": "译文",
     "context": "上下文",
     "status": "proofread",
-    "translated_by": "",
+    "translated_by": "translator_1",
     "proofread_count": 1,
-    "proofread_by": [],
+    "proofread_by": ["proofreader_1"],
     "reviewed_by": ""
   }
 ]`;
 
-const exchangeJsonlSample = `{"key":"line_000001","index":1,"speaker":"角色名","source":"原文","target":"译文","context":"上下文","status":"proofread","translated_by":"","proofread_count":1,"proofread_by":[],"reviewed_by":""}
+const exchangeJsonlSample = `{"key":"line_000001","index":1,"speaker":"角色名","source":"原文","target":"译文","context":"上下文","status":"proofread","translated_by":"translator_1","proofread_count":1,"proofread_by":["proofreader_1"],"reviewed_by":""}
 {"key":"line_000002","index":2,"speaker":"","source":"第二条原文","target":"","context":"","status":"untranslated","translated_by":"","proofread_count":0,"proofread_by":[],"reviewed_by":""}`;
 
-const csvSample = `#正式使用时请删除前三行。Please remove the first 3 lines in production.
-#键值,原文,译文,上下文（可选）
-#Key,Source,Translation,Context(optional)
-key_apple,apple,苹果,"A common, round fruit produced by the tree Malus domestica."
-key_pear,pear,梨
-key_peach,peach,桃子`;
+const csvSample = `# 以 # 开头的说明行会被忽略，可以保留或删除。
+key,speaker,source,target,context
+line_000001,角色名,原文内容,译文内容,上下文，可留空
+line_000002,,第二条原文,,`;
 
 const importNotes = computed(() => {
   if (props.importMode === "translation") {
@@ -79,7 +79,7 @@ const importNotes = computed(() => {
 
   return [
     ".txt / .ks：按行生成词条；.csv：只读取词条内容，不保存工作流状态。",
-    "旧 JSON / JSONL 继续按 key、source/original、target/translation、context 等字段导入。",
+    "JSON / JSONL 推荐使用 key、speaker、source、target、context；旧字段 original / translation 继续兼容。",
     "Textile 词条交换 JSON / JSONL 可额外保留 status、校对次数和相关成员记录。",
   ];
 });
@@ -88,7 +88,7 @@ const importSamples = computed(() => {
   const contentSamples = [
     {
       title: "普通 JSON 示例",
-      description: "兼容旧格式，只包含词条内容。",
+      description: "包含键值、说话人、原文、译文和上下文。",
       fileName: "textile-content-sample.json",
       mimeType: "application/json;charset=utf-8",
       sampleText: legacyJsonSample,
@@ -96,7 +96,7 @@ const importSamples = computed(() => {
     },
     {
       title: "CSV 示例",
-      description: "逗号分隔，支持注释说明行。",
+      description: "带表头，支持说话人和注释说明行。",
       fileName: "textile-import-sample.csv",
       mimeType: "text/csv;charset=utf-8",
       sampleText: csvSample,
