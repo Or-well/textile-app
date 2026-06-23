@@ -1640,6 +1640,7 @@ manifest 示例：
 - 导出页在签名前调用 `getMemberSigningReadiness()`。缺少可用密钥时，`SigningKeySetupDialog` 根据权限提供导入已有私钥或生成新密钥；已有有效公钥但本机未加载私钥时，导入必须匹配当前公钥。
 - `project_update` 已有有效公钥但缺少私钥时只允许导入当前旧私钥，不允许在发布流程中直接生成替代密钥。密钥更换必须走由旧密钥签名的轮换过渡包。
 - 负责人身份密钥轮换复用 `project_update` 格式：包内公开成员信息可携带新公钥，但 `signature.json` 仍由接收端已信任的旧公钥对应私钥签出。导入端不得使用包内新公钥验证该包自身。
+- `member_changes` 和 `task_changes` 可通过 `includeOwnCredentials` 选择性附带当前导出人的账户凭据补丁。补丁写入 `members/members.json`，结构仍是 `{ "schema_version": 1, "members": [...] }`，但 `members[0]` 只允许 `id`、`password_hash`、`password_salt`、`password_updated_at`。该补丁计入 `changed_credentials`，不计入 `changed_members`，默认不导出。
 
 项目更新包：
 
@@ -1664,6 +1665,7 @@ manifest 示例：
 - 普通修改包中的词条受保护字段不能变化；允许参与冲突处理的词条字段限于 `target`、`status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by`、`disputed`、`dispute_reason`、`dispute_resolved_at`、`dispute_resolved_by` 和 `context`。
 - 普通成员普通修改包只能携带其已分配任务范围内的词条和批注；负责人、管理员或有任务管理权限的导出者只有在包签名有效时才不受该任务范围限制，未签名包不能仅凭 `manifest.user_id` 获得管理者豁免。
 - 普通修改包中的任务只能更新既有任务的执行状态，且普通包只接受 `assigned`、`in_progress`、`submitted` 这类执行中状态；标题、范围、创建者、分配关系、截止时间和截止时区等字段变化会阻止导入。
+- 普通修改包中的 `members/members.json` 只能作为导出人自己的凭据补丁导入：只能有一个成员记录，`id` 必须等于 `manifest.user_id`，必须包含 `password_hash` 和 `password_salt`，不能包含角色、权限、公钥、名称或其他成员字段。导入时只合并这几个凭据字段，不覆盖整份 `members.json`。
 
 预检查失败时不开始项目文件写入。
 
@@ -1686,10 +1688,11 @@ manifest 示例：
 7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；普通包根据匹配的词条版本事件决定翻译、校对或审核语义，缺少操作记录的旧包才按普通翻译编辑重置流程。
 8. 对负责人最终采用的词条结果生成本地版本事件，记录来源事件和 package ID；普通包的源词条版本事件不直接写成本地权威版本。
 9. 普通包词条只合并允许的译文、工作流、上下文和争议字段，`updated_by` 使用包 manifest 用户；普通包批注只合并允许的状态字段或按 `comment.deleted` 事件删除；普通包任务只合并允许的执行状态。
-10. 维护包在内存中准备 project/members 最终内容。
-11. 去重合并其余包内 events，并生成导入日志事件。
-12. 将所有目标文件加入同一个补偿式写入计划。
-13. 提交成功后更新 entries 缓存。
+10. 普通包如包含账户凭据补丁，只合并 `manifest.user_id` 对应成员的 `password_hash`、`password_salt` 和 `password_updated_at`，不替换成员记录。
+11. 维护包在内存中准备 project/members 最终内容。
+12. 去重合并其余包内 events，并生成导入日志事件。
+13. 将所有目标文件加入同一个补偿式写入计划。
+14. 提交成功后更新 entries 缓存。
 
 当前回滚边界：
 

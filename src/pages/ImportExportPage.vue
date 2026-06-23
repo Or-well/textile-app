@@ -106,6 +106,7 @@ const tasks = ref<Task[]>([]);
 const selectedTaskIds = ref<string[]>([]);
 const exportMode = ref<ExportChangePackageMode>("member_changes");
 const signChangePackage = ref(true);
+const includeOwnCredentials = ref(false);
 const releaseFormat = ref<ReleaseExportFormat>("json");
 const releaseOnlyReviewed = ref(false);
 const releaseIncludeSource = ref(true);
@@ -203,6 +204,9 @@ const mustSignChangePackage = computed(
 );
 const canChooseChangePackageSignature = computed(
   () => exportMode.value !== "project_update" && !requiresSignedChangePackage.value,
+);
+const canIncludeOwnCredentials = computed(
+  () => exportMode.value === "member_changes" || exportMode.value === "task_changes",
 );
 const shouldSignChangePackage = computed(
   () =>
@@ -754,6 +758,8 @@ async function handleExportChanges() {
         taskId: exportMode.value === "task_changes" ? selectedTaskIds.value[0] : undefined,
         taskIds: exportMode.value === "task_changes" ? selectedTaskIds.value : undefined,
         sign: shouldSignChangePackage.value,
+        includeOwnCredentials:
+          canIncludeOwnCredentials.value && includeOwnCredentials.value,
         actor: currentUser.value,
         createdAt,
       };
@@ -1072,6 +1078,15 @@ watch(
 );
 
 watch(
+  () => exportMode.value,
+  () => {
+    if (!canIncludeOwnCredentials.value) {
+      includeOwnCredentials.value = false;
+    }
+  },
+);
+
+watch(
   () => [
     releaseFormat.value,
     releaseOnlyReviewed.value,
@@ -1214,6 +1229,16 @@ watch(
             class="field-help"
           >
             当前成员没有签名修改包权限，只能导出未签名修改包。
+          </small>
+        </div>
+
+        <div v-if="canIncludeOwnCredentials" class="credential-option">
+          <label class="checkbox-line">
+            <input v-model="includeOwnCredentials" type="checkbox" />
+            <span>包含我的登录密码修改</span>
+          </label>
+          <small class="field-help">
+            只附带当前用户自己的密码哈希、盐和更新时间；不包含明文密码、私钥、角色、权限或公钥。导入方会额外确认后才合并。
           </small>
         </div>
 
@@ -1559,7 +1584,8 @@ label {
   gap: 10px;
 }
 
-.signature-option {
+.signature-option,
+.credential-option {
   display: grid;
   gap: 6px;
 }

@@ -91,6 +91,7 @@ export interface ExportChangePackageOptions {
   taskId?: string;
   taskIds?: string[];
   sign?: boolean;
+  includeOwnCredentials?: boolean;
   actor?: Member | null;
   projectUpdateMembers?: Member[];
   signatureMember?: Member;
@@ -301,6 +302,12 @@ type TaskProtectedField =
   | "created_at"
   | "due_at"
   | "due_time_zone";
+type MemberCredentialField =
+  | "password_hash"
+  | "password_salt"
+  | "password_updated_at";
+type MemberCredentialPatch = Pick<Member, "id"> &
+  Partial<Pick<Member, MemberCredentialField>>;
 
 const ENTRY_CONFLICT_FIELDS = [
   "target",
@@ -359,6 +366,12 @@ const COMMENT_CONFLICT_FIELDS = [
   "resolved_at",
   "resolved_by",
 ] as const satisfies readonly CommentConflictReason[];
+const MEMBER_CREDENTIAL_PATCH_KEYS = [
+  "id",
+  "password_hash",
+  "password_salt",
+  "password_updated_at",
+] as const;
 const EMPTY_SUMMARY: ChangePackageSummary = {
   changed_entries: 0,
   changed_comments: 0,
@@ -509,7 +522,7 @@ function getPackageSummary(payload: ChangePackagePayload): ChangePackageSummary 
     changed_contexts: countRecordFiles(payload.contexts),
     changed_tasks: countRecordRows(payload.tasks),
     changed_source_files: countRecordFiles(payload.sourceFiles),
-    changed_members: countRecordFiles(payload.memberFiles),
+    changed_members: countPackageMemberManagementFiles(payload.memberFiles),
     changed_project_settings: countRecordFiles(payload.projectFiles),
     changed_credentials: countPackageCredentials(payload.memberFiles),
     log_events: payload.events.length,
@@ -555,7 +568,11 @@ async function loadProjectMembers(storage: ProjectStorage): Promise<Member[]> {
   return file.members;
 }
 
-function parseMembersFromPackage(memberFiles: Record<string, string>): Member[] {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function parseMemberFileRecords(memberFiles: Record<string, string>): Record<string, unknown>[] {
   const text = memberFiles["members/members.json"];
 
   if (!text) {
@@ -563,12 +580,40 @@ function parseMembersFromPackage(memberFiles: Record<string, string>): Member[] 
   }
 
   try {
-    const file = JSON.parse(text) as { members?: Member[] };
+    const file = JSON.parse(text) as { members?: unknown };
 
-    return file.members ?? [];
+    return Array.isArray(file.members) ? file.members.filter(isRecord) : [];
   } catch {
     return [];
   }
+}
+
+function parseMembersFromPackage(memberFiles: Record<string, string>): Member[] {
+  return parseMemberFileRecords(memberFiles) as unknown as Member[];
+}
+
+function parseMemberCredentialPatchesFromPackage(
+  memberFiles: Record<string, string>,
+): MemberCredentialPatch[] {
+  return parseMemberFileRecords(memberFiles)
+    .filter((record) => typeof record.id === "string")
+    .map((record) => {
+      const patch: MemberCredentialPatch = { id: record.id as string };
+
+      if (typeof record.password_hash === "string") {
+        patch.password_hash = record.password_hash;
+      }
+
+      if (typeof record.password_salt === "string") {
+        patch.password_salt = record.password_salt;
+      }
+
+      if (typeof record.password_updated_at === "string") {
+        patch.password_updated_at = record.password_updated_at;
+      }
+
+      return patch;
+    });
 }
 
 function parseProjectFromPackage(projectFiles: Record<string, string>): ProjectConfig | null {
@@ -615,7 +660,7 @@ function mergePublicMembersWithLocalCredentials(
   });
 }
 
-function hasCredentialFields(member: Member): boolean {
+function hasCredentialFields(member: Partial<Pick<Member, MemberCredentialField>>): boolean {
   return Boolean(
     member.password_hash || member.password_salt || member.password_updated_at,
   );
@@ -623,7 +668,7 @@ function hasCredentialFields(member: Member): boolean {
 
 function memberCredentialsChanged(
   currentMember: Member | undefined,
-  packageMember: Member,
+  packageMember: MemberCredentialPatch,
 ): boolean {
   if (!hasCredentialFields(packageMember)) {
     return false;
@@ -632,27 +677,52 @@ function memberCredentialsChanged(
   return (
     currentMember?.password_hash !== packageMember.password_hash ||
     currentMember?.password_salt !== packageMember.password_salt ||
-    currentMember?.password_updated_at !== packageMember.password_updated_at
+    (
+      packageMember.password_updated_at !== undefined &&
+      currentMember?.password_updated_at !== packageMember.password_updated_at
+    )
   );
 }
 
 function countPackageCredentials(memberFiles: Record<string, string>): number {
-  return parseMembersFromPackage(memberFiles).filter(hasCredentialFields).length;
+  return parseMemberCredentialPatchesFromPackage(memberFiles).filter(
+    hasCredentialFields,
+  ).length;
+}
+
+function isCredentialPatchRecord(record: Record<string, unknown>): boolean {
+  return Object.keys(record).every((key) =>
+    (MEMBER_CREDENTIAL_PATCH_KEYS as readonly string[]).includes(key),
+  );
+}
+
+function countPackageMemberManagementFiles(memberFiles: Record<string, string>): number {
+  const records = parseMemberFileRecords(memberFiles);
+
+  if (
+    Object.keys(memberFiles).length === 1 &&
+    records.length > 0 &&
+    records.every(isCredentialPatchRecord)
+  ) {
+    return 0;
+  }
+
+  return countRecordFiles(memberFiles);
 }
 
 function isOwnerMember(member: Member | undefined): boolean {
-  return Boolean(member?.roles.includes("owner"));
+  return Boolean(member?.roles?.includes("owner"));
 }
 
 function detectOwnerCredentialChange(
   currentMembers: Member[],
-  packageMembers: Member[],
+  packageMembers: MemberCredentialPatch[],
 ): boolean {
   return packageMembers.some((packageMember) => {
     const currentMember = currentMembers.find((member) => member.id === packageMember.id);
 
     return (
-      (isOwnerMember(currentMember) || isOwnerMember(packageMember)) &&
+      isOwnerMember(currentMember) &&
       memberCredentialsChanged(currentMember, packageMember)
     );
   });
@@ -1291,6 +1361,39 @@ function collectProjectUpdateProjectFile(
 async function collectMemberFiles(storage: ProjectStorage): Promise<Record<string, string>> {
   return {
     "members/members.json": await storage.readText("members.json"),
+  };
+}
+
+async function collectOwnCredentialMemberFiles(
+  storage: ProjectStorage,
+  userId: string,
+): Promise<Record<string, string>> {
+  const members = await loadProjectMembers(storage);
+  const member = members.find((item) => item.id === userId);
+
+  if (!member?.password_hash || !member.password_salt) {
+    return {};
+  }
+
+  const credentialPatch: MemberCredentialPatch = {
+    id: member.id,
+    password_hash: member.password_hash,
+    password_salt: member.password_salt,
+  };
+
+  if (member.password_updated_at) {
+    credentialPatch.password_updated_at = member.password_updated_at;
+  }
+
+  return {
+    "members/members.json": `${JSON.stringify(
+      {
+        schema_version: 1,
+        members: [credentialPatch],
+      },
+      null,
+      2,
+    )}\n`,
   };
 }
 
@@ -2134,6 +2237,87 @@ async function precheckChangePackageImport(
   }
 }
 
+function assertOrdinaryMemberCredentialPatches(
+  changePackage: ReadChangePackage,
+  currentMembers: Member[],
+): MemberCredentialPatch[] {
+  const memberFilePaths = Object.keys(changePackage.memberFiles);
+
+  if (memberFilePaths.length === 0) {
+    return [];
+  }
+
+  if (
+    memberFilePaths.length !== 1 ||
+    memberFilePaths[0] !== "members/members.json"
+  ) {
+    throw new Error("普通修改包只能附带当前导出人的账户凭据补丁。");
+  }
+
+  const rawRecords = parseMemberFileRecords(changePackage.memberFiles);
+
+  if (rawRecords.length !== 1) {
+    throw new Error("普通修改包只能附带一个账户凭据补丁。");
+  }
+
+  const record = rawRecords[0]!;
+
+  if (!isCredentialPatchRecord(record)) {
+    throw new Error("普通修改包中的账户信息只能包含导出人的密码凭据字段。");
+  }
+
+  const patches = parseMemberCredentialPatchesFromPackage(
+    changePackage.memberFiles,
+  );
+  const patch = patches[0];
+
+  if (!patch || patch.id !== changePackage.manifest.user_id) {
+    throw new Error("普通修改包只能修改导出人自己的账户凭据。");
+  }
+
+  if (!patch.password_hash || !patch.password_salt) {
+    throw new Error("普通修改包中的账户凭据缺少密码哈希或盐，不能导入。");
+  }
+
+  if (!currentMembers.some((member) => member.id === patch.id)) {
+    throw new Error("普通修改包中的账户成员在当前项目中不存在。");
+  }
+
+  return patches;
+}
+
+function mergeOrdinaryMemberCredentialPatches(
+  currentMembers: Member[],
+  patches: MemberCredentialPatch[],
+): { members: Member[]; imported: number } {
+  if (patches.length === 0) {
+    return { members: currentMembers, imported: 0 };
+  }
+
+  const patch = patches[0]!;
+  const currentMember = currentMembers.find((member) => member.id === patch.id);
+
+  if (!memberCredentialsChanged(currentMember, patch)) {
+    return { members: currentMembers, imported: 0 };
+  }
+
+  return {
+    members: currentMembers.map((member) =>
+      member.id === patch.id
+        ? {
+            ...member,
+            password_hash: patch.password_hash,
+            password_salt: patch.password_salt,
+            ...(patch.password_updated_at !== undefined
+              ? { password_updated_at: patch.password_updated_at }
+              : {}),
+          }
+        : member,
+    ),
+    imported: 1,
+  };
+}
+
 function mergeRowsById<T extends { id: string }>(
   existingRows: T[],
   packageRows: T[],
@@ -2201,6 +2385,14 @@ export async function exportChangePackage(
     throw new Error("只有项目更新包可以指定公开成员快照。");
   }
 
+  if (
+    options.includeOwnCredentials &&
+    options.mode !== "member_changes" &&
+    options.mode !== "task_changes"
+  ) {
+    throw new Error("只有普通修改包和任务范围修改包可以附带自己的账户凭据修改。");
+  }
+
   if (options.signatureMember && options.signatureMember.id !== userId) {
     throw new Error("签名成员必须与导出成员一致。");
   }
@@ -2263,6 +2455,10 @@ export async function exportChangePackage(
         includeAssignees: canExportAnyTask,
       }),
     );
+
+    if (options.includeOwnCredentials) {
+      payload.memberFiles = await collectOwnCredentialMemberFiles(storage, userId);
+    }
   }
 
   if (options.mode === "member_changes") {
@@ -2286,6 +2482,10 @@ export async function exportChangePackage(
       );
     }
     payload.terms = await collectUserTerms(storage, userId);
+
+    if (options.includeOwnCredentials) {
+      payload.memberFiles = await collectOwnCredentialMemberFiles(storage, userId);
+    }
   }
 
   if (options.mode === "maintenance_changes") {
@@ -2716,23 +2916,36 @@ export async function validateChangePackage(
     changePackage,
   );
   const packageMembers = parseMembersFromPackage(changePackage.memberFiles);
+  const packageCredentialPatches = parseMemberCredentialPatchesFromPackage(
+    changePackage.memberFiles,
+  );
   const packageProject = parseProjectFromPackage(changePackage.projectFiles);
   const summary = getPackageSummary(payload);
+  const isProjectUpdate = isProjectUpdatePackage(packageType);
+  const useCredentialPatches = isMemberChangePackage(packageType) && !isProjectUpdate;
   const changedMemberRecords =
-    packageMembers.length > 0 ? countChangedMemberRecords(members, packageMembers) : 0;
+    !useCredentialPatches && packageMembers.length > 0
+      ? countChangedMemberRecords(members, packageMembers)
+      : 0;
   const projectChanged =
     packageProject && stableStringify(project) !== stableStringify(packageProject)
       ? 1
       : 0;
-  const credentialChanges = packageMembers.filter((member) =>
+  const credentialRecords = useCredentialPatches
+    ? packageCredentialPatches
+    : packageMembers;
+  const credentialChanges = credentialRecords.filter((member) =>
     memberCredentialsChanged(
       members.find((currentMember) => currentMember.id === member.id),
       member,
     ),
   ).length;
-  const hasOwnerCredentialChange = detectOwnerCredentialChange(members, packageMembers);
-  const hasOwnerPromotion = detectOwnerRolePromotion(members, packageMembers);
-  const isProjectUpdate = isProjectUpdatePackage(packageType);
+  const hasOwnerCredentialChange = detectOwnerCredentialChange(
+    members,
+    credentialRecords,
+  );
+  const hasOwnerPromotion =
+    !useCredentialPatches && detectOwnerRolePromotion(members, packageMembers);
   const projectUpdateSignerAllowed =
     !isProjectUpdate ||
     canExportProjectUpdatePackage(
@@ -3399,6 +3612,9 @@ export async function applyChangePackage(
   const conflicts = await detectConflicts(changePackage);
   const useOrdinarySafeguards = isMemberChangePackage(validation.packageType);
   const currentMembers = await loadProjectMembers(storage);
+  const ordinaryCredentialPatches = useOrdinarySafeguards
+    ? assertOrdinaryMemberCredentialPatches(changePackage, currentMembers)
+    : [];
 
   if (useOrdinarySafeguards) {
     await assertOrdinaryPackageWithinTaskScope(
@@ -3730,10 +3946,25 @@ export async function applyChangePackage(
     }
   }
 
-  for (const [path, content] of Object.entries(changePackage.memberFiles)) {
-    if (path === "members/members.json") {
-      writePlan.writeText("members.json", content);
-      importedMembers += 1;
+  if (useOrdinarySafeguards) {
+    const result = mergeOrdinaryMemberCredentialPatches(
+      currentMembers,
+      ordinaryCredentialPatches,
+    );
+
+    if (result.imported > 0) {
+      writePlan.writeJson("members.json", {
+        schema_version: 1,
+        members: result.members,
+      });
+      importedMembers += result.imported;
+    }
+  } else {
+    for (const [path, content] of Object.entries(changePackage.memberFiles)) {
+      if (path === "members/members.json") {
+        writePlan.writeText("members.json", content);
+        importedMembers += 1;
+      }
     }
   }
 

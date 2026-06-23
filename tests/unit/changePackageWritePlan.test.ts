@@ -613,6 +613,170 @@ describe("ordinary change-package write plan", () => {
     ]);
   });
 
+  it("does not export own credential changes unless explicitly requested", async () => {
+    const fixture = await createExportFixture();
+    const contributor: Member = {
+      ...fixture.contributor,
+      password_hash: "new-password-hash",
+      password_salt: "new-password-salt",
+      password_updated_at: "2026-02-01T00:00:00.000Z",
+    };
+
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: [fixture.members[0]!, contributor],
+    });
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage(contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: contributor,
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(changePackage.memberFiles).toEqual({});
+    expect(changePackage.manifest.summary?.changed_credentials).toBe(0);
+  });
+
+  it("exports only the current member credential patch when requested", async () => {
+    const fixture = await createExportFixture();
+    const contributor: Member = {
+      ...fixture.contributor,
+      password_hash: "new-password-hash",
+      password_salt: "new-password-salt",
+      password_updated_at: "2026-02-01T00:00:00.000Z",
+    };
+
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: [fixture.members[0]!, contributor],
+    });
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage(contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: contributor,
+      includeOwnCredentials: true,
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+    const memberFile = JSON.parse(changePackage.memberFiles["members/members.json"]!);
+
+    expect(memberFile.members).toEqual([
+      {
+        id: contributor.id,
+        password_hash: "new-password-hash",
+        password_salt: "new-password-salt",
+        password_updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    expect(changePackage.manifest.summary).toMatchObject({
+      changed_credentials: 1,
+      changed_members: 0,
+    });
+  });
+
+  it("merges ordinary credential patches without replacing member records", async () => {
+    const fixture = await createChangePackageFixture();
+    const membersFile = await fixture.storage.readJson<{ members: Member[] }>(
+      "members.json",
+    );
+    const nextMembers = membersFile.members.map((member) =>
+      member.id === "member-2"
+        ? {
+            ...member,
+            password_hash: "old-password-hash",
+            password_salt: "old-password-salt",
+            password_updated_at: "2026-01-01T00:00:00.000Z",
+          }
+        : member,
+    );
+
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: nextMembers,
+    });
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.memberFiles = {
+      "members/members.json": `${JSON.stringify(
+        {
+          schema_version: 1,
+          members: [
+            {
+              id: "member-2",
+              password_hash: "new-password-hash",
+              password_salt: "new-password-salt",
+              password_updated_at: "2026-02-01T00:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+        confirmMaintenance: true,
+      }),
+    ).resolves.toMatchObject({ importedMembers: 1 });
+    await expect(
+      fixture.storage.readJson<{ members: Member[] }>("members.json"),
+    ).resolves.toMatchObject({
+      members: [
+        expect.objectContaining({ id: "owner-1", roles: ["owner"] }),
+        expect.objectContaining({
+          id: "member-2",
+          roles: ["translator"],
+          password_hash: "new-password-hash",
+          password_salt: "new-password-salt",
+        }),
+      ],
+    });
+  });
+
+  it("rejects member role fields in ordinary credential patches", async () => {
+    const fixture = await createChangePackageFixture();
+
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.memberFiles = {
+      "members/members.json": `${JSON.stringify(
+        {
+          schema_version: 1,
+          members: [
+            {
+              id: "member-2",
+              roles: ["owner"],
+              password_hash: "new-password-hash",
+              password_salt: "new-password-salt",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+        confirmMaintenance: true,
+      }),
+    ).rejects.toThrow("账户信息");
+  });
+
   it("rejects exporting another member's task for ordinary members", async () => {
     const fixture = await createExportFixture();
 
