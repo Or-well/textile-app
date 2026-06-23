@@ -76,8 +76,8 @@ describe("file batch", () => {
 
     expect(preview.applicableFileIds).toEqual([]);
     expect(preview.skippedReasonCounts).toEqual([
-      { reason: "文件不存在或已被删除", count: 1 },
       { reason: "文件已经显示", count: 1 },
+      { reason: "文件不存在或已被删除", count: 1 },
     ]);
   });
 

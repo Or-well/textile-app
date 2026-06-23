@@ -86,8 +86,7 @@ function countSkippedReasons(
   }
 
   return Array.from(counts, ([reason, count]) => ({ reason, count })).sort(
-    (left, right) =>
-      right.count - left.count || left.reason.localeCompare(right.reason),
+    (left, right) => right.count - left.count,
   );
 }
 
