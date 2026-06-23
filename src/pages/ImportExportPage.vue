@@ -1291,6 +1291,7 @@ watch(
 
         <ChangePreview
           :preview="packagePreview"
+          :members="membersForKeys"
           :conflict-count="conflicts.length"
         />
 

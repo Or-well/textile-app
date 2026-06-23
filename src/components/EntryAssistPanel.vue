@@ -4,11 +4,13 @@ import CommentPanel from "./CommentPanel.vue";
 import ContextPanel from "./ContextPanel.vue";
 import TermEditDialog from "./TermEditDialog.vue";
 import TermHint from "./TermHint.vue";
+import { getMemberDisplayName } from "../model/memberOptions";
 import { ENTRY_STATUS_LABELS } from "../model/status";
 import type {
   Comment,
   Entry,
   EntryStatus,
+  Member,
   ProjectEvent,
   Term,
 } from "../model/types";
@@ -60,6 +62,7 @@ interface HistoryRow {
 
 const props = defineProps<{
   entry?: Entry;
+  members?: Member[];
   draftTarget: string;
   activeTab?: AssistTab;
   highlightCommentId?: string;
@@ -216,6 +219,12 @@ function canRestoreVersion(version: HistoryVersion): boolean {
 
 function formatEventTime(value: string): string {
   return formatDateTime(value) || "时间无效";
+}
+
+function getMemberName(memberId: string): string {
+  return getMemberDisplayName(props.members ?? [], memberId, {
+    emptyLabel: "未知成员",
+  });
 }
 
 async function handleRestoreVersion(version: HistoryVersion): Promise<void> {
@@ -484,6 +493,7 @@ watch(
     <section v-else-if="activeTab === 'comments'" class="tab-panel">
       <CommentPanel
         :entry="entry"
+        :members="props.members ?? []"
         :highlight-comment-id="highlightCommentId"
         @view-entry-comment="emit('viewEntryComment', $event)"
       />
@@ -523,8 +533,8 @@ watch(
               当前版本
             </span>
           </div>
-          <span>
-            {{ row.event.user_id }}
+          <span :title="row.event.user_id || undefined">
+            {{ getMemberName(row.event.user_id) }}
             {{ row.version?.isInitial ? "修改前" : "" }} ·
             {{ formatEventTime(row.event.created_at) }}
           </span>

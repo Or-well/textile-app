@@ -430,12 +430,22 @@ const route = computed(() => parseRoute(routePath.value));
 
 例如：
 
-- `FilesPage` 接收 project、root、currentUser，保存后发出 `projectUpdated`。
+- `FilesPage` 接收 project、members、root、currentUser，保存后发出 `projectUpdated`。
 - `ImportExportPage` 发出 `projectUpdated` 和 `membersUpdated`。
 - `SettingsPage` 发出项目、成员、缓存、会话和移除项目事件。
+- `EntryPage`、`EntriesPage`、`TasksPage`、`TermsPage`、`CommentsPage` 等需要展示成员字段的页面由 `App.vue` 传入当前成员表。
 - `TasksPage` 发出 `tasksChanged` 和词条跳转事件。
 
 `App.vue` 负责把子页面结果合并回当前项目。
+
+### 成员显示名
+
+词条、批注、术语、任务、历史和修改包预览等 UI 不直接把 `user_id`、`created_by`、`updated_by`、`resolved_by`、`translated_by`、`proofread_by`、`reviewed_by` 等底层成员 ID 当用户名显示。展示层统一使用 `model/memberOptions.ts` 的 `getMemberDisplayName()` 或 `buildMemberOptions()`：
+
+- 当前成员显示 `Member.name`。
+- 已禁用成员显示 `成员名（已禁用）`。
+- 普通正文区域找不到成员时显示“已删除成员”或“未知成员”。
+- 筛选项或排查用 `title` 可以保留成员 ID，用于区分多个历史成员。
 
 ### service 模块状态
 

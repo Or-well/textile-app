@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { getMemberDisplayName } from "../model/memberOptions";
+import type { Member } from "../model/types";
 import type { ChangePackagePreview } from "../services/changes";
 import { formatDateTime } from "../utils/time";
 
 defineProps<{
   preview?: ChangePackagePreview;
+  members?: Member[];
   conflictCount: number;
 }>();
 
@@ -83,6 +86,23 @@ function riskLevelText(preview: ChangePackagePreview): string {
 
   return "普通";
 }
+
+function submitterText(
+  preview: ChangePackagePreview,
+  members: readonly Member[] = [],
+): string {
+  const knownMember = members.find(
+    (member) => member.id === preview.manifest.user_id,
+  );
+
+  if (knownMember) {
+    return getMemberDisplayName(members, preview.manifest.user_id, {
+      emptyLabel: "未知成员",
+    });
+  }
+
+  return preview.manifest.user_name || "已删除成员";
+}
 </script>
 
 <template>
@@ -96,7 +116,9 @@ function riskLevelText(preview: ChangePackagePreview): string {
       </div>
       <div>
         <dt>提交者</dt>
-        <dd>{{ preview.manifest.user_name || preview.manifest.user_id }}</dd>
+        <dd :title="preview.manifest.user_id || undefined">
+          {{ submitterText(preview, members) }}
+        </dd>
       </div>
       <div>
         <dt>创建时间</dt>

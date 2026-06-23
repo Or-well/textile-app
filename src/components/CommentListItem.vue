@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import type { Comment, Entry } from "../model/types";
+import { computed } from "vue";
+import { getMemberDisplayName } from "../model/memberOptions";
+import type { Comment, Entry, Member } from "../model/types";
 import { formatDateTime } from "../utils/time";
 
 const props = withDefaults(
   defineProps<{
     comment: Comment;
+    members?: Member[];
     entry?: Entry;
     fileName?: string;
     parentComment?: Comment;
@@ -17,6 +20,7 @@ const props = withDefaults(
     showViewEntry?: boolean;
   }>(),
   {
+    members: () => [],
     fileName: "",
     highlighted: false,
     canReply: false,
@@ -26,6 +30,17 @@ const props = withDefaults(
     isBusy: false,
     showViewEntry: true,
   },
+);
+
+const commentAuthorName = computed(() =>
+  getMemberDisplayName(props.members, props.comment.user_id, {
+    emptyLabel: "未知成员",
+  }),
+);
+const parentAuthorName = computed(() =>
+  getMemberDisplayName(props.members, props.parentComment?.user_id ?? "", {
+    emptyLabel: "未知成员",
+  }),
 );
 
 const emit = defineEmits<{
@@ -45,7 +60,9 @@ const emit = defineEmits<{
   >
     <header class="comment-header">
       <div class="comment-title">
-        <strong>{{ props.comment.user_id }}</strong>
+        <strong :title="props.comment.user_id || undefined">
+          {{ commentAuthorName }}
+        </strong>
         <span v-if="props.fileName || props.entry">
           {{ props.fileName || props.comment.file_id }}
           <template v-if="props.entry"> #{{ props.entry.index }}</template>
@@ -60,7 +77,7 @@ const emit = defineEmits<{
     </header>
 
     <p v-if="props.parentComment" class="reply-context">
-      回复 {{ props.parentComment.user_id }}：{{ props.parentComment.body }}
+      回复 {{ parentAuthorName }}：{{ props.parentComment.body }}
     </p>
 
     <p class="comment-body">{{ props.comment.body }}</p>

@@ -1055,6 +1055,7 @@ onBeforeUnmount(() => {
       <FilesPage
         v-else-if="route.section === 'files'"
         :project="currentProject.config"
+        :members="currentProject.members"
         :project-root="currentProject.root"
         :project-storage="currentProject.storage"
         :current-user="currentUser"
@@ -1077,6 +1078,7 @@ onBeforeUnmount(() => {
       <EntryPage
         v-else-if="route.section === 'file-entry'"
         :project="currentProject.config"
+        :members="currentProject.members"
         :file-id="route.fileId"
         :target-entry-id="route.entryId"
         :target-entry-index="route.entryIndex"
@@ -1099,7 +1101,10 @@ onBeforeUnmount(() => {
         @tasks-changed="refreshProjectSummary"
       />
 
-      <TermsPage v-else-if="route.section === 'terms'" />
+      <TermsPage
+        v-else-if="route.section === 'terms'"
+        :members="currentProject.members"
+      />
 
       <CommentsPage
         v-else-if="route.section === 'comments'"

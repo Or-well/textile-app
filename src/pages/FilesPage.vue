@@ -105,6 +105,7 @@ const fileBatchActionOptions: FileBatchActionOption[] = [
 
 const props = defineProps<{
   project: ProjectConfig;
+  members?: Member[];
   projectRoot: ProjectDirectoryHandle;
   currentUser: Member | null;
   lastViewedFileId?: string;
@@ -1306,6 +1307,7 @@ onMounted(loadFileSummaries);
     <FileHistoryDialog
       :open="historyDialogOpen"
       :file-name="historyFileName"
+      :members="members ?? []"
       :rows="historyRows"
       :is-loading="isLoadingHistory"
       :error-message="historyErrorMessage"

@@ -3,7 +3,8 @@ import { computed, nextTick, ref, watch } from "vue";
 import { useAppDraft } from "../composables/useAppDraft";
 import CommentEditor from "./CommentEditor.vue";
 import CommentListItem from "./CommentListItem.vue";
-import type { Comment, Entry } from "../model/types";
+import { getMemberDisplayName } from "../model/memberOptions";
+import type { Comment, Entry, Member } from "../model/types";
 import {
   addComment,
   deleteComment,
@@ -28,6 +29,7 @@ type CommentSortOrder = "newest" | "oldest";
 
 const props = defineProps<{
   entry?: Entry;
+  members?: Member[];
   highlightCommentId?: string;
 }>();
 
@@ -61,6 +63,11 @@ const hasUnsavedComment = computed(
 );
 const displayedComments = computed(() =>
   [...comments.value].sort(compareCommentsBySortOrder),
+);
+const replyingToMemberName = computed(() =>
+  getMemberDisplayName(props.members ?? [], replyingTo.value?.user_id ?? "", {
+    emptyLabel: "未知成员",
+  }),
 );
 
 useAppDraft("批注或回复", hasUnsavedComment);
@@ -324,6 +331,7 @@ async function handleDeleteComment(comment: Comment) {
       <li v-for="comment in displayedComments" :key="comment.id">
         <CommentListItem
           :comment="comment"
+          :members="props.members ?? []"
           :entry="entry"
           :parent-comment="
             comment.reply_to ? commentById.get(comment.reply_to) : undefined
@@ -342,7 +350,7 @@ async function handleDeleteComment(comment: Comment) {
         >
           <template v-if="replyingTo?.id === comment.id" #reply-editor>
             <section class="reply-box" @click.stop>
-              <p>回复 {{ replyingTo.user_id }}</p>
+              <p :title="replyingTo.user_id">回复 {{ replyingToMemberName }}</p>
               <CommentEditor
                 v-model="replyText"
                 label="回复"

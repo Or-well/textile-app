@@ -1,16 +1,14 @@
 {
-  "version": "0.8.3",
-  "latest_version": "0.8.3",
-  "build_id": "0.8.3-d952f7256e34",
-  "assets_hash": "d952f7256e34c1f005caac23e4d8e0fa83722e4d6f6d06cdee140114eb8cbeec",
+  "version": "0.8.4",
+  "latest_version": "0.8.4",
+  "build_id": "0.8.4-a094b8d95f9f",
+  "assets_hash": "a094b8d95f9fc96413e446bcc78b1e37ef37bc344994f67709944f34afe9a7bc",
   "schema_version": 1,
-  "release_date": "2026-06-23",
+  "release_date": "2026-06-24",
   "channel": "stable",
   "critical": false,
   "download_url": "",
   "notes": [
-    "程序更新只在实际操作或存在未保存草稿时暂缓。",
-    "桌面版使用安装并重启，PWA 由用户点击刷新并应用。",
-    "修复未编辑时错误提示需要完成当前编辑的问题。"
+    "修复词条历史、文件历史、批注、术语创建人和修改包预览等位置直接显示底层成员 ID 的问题，统一显示成员名、禁用状态或“已删除成员”。"
   ]
 }

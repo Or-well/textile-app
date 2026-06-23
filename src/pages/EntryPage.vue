@@ -5,7 +5,13 @@ import EntryEditor from "../components/EntryEditor.vue";
 import EntrySideList from "../components/EntrySideList.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import { useAppDraft } from "../composables/useAppDraft";
-import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
+import type {
+  Comment,
+  Entry,
+  EntryStatus,
+  Member,
+  ProjectConfig,
+} from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
 import {
   loadEntries,
@@ -21,6 +27,7 @@ const ENTRY_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 800] as const;
 
 const props = defineProps<{
   project: ProjectConfig;
+  members?: Member[];
   fileId: string;
   targetEntryId?: string;
   targetEntryIndex?: number;
@@ -597,6 +604,7 @@ onMounted(loadFileEntries);
 
         <EntryAssistPanel
           :entry="selectedEffectiveEntry"
+          :members="members ?? []"
           :draft-target="draftTarget"
           :active-tab="assistTab"
           :highlight-comment-id="targetCommentId"

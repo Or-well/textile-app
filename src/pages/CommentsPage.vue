@@ -290,6 +290,7 @@ watch(
       <li v-for="{ comment, entry } in visibleRows" :key="comment.id">
         <CommentListItem
           :comment="comment"
+          :members="members"
           :entry="entry"
           :file-name="getFileName(comment.file_id || entry?.file_id || '')"
           :parent-comment="

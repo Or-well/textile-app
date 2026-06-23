@@ -7,6 +7,11 @@ export interface MemberOption {
   missing: boolean;
 }
 
+export interface MemberDisplayNameOptions {
+  emptyLabel?: string;
+  missingLabel?: string;
+}
+
 export function buildMemberOptions(
   members: readonly Member[],
   referencedMemberIds: readonly string[] = [],
@@ -39,14 +44,17 @@ export function buildMemberOptions(
 export function getMemberDisplayName(
   members: readonly Member[],
   memberId: string,
+  options: MemberDisplayNameOptions = {},
 ): string {
   if (!memberId) {
-    return "未分配";
+    return options.emptyLabel ?? "未分配";
   }
 
-  return (
-    buildMemberOptions(members, [memberId]).find(
-      (option) => option.id === memberId,
-    )?.label ?? memberId
-  );
+  const member = members.find((item) => item.id === memberId);
+
+  if (!member) {
+    return options.missingLabel ?? "已删除成员";
+  }
+
+  return member.active ? member.name : `${member.name}（已禁用）`;
 }

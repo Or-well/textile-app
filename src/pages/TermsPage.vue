@@ -5,7 +5,8 @@ import BatchSelectionBar from "../components/BatchSelectionBar.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import TermEditDialog from "../components/TermEditDialog.vue";
 import TermImportDialog from "../components/TermImportDialog.vue";
-import type { Term } from "../model/types";
+import { getMemberDisplayName } from "../model/memberOptions";
+import type { Member, Term } from "../model/types";
 import {
   canCreateTerm,
   canDeleteTerm,
@@ -62,6 +63,15 @@ const sortOptions: Array<{ value: SortMode; label: string }> = [
   { value: "created_at", label: "按创建时间" },
   { value: "updated_at", label: "按更新时间" },
 ];
+
+const props = withDefaults(
+  defineProps<{
+    members?: Member[];
+  }>(),
+  {
+    members: () => [],
+  },
+);
 const termBatchActionOptions: TermBatchActionOption[] = [
   { value: "set_part_of_speech", label: "统一设置词性", permission: "update" },
   { value: "set_case_sensitive", label: "设为区分大小写", permission: "update" },
@@ -106,6 +116,12 @@ const availableBatchActions = computed(() =>
     option.permission === "update" ? canUpdate.value : canDelete.value,
   ),
 );
+
+function getMemberName(memberId: string): string {
+  return getMemberDisplayName(props.members, memberId, {
+    emptyLabel: "未记录",
+  });
+}
 
 const filteredTerms = computed(() => {
   const keyword = searchText.value.trim().toLowerCase();
@@ -593,7 +609,9 @@ onMounted(loadTermRows);
           </div>
           <div>
             <dt>创建人</dt>
-            <dd>{{ term.created_by || "未记录" }}</dd>
+            <dd :title="term.created_by || undefined">
+              {{ getMemberName(term.created_by) }}
+            </dd>
           </div>
           <div>
             <dt>更新时间</dt>

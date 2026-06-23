@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { getMemberDisplayName } from "../model/memberOptions";
+import type { Member } from "../model/types";
 import type { FileHistoryRow } from "../services/history";
 import { formatDateTime } from "../utils/time";
 
-defineProps<{
+const props = defineProps<{
   open: boolean;
   fileName: string;
+  members?: Member[];
   rows: FileHistoryRow[];
   isLoading: boolean;
   errorMessage: string;
@@ -18,7 +21,35 @@ function formatCreatedAt(value: string): string {
   return formatDateTime(value, { seconds: false }) || value || "时间无效";
 }
 
-function formatDetailValue(value: unknown): string {
+function isMemberFieldKey(key: string): boolean {
+  return key === "user_id" || key.endsWith("_by") || key.endsWith("_user_id");
+}
+
+function getMemberName(memberId: string): string {
+  return getMemberDisplayName(props.members ?? [], memberId, {
+    emptyLabel: "未知成员",
+  });
+}
+
+function formatMemberDetailValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.length > 0
+      ? value.map((item) => getMemberName(String(item))).join("、")
+      : "空";
+  }
+
+  if (typeof value === "string") {
+    return getMemberName(value);
+  }
+
+  return formatDetailValue("", value);
+}
+
+function formatDetailValue(key: string, value: unknown): string {
+  if (isMemberFieldKey(key)) {
+    return formatMemberDetailValue(value);
+  }
+
   if (value === null || value === undefined || value === "") {
     return "空";
   }
@@ -78,8 +109,8 @@ function getDetailEntries(detail: Record<string, unknown>) {
           <li v-for="row in rows" :key="row.id">
             <div class="history-main">
               <strong>{{ row.label }}</strong>
-              <small>
-                {{ formatCreatedAt(row.createdAt) }} · {{ row.userId || "未知成员" }}
+              <small :title="row.userId || undefined">
+                {{ formatCreatedAt(row.createdAt) }} · {{ getMemberName(row.userId) }}
               </small>
             </div>
             <span v-if="row.entryId" class="entry-chip">{{ row.entryId }}</span>
@@ -91,7 +122,7 @@ function getDetailEntries(detail: Record<string, unknown>) {
                   :key="key"
                 >
                   <dt>{{ key }}</dt>
-                  <dd>{{ formatDetailValue(value) }}</dd>
+                  <dd>{{ formatDetailValue(key, value) }}</dd>
                 </div>
               </dl>
             </details>
