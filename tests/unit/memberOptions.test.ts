@@ -40,7 +40,7 @@ describe("member options", () => {
       },
     ]);
     expect(getMemberDisplayName([active, disabled], "deleted-1")).toBe(
-      "deleted-1（成员已删除）",
+      "已删除成员",
     );
   });
 });
