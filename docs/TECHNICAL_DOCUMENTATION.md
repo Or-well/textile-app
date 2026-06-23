@@ -7,8 +7,6 @@
 ## 0. 文档定位与当前结构索引
 
 相关文档：
-
-- `D:\documents\Textile_Project\vue-typescript-project-tutorial.md` 是长期稳定的 Vue 3 + TypeScript 学习教程，放在项目仓库外，不算 Textile 项目本体的一部分。
 - 本文档承接当前实现细节，包括目录结构、文件清单、模块职责、数据流、业务流程、导入导出、权限、统计、签名密钥、更新机制和维护注意事项。
 - `docs/MANUAL.md` 是用户手册，面向实际使用者，描述“怎么用”和“遇到提示该怎么办”。
 - `README.md` 是项目入口文档，只保留定位、快速开始、常用命令和文档导航。
