@@ -18,6 +18,9 @@ const props = defineProps<{
   totalPages: number;
   pageStart: number;
   pageEnd: number;
+  scrollTargetEntryId: string;
+  scrollTargetPosition: "nearest" | "second" | "top";
+  scrollRequestId: number;
   workflow?: ProjectWorkflowSettings;
 }>();
 
@@ -51,11 +54,20 @@ const pageRangeLabel = computed(() => {
   return `${props.pageStart}-${props.pageEnd} / ${props.filteredCount}`;
 });
 
-function scrollSelectedEntryIntoSecondRow() {
+function scrollToRequestedEntry() {
   void nextTick(() => {
     const list = listRef.value;
 
-    if (!list || !props.selectedEntryId) {
+    if (!list) {
+      return;
+    }
+
+    if (props.scrollTargetPosition === "top") {
+      list.scrollTop = 0;
+      return;
+    }
+
+    if (!props.scrollTargetEntryId) {
       return;
     }
 
@@ -63,24 +75,40 @@ function scrollSelectedEntryIntoSecondRow() {
       list.querySelectorAll<HTMLElement>("[data-entry-id]"),
     );
     const selectedRow = rows.find(
-      (row) => row.dataset.entryId === props.selectedEntryId,
+      (row) => row.dataset.entryId === props.scrollTargetEntryId,
     );
 
     if (!selectedRow) {
-      list.scrollTop = 0;
+      return;
+    }
+
+    const listTop = list.getBoundingClientRect().top;
+    const getRowTop = (row: HTMLElement) =>
+      row.getBoundingClientRect().top - listTop + list.scrollTop;
+
+    if (props.scrollTargetPosition === "nearest") {
+      const rowTop = getRowTop(selectedRow);
+      const rowBottom = rowTop + selectedRow.offsetHeight;
+      const visibleTop = list.scrollTop;
+      const visibleBottom = visibleTop + list.clientHeight;
+
+      if (rowTop < visibleTop) {
+        list.scrollTop = rowTop;
+      } else if (rowBottom > visibleBottom) {
+        list.scrollTop = rowBottom - list.clientHeight;
+      }
       return;
     }
 
     const previousRow = selectedRow.previousElementSibling as HTMLElement | null;
-
-    list.scrollTop = previousRow ? previousRow.offsetTop : selectedRow.offsetTop;
+    list.scrollTop = getRowTop(previousRow ?? selectedRow);
   });
 }
 
 watch(
-  () => [props.selectedEntryId, props.entries.map((entry) => entry.id).join("|")],
-  scrollSelectedEntryIntoSecondRow,
-  { immediate: true },
+  () => props.scrollRequestId,
+  scrollToRequestedEntry,
+  { flush: "post", immediate: true },
 );
 </script>
 

@@ -146,6 +146,7 @@ src/
     terms.ts
     updateSafety.ts
     webUpdateAdapter.ts
+    workspacePosition.ts
   utils/
     appVersion.ts
     browserStorage.ts
@@ -2059,7 +2060,7 @@ store: projectHandles
 
 | 页面/组件 | 主要 service |
 | --- | --- |
-| `App.vue` | project、auth、permissions、session、recentProjects、stats、tasks、appUpdate、projectDeletion |
+| `App.vue` | project、auth、permissions、session、recentProjects、workspacePosition、stats、tasks、appUpdate、projectDeletion |
 | `CreateProjectPage` | project |
 | `ProjectListPage` | recentProjects 间接由 App 处理 |
 | `LoginPage` | auth 间接由 App 处理 |
@@ -2077,9 +2078,9 @@ store: projectHandles
 
 页面不得绕过这些 service 直接操作 `projectFs`。
 
-`App.vue` 维护当前会话最近查看文件 ID，并传给 `FilesPage` 用于滚动定位和“最近查看”标注；该状态不写入项目数据，也不属于 `recentProjects` 持久记录。`FilesPage` 自动滚动时优先用最近查看文件前方第二个文件作为锚点，让最近查看文件停在列表第三行；前方不足两个文件时按可用文件靠前定位。
+`workspacePosition.ts` 使用 LocalStorage key `textile.workspacePositions.v1`，按 `projectId + userId` 保存最近文件 ID、各文件最近词条 ID 和更新时间，最多保留 50 组项目成员位置。该记录是本机 UI 状态，不写入项目数据、修改包或 `.hproj`。所有 LocalStorage 访问继续通过 `utils/browserStorage.ts` 容错；不可写时功能降级为仅当前运行期间记忆。
 
-`App.vue` 还维护当前会话内的每文件最近查看词条 ID，并传给 `EntryPage`。`EntryPage` 在 URL 没有显式 `entry` 或 `index` 参数时优先选中该文件上次查看的词条；如果词条不存在，则回退到当前文件第一条。该状态同样不写入项目数据，也不属于 `recentProjects` 持久记录。
+`App.vue` 打开项目并恢复或完成成员登录后读取该位置，过滤项目中已不存在的文件，再进入最近文件；明确 URL、任务或批注目标优先于本机位置。最近文件 ID 传给 `FilesPage` 用于“最近查看”标注和第三行定位；每文件最近词条 ID 传给 `EntryPage`，词条不存在时由页面回退到第一条。点击文件或实际选中词条时同步更新内存与本机记录。移除项目最后一条最近记录、删除项目记录或清理“最近项目记录”时同时清除对应位置。
 
 工作台侧边栏的“使用手册”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，解析打包资源后通过官方 `tauri-plugin-opener` 交给系统默认 PDF 阅读器，不再手写 `cmd`、`open` 或 `xdg-open` 平台命令。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
 
@@ -2109,8 +2110,8 @@ Vite 构建会把该文件输出为 `dist/THIRD_PARTY_NOTICES.txt`；`src-tauri/
 实现边界：
 
 - 新增词条页提示、工具栏或面板时，需要保持 `height -> min-height: 0 -> overflow` 的高度链。
-- 左侧文件词条列表由 `EntryPage` 管理分页窗口起点和每页数量，`EntrySideList` 只接收当前窗口词条并负责组件内滚动定位。桌面端默认每页 50 条，可切换 20、100、200、500 或 800 条。列表行采用密集行样式，分页控件固定在列表组件底部。
-- 打开文件时，`EntryPage` 将分页窗口起点定位到目标词条前一条；`EntrySideList` 再在自身滚动区内把选中词条尽量滚动到第二行。前方没有词条时停在第一行。
+- 左侧文件词条列表由 `EntryPage` 管理标准页码和每页数量，按固定的 `(page - 1) * pageSize` 起点切片；`EntrySideList` 只接收当前页词条并负责组件内滚动。桌面端默认每页 50 条，可切换 20、100、200、500 或 800 条。列表行采用密集行样式，分页控件固定在列表组件底部。
+- 打开文件、恢复上次查看位置或从其他页面定位词条时，`EntryPage` 先切换到目标所在的标准页，再向 `EntrySideList` 发出一次性滚动请求，让目标尽量停在第二行。普通点击只切换选中项，不触发自动滚动；“上一条”和“下一条”只在需要时执行最近可见滚动。
 - 中间 `EntryEditor` 采用紧凑布局，原文和译文区域限制默认高度，尽量让常规词条一屏显示；长文本仍允许编辑器内部滚动兜底。
 - 右侧术语、批注、上下文和历史面板与左侧列表共享同一桌面高度约束。
 

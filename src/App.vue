@@ -64,6 +64,12 @@ import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectStorage } from "./services/tasks";
 import { setTermsProjectStorage } from "./services/terms";
 import { setAppUpdateSafety } from "./services/updateSafety";
+import {
+  getProjectWorkspacePosition,
+  rememberProjectEntryPosition,
+  rememberProjectFilePosition,
+  removeProjectWorkspacePositions,
+} from "./services/workspacePosition";
 
 type ProjectSection =
   | "overview"
@@ -113,6 +119,7 @@ const currentRecentRecordId = ref("");
 const taskCount = ref(0);
 const lastViewedFileId = ref("");
 const lastViewedEntryByFileId = ref<Record<string, string>>({});
+const pendingProjectPathAfterLogin = ref("");
 const recentProjects = ref<RecentProjectRecord[]>(listRecentProjects());
 const isOpeningProject = ref(false);
 const isOpeningProjectFile = ref(false);
@@ -191,6 +198,13 @@ function parseRoute(path: string) {
     entriesFileId,
     commentId: query.get("comment") ?? "",
   };
+}
+
+function getExplicitProjectPath(path: string): string | undefined {
+  const [pathname] = path.split("?");
+  const parts = pathname.split("/").filter(Boolean);
+
+  return parts.length >= 3 ? path : undefined;
 }
 
 function navigate(path: string) {
@@ -302,6 +316,7 @@ function restoreUserFromSession(project: OpenedProject): Member | null {
 async function enterOpenedProject(
   project: OpenedProject,
   options: {
+    preferredPath?: string;
     preferredSection?: ProjectSection;
     loginAs?: Member;
   } = {},
@@ -320,15 +335,79 @@ async function enterOpenedProject(
     saveProjectSession(project.config.project_id, options.loginAs.id);
   }
 
+  if (loginMember) {
+    restoreWorkspacePosition(project, loginMember);
+  }
+
   await rememberOpenedProject(project, loginMember?.id);
 
   if (loginMember) {
+    pendingProjectPathAfterLogin.value = "";
     navigate(
-      `/projects/${encodeURIComponent(project.config.project_id)}/${options.preferredSection ?? "files"}`,
+      options.preferredPath ??
+        buildProjectPath(
+          project.config.project_id,
+          options.preferredSection,
+          lastViewedFileId.value,
+        ),
     );
   } else {
+    pendingProjectPathAfterLogin.value =
+      options.preferredPath ??
+      (options.preferredSection
+        ? buildProjectSectionPath(
+            project.config.project_id,
+            options.preferredSection,
+          )
+        : "");
     navigate(`/projects/${encodeURIComponent(project.config.project_id)}`);
   }
+}
+
+function buildProjectSectionPath(
+  projectId: string,
+  section: ProjectSection,
+): string {
+  return `/projects/${encodeURIComponent(projectId)}/${section}`;
+}
+
+function buildProjectPath(
+  projectId: string,
+  preferredSection?: ProjectSection,
+  rememberedFileId = "",
+): string {
+  if (preferredSection) {
+    return buildProjectSectionPath(projectId, preferredSection);
+  }
+
+  if (rememberedFileId) {
+    return `/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(rememberedFileId)}`;
+  }
+
+  return buildProjectSectionPath(projectId, "files");
+}
+
+function restoreWorkspacePosition(project: OpenedProject, user: Member): void {
+  const position = getProjectWorkspacePosition(
+    project.config.project_id,
+    user.id,
+    project.config.files.map((file) => file.id),
+  );
+
+  lastViewedFileId.value = position?.lastFileId ?? "";
+  lastViewedEntryByFileId.value = position?.entryByFileId ?? {};
+}
+
+function rememberCurrentFilePosition(fileId: string): void {
+  if (!currentProject.value || !currentUser.value || !fileId) {
+    return;
+  }
+
+  rememberProjectFilePosition(
+    currentProject.value.config.project_id,
+    currentUser.value.id,
+    fileId,
+  );
 }
 
 function buildProjectSummary(
@@ -504,7 +583,21 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
 }
 
 async function handleRemoveRecentProject(recordId: string) {
+  const removedRecord = recentProjects.value.find(
+    (record) => record.recordId === recordId,
+  );
+
   recentProjects.value = await removeRecentProject(recordId);
+
+  if (
+    removedRecord &&
+    !recentProjects.value.some(
+      (record) => record.projectId === removedRecord.projectId,
+    )
+  ) {
+    clearProjectSession(removedRecord.projectId);
+    removeProjectWorkspacePositions(removedRecord.projectId);
+  }
 }
 
 async function handleProjectCreated(project: OpenedProject, owner: Member) {
@@ -520,7 +613,13 @@ function handleEnterCurrentProject() {
     return;
   }
 
-  navigate(`/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files`);
+  navigate(
+    buildProjectPath(
+      currentProject.value.config.project_id,
+      undefined,
+      lastViewedFileId.value,
+    ),
+  );
 }
 
 async function handleLogin(memberName: string, password: string) {
@@ -547,11 +646,21 @@ async function handleLogin(memberName: string, password: string) {
     setCurrentUser(member);
     currentUser.value = getCurrentUser();
     saveProjectSession(currentProject.value.config.project_id, member.id);
+    restoreWorkspacePosition(currentProject.value, member);
     recentProjects.value = updateRecentProjectUser(
       currentProject.value.config.project_id,
       member.id,
     );
-    navigate(`/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files`);
+    const targetPath =
+      pendingProjectPathAfterLogin.value ||
+      buildProjectPath(
+        currentProject.value.config.project_id,
+        undefined,
+        lastViewedFileId.value,
+      );
+
+    pendingProjectPathAfterLogin.value = "";
+    navigate(targetPath);
   } catch {
     loginErrorMessage.value = "登录失败。请稍后再试。";
   } finally {
@@ -670,12 +779,14 @@ async function handleDeleteProjectRequested() {
     currentRecentRecordId.value = "";
     lastViewedFileId.value = "";
     lastViewedEntryByFileId.value = {};
+    pendingProjectPathAfterLogin.value = "";
     currentStats.value = null;
     taskCount.value = 0;
     loginErrorMessage.value = "";
     packedProjectNotice.value = "";
     appErrorMessage.value = "";
     appNoticeMessage.value = result.message;
+    removeProjectWorkspacePositions(project.config.project_id);
     replace("/projects");
   } catch (error) {
     appErrorMessage.value =
@@ -690,6 +801,7 @@ function handleOpenFile(fileId: string) {
   }
 
   lastViewedFileId.value = fileId;
+  rememberCurrentFilePosition(fileId);
   navigate(
     `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/files/${encodeURIComponent(fileId)}`,
   );
@@ -714,6 +826,7 @@ function handleOpenTaskTarget(fileId: string, entryId: string, entryIndex: numbe
   }
 
   lastViewedFileId.value = fileId;
+  rememberCurrentFilePosition(fileId);
   const query = entryId
     ? `?entry=${encodeURIComponent(entryId)}`
     : entryIndex > 0
@@ -739,6 +852,7 @@ function handleOpenCommentTarget(comment: Comment) {
   }
 
   lastViewedFileId.value = fileId;
+  rememberCurrentFilePosition(fileId);
   const query = new URLSearchParams({
     entry: comment.entry_id,
     tab: "comments",
@@ -760,6 +874,12 @@ function handleEntryViewed(fileId: string, entryId: string) {
     ...lastViewedEntryByFileId.value,
     [fileId]: entryId,
   };
+  rememberProjectEntryPosition(
+    currentProject.value?.config.project_id ?? "",
+    currentUser.value?.id ?? "",
+    fileId,
+    entryId,
+  );
 }
 
 function handlePackedProjectDirty() {
@@ -821,7 +941,7 @@ async function restoreProjectFromRoute() {
     }
 
     await enterOpenedProject(project, {
-      preferredSection: currentRoute.section === "file-entry" ? "files" : currentRoute.section,
+      preferredPath: getExplicitProjectPath(routePath.value),
     });
   } catch (error) {
     appErrorMessage.value =

@@ -1,5 +1,6 @@
 import { clearRecentProjects } from "./recentProjects";
 import { clearAllProjectSessions, clearProjectSession } from "./session";
+import { clearAllWorkspacePositions } from "./workspacePosition";
 
 export type CacheCleanupItemId =
   | "import_preview"
@@ -73,7 +74,7 @@ export const CACHE_CLEANUP_OPTIONS: CacheCleanupOption[] = [
   {
     id: "recent_projects",
     label: "最近项目记录",
-    description: "清空启动页的最近项目列表和本地授权记录。",
+    description: "清空最近项目、本地授权和最近编辑位置。",
     defaultSelected: false,
   },
   {
@@ -144,7 +145,10 @@ export async function clearSelectedCache(
   for (const id of selected) {
     if (id === "recent_projects") {
       await clearRecentProjects();
-      cleaned.push(makeItem(id, ["已清空最近项目记录和本地授权记录。"]));
+      clearAllWorkspacePositions();
+      cleaned.push(
+        makeItem(id, ["已清空最近项目、本地授权和最近编辑位置。"]),
+      );
       continue;
     }
 

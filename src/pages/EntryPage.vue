@@ -8,7 +8,6 @@ import { useAppDraft } from "../composables/useAppDraft";
 import type { Comment, Entry, EntryStatus, ProjectConfig } from "../model/types";
 import { markDisputed, resolveDispute } from "../services/comments";
 import {
-  getEntryById,
   loadEntries,
   saveEntry,
   updateEntryAccess,
@@ -17,6 +16,7 @@ import { getCurrentUser } from "../services/permissions";
 
 type EntryFilter = EntryStatus | "all" | "disputed";
 type AssistTab = "terms" | "comments" | "context" | "history";
+type EntryScrollPosition = "nearest" | "second" | "top";
 const ENTRY_PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 800] as const;
 
 const props = defineProps<{
@@ -44,8 +44,11 @@ const isLoading = ref(false);
 const isSaving = ref(false);
 const errorMessage = ref("");
 const savedMessage = ref("");
-const entryWindowStartIndex = ref(0);
+const currentEntryPage = ref(1);
 const entryPageSize = ref<(typeof ENTRY_PAGE_SIZE_OPTIONS)[number]>(50);
+const scrollTargetEntryId = ref("");
+const scrollTargetPosition = ref<EntryScrollPosition>("nearest");
+const scrollRequestId = ref(0);
 
 const currentFile = computed(() =>
   props.project.files.find((file) => file.id === props.fileId),
@@ -94,19 +97,6 @@ const filteredEntries = computed(() => {
 const totalEntryPages = computed(() =>
   Math.max(1, Math.ceil(filteredEntries.value.length / entryPageSize.value)),
 );
-const currentEntryPage = computed(() => {
-  if (
-    filteredEntries.value.length > 0 &&
-    entryWindowStartIndex.value >= getMaxWindowStartIndex()
-  ) {
-    return totalEntryPages.value;
-  }
-
-  return Math.min(
-    totalEntryPages.value,
-    Math.floor(entryWindowStartIndex.value / entryPageSize.value) + 1,
-  );
-});
 const selectedIndex = computed(() => {
   if (!selectedEntry.value) {
     return -1;
@@ -116,19 +106,22 @@ const selectedIndex = computed(() => {
     (entry) => entry.id === selectedEntry.value?.id,
   );
 });
+const pageStartIndex = computed(
+  () => (currentEntryPage.value - 1) * entryPageSize.value,
+);
 const pagedEntries = computed(() =>
   filteredEntries.value.slice(
-    entryWindowStartIndex.value,
-    entryWindowStartIndex.value + entryPageSize.value,
+    pageStartIndex.value,
+    pageStartIndex.value + entryPageSize.value,
   ),
 );
 const pageStart = computed(() =>
-  filteredEntries.value.length === 0 ? 0 : entryWindowStartIndex.value + 1,
+  filteredEntries.value.length === 0 ? 0 : pageStartIndex.value + 1,
 );
 const pageEnd = computed(() =>
   Math.min(
     filteredEntries.value.length,
-    entryWindowStartIndex.value + pagedEntries.value.length,
+    pageStartIndex.value + pagedEntries.value.length,
   ),
 );
 const canGoPrevious = computed(() => selectedIndex.value > 0);
@@ -184,14 +177,6 @@ function getInitialEntry(loadedEntries: Entry[]): Entry | undefined {
   return loadedEntries[0];
 }
 
-function getMaxWindowStartIndex(): number {
-  return Math.max(0, filteredEntries.value.length - entryPageSize.value);
-}
-
-function clampWindowStartIndex(index: number): number {
-  return Math.min(Math.max(0, index), getMaxWindowStartIndex());
-}
-
 function getEntryIndex(entry: Entry | undefined): number {
   if (!entry) {
     return -1;
@@ -200,31 +185,23 @@ function getEntryIndex(entry: Entry | undefined): number {
   return filteredEntries.value.findIndex((item) => item.id === entry.id);
 }
 
-function alignWindowToEntrySecondRow(entry: Entry | undefined) {
+function getEntryPage(entry: Entry | undefined): number {
   const index = getEntryIndex(entry);
 
-  if (index < 0) {
-    entryWindowStartIndex.value = 0;
-    return;
-  }
-
-  entryWindowStartIndex.value = clampWindowStartIndex(Math.max(0, index - 1));
+  return index < 0 ? -1 : Math.floor(index / entryPageSize.value) + 1;
 }
 
-function keepEntryVisible(entry: Entry | undefined) {
-  const index = getEntryIndex(entry);
-
-  if (index < 0) {
-    entryWindowStartIndex.value = 0;
+function requestEntryScroll(
+  entry: Entry | undefined,
+  position: EntryScrollPosition,
+) {
+  if (!entry && position !== "top") {
     return;
   }
 
-  const windowStart = entryWindowStartIndex.value;
-  const windowEnd = windowStart + entryPageSize.value;
-
-  if (index < windowStart || index >= windowEnd) {
-    alignWindowToEntrySecondRow(entry);
-  }
+  scrollTargetEntryId.value = entry?.id ?? "";
+  scrollTargetPosition.value = position;
+  scrollRequestId.value += 1;
 }
 
 function rememberViewedEntry(entry: Entry | undefined) {
@@ -235,15 +212,23 @@ function rememberViewedEntry(entry: Entry | undefined) {
 
 function setSelectedEntry(
   entry: Entry | undefined,
-  options: { alignToSecondRow?: boolean; remember?: boolean } = {},
+  options: {
+    ensurePage?: boolean;
+    remember?: boolean;
+    scrollPosition?: EntryScrollPosition;
+  } = {},
 ) {
   selectedEntry.value = entry;
   draftTarget.value = entry?.target ?? "";
 
-  if (options.alignToSecondRow) {
-    alignWindowToEntrySecondRow(entry);
-  } else {
-    keepEntryVisible(entry);
+  const entryPage = getEntryPage(entry);
+
+  if (options.ensurePage !== false && entryPage > 0) {
+    currentEntryPage.value = entryPage;
+  }
+
+  if (options.scrollPosition) {
+    requestEntryScroll(entry, options.scrollPosition);
   }
 
   if (options.remember !== false) {
@@ -252,28 +237,17 @@ function setSelectedEntry(
 }
 
 function handleUpdatePage(page: number) {
-  if (page <= 1) {
-    entryWindowStartIndex.value = 0;
+  const nextPage = Math.min(
+    totalEntryPages.value,
+    Math.max(1, page),
+  );
+
+  if (nextPage === currentEntryPage.value) {
     return;
   }
 
-  if (page >= totalEntryPages.value) {
-    entryWindowStartIndex.value = getMaxWindowStartIndex();
-    return;
-  }
-
-  if (page > currentEntryPage.value) {
-    entryWindowStartIndex.value = clampWindowStartIndex(
-      entryWindowStartIndex.value + entryPageSize.value,
-    );
-    return;
-  }
-
-  if (page < currentEntryPage.value) {
-    entryWindowStartIndex.value = clampWindowStartIndex(
-      entryWindowStartIndex.value - entryPageSize.value,
-    );
-  }
+  currentEntryPage.value = nextPage;
+  requestEntryScroll(undefined, "top");
 }
 
 function handleUpdatePageSize(pageSize: number) {
@@ -282,7 +256,9 @@ function handleUpdatePageSize(pageSize: number) {
   }
 
   entryPageSize.value = pageSize as (typeof ENTRY_PAGE_SIZE_OPTIONS)[number];
-  alignWindowToEntrySecondRow(selectedEntry.value);
+  const selectedPage = getEntryPage(selectedEntry.value);
+  currentEntryPage.value = selectedPage > 0 ? selectedPage : 1;
+  requestEntryScroll(selectedEntry.value, "nearest");
 }
 
 async function loadFileEntries() {
@@ -291,11 +267,14 @@ async function loadFileEntries() {
   savedMessage.value = "";
   selectedEntry.value = undefined;
   draftTarget.value = "";
+  currentEntryPage.value = 1;
 
   try {
     const loadedEntries = await loadEntries(props.fileId);
     entries.value = loadedEntries;
-    setSelectedEntry(getInitialEntry(entries.value), { alignToSecondRow: true });
+    setSelectedEntry(getInitialEntry(entries.value), {
+      scrollPosition: "second",
+    });
     if (props.targetAssistTab) {
       assistTab.value = props.targetAssistTab;
     }
@@ -310,8 +289,11 @@ async function loadFileEntries() {
   }
 }
 
-async function handleSelectEntry(entry: Entry) {
-  setSelectedEntry((await getEntryById(entry.id)) ?? entry);
+function handleSelectEntry(
+  entry: Entry,
+  scrollPosition?: EntryScrollPosition,
+) {
+  setSelectedEntry(entry, { scrollPosition });
   savedMessage.value = "";
 }
 
@@ -319,14 +301,14 @@ function replaceEntry(savedEntry: Entry) {
   entries.value = entries.value.map((entry) =>
     entry.id === savedEntry.id ? savedEntry : entry,
   );
-  setSelectedEntry(savedEntry);
+  setSelectedEntry(savedEntry, { ensurePage: false, remember: false });
 }
 
 function selectEntryByOffset(offset: -1 | 1) {
   const nextEntry = filteredEntries.value[selectedIndex.value + offset];
 
   if (nextEntry) {
-    void handleSelectEntry(nextEntry);
+    handleSelectEntry(nextEntry, "nearest");
   }
 }
 
@@ -458,7 +440,7 @@ async function handleSaveAndNext(entry: Entry) {
     replaceEntry(savedEntry);
 
     if (nextEntry) {
-      await handleSelectEntry(nextEntry);
+      handleSelectEntry(nextEntry, "nearest");
     }
 
     savedMessage.value = "已保存译文。";
@@ -494,7 +476,7 @@ watch(
     const requestedEntry = getRequestedEntry(entries.value);
 
     if (requestedEntry) {
-      setSelectedEntry(requestedEntry, { alignToSecondRow: true });
+      setSelectedEntry(requestedEntry, { scrollPosition: "second" });
     }
   },
 );
@@ -511,7 +493,7 @@ watch(
     );
 
     if (lastViewedEntry) {
-      setSelectedEntry(lastViewedEntry, { alignToSecondRow: true });
+      setSelectedEntry(lastViewedEntry, { scrollPosition: "second" });
     }
   },
 );
@@ -531,15 +513,17 @@ watch(filteredEntries, (nextEntries) => {
     selectedEntry.value &&
     nextEntries.some((entry) => entry.id === selectedEntry.value?.id)
   ) {
-    alignWindowToEntrySecondRow(selectedEntry.value);
     return;
   }
 
-  setSelectedEntry(nextEntries[0], { alignToSecondRow: true });
+  setSelectedEntry(nextEntries[0], { scrollPosition: "nearest" });
 });
 
 watch(totalEntryPages, () => {
-  entryWindowStartIndex.value = clampWindowStartIndex(entryWindowStartIndex.value);
+  currentEntryPage.value = Math.min(
+    totalEntryPages.value,
+    Math.max(1, currentEntryPage.value),
+  );
 });
 
 onMounted(loadFileEntries);
@@ -576,6 +560,9 @@ onMounted(loadFileEntries);
           :total-pages="totalEntryPages"
           :page-start="pageStart"
           :page-end="pageEnd"
+          :scroll-target-entry-id="scrollTargetEntryId"
+          :scroll-target-position="scrollTargetPosition"
+          :scroll-request-id="scrollRequestId"
           :workflow="project.settings.workflow"
           :file-locked="currentFile?.locked"
           :file-hidden="currentFile?.hidden"
