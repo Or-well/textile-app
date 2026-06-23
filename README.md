@@ -156,7 +156,6 @@ scripts/            版本清单和发布检查脚本
 - [技术文档](docs/TECHNICAL_DOCUMENTATION.md)
 - [代码代理开发规范](AGENTS.md)
 - [Tauri Updater 发布说明](docs/TAURI_UPDATER_RELEASE.md)
-- Vue 3 + TypeScript 长期学习教程位于仓库外：`D:\documents\Textile_Project\vue-typescript-project-tutorial.md`
 
 ## License
 
