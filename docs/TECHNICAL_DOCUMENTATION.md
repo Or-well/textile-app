@@ -38,6 +38,7 @@ src/
     vue.svg
   composables/
     useAppDraft.ts
+    useProjectBackupPublisherKey.ts
   model/
     entryExchange.ts
     memberOptions.ts
@@ -83,6 +84,7 @@ src/
     KeyManagementPanel.vue
     LauncherActionCard.vue
     ProgressBar.vue
+    ProjectBackupKeyReminderDialog.vue
     ProjectLayout.vue
     ProjectPageHeader.vue
     ProjectSidebar.vue
@@ -526,6 +528,8 @@ changes/
 5. 页面通过 `saveGeneratedFile()` 进入可确认结果的保存流程。
 6. Tauri 使用原生保存对话框和后端分块写入；Web/PWA 使用 `showSaveFilePicker()`。不支持可靠保存的环境直接返回失败，不触发浏览器原生下载。
 7. 只有文件确认写入成功后，才调用 `completeProjectPackageExport()` 清除内存项目 dirty 状态。
+
+导出页和设置页在执行 `.hproj` 备份前会调用 `shouldWarnProjectBackupMissingPublisherKey()` 做软提醒：当项目要求普通修改包签名、当前成员拥有发布项目更新包权限，且当前成员没有有效公钥时，先弹出“建议先登记负责人公钥”。用户可以继续导出备份，不会被强制阻拦；如果选择创建负责人身份密钥，两个页面共用 `useProjectBackupPublisherKey.ts` 编排 `prepareOwnSigningKeyGeneration()`、私钥文件保存和 `commitPreparedOwnSigningKeyGeneration()`。该流程先生成内存候选和 `member-key.json`，确认私钥文件保存成功后才写入 `members.json`。创建成功后不自动继续导出 `.hproj`，要求用户重新发起备份，避免密钥创建和项目分发混成一个不可确认的连续动作。私钥不进入 `.hproj`。
 
 预览：
 

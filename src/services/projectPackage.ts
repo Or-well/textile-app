@@ -2,6 +2,7 @@ import type { Member, ProjectConfig } from "../model/types";
 import { parseJsonl } from "../utils/jsonl";
 import { createZip, readZipEntries, type ZipContent } from "../utils/zip";
 import { utcDateKey } from "../utils/time";
+import { PERMISSION_ACTIONS } from "../model/permissions";
 import {
   createMemoryProjectDirectory,
   deleteEntry,
@@ -15,7 +16,9 @@ import {
 } from "./projectFs";
 import { createProjectStorage } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import { projectRequiresSignedChangePackages } from "./collaboration";
 import {
+  can,
   canProjectBackup,
   getCurrentUser,
 } from "./permissions";
@@ -28,6 +31,31 @@ export interface ExportedProjectPackage {
 export interface ProjectPackageExportOverrides {
   project?: ProjectConfig;
   members?: Member[];
+}
+
+export function shouldWarnProjectBackupMissingPublisherKey(
+  project: ProjectConfig | null | undefined,
+  publisher: Member | null | undefined,
+): boolean {
+  if (!projectRequiresSignedChangePackages(project)) {
+    return false;
+  }
+
+  if (
+    !can(
+      publisher,
+      PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+      project ?? undefined,
+    )
+  ) {
+    return false;
+  }
+
+  return !(
+    publisher?.public_key &&
+    publisher.key_id &&
+    !publisher.key_revoked_at
+  );
 }
 
 export interface PackedProjectInfo {

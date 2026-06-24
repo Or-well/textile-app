@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import licenseText from "../../LICENSE?raw";
 import { useAppDraft } from "../composables/useAppDraft";
+import { createProjectBackupPublisherKey } from "../composables/useProjectBackupPublisherKey";
 import KeyManagementPanel from "../components/KeyManagementPanel.vue";
+import ProjectBackupKeyReminderDialog from "../components/ProjectBackupKeyReminderDialog.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import ClearCacheDialog from "../components/settings/ClearCacheDialog.vue";
 import DeleteProjectDialog from "../components/settings/DeleteProjectDialog.vue";
@@ -39,12 +41,14 @@ import {
   canClearAppCache,
   canConfigureStats,
   canDeleteProject,
+  canGenerateKey,
   getCurrentUser,
 } from "../services/permissions";
 import {
   completeProjectPackageExport,
   exportProjectPackage,
   getProjectPackageSuggestedFileName,
+  shouldWarnProjectBackupMissingPublisherKey,
 } from "../services/projectPackage";
 import {
   openProject,
@@ -170,6 +174,9 @@ const isScanningProjectDeletion = ref(false);
 const showClearCacheDialog = ref(false);
 const showDeleteProjectDialog = ref(false);
 const showLicenseDialog = ref(false);
+const showProjectBackupKeyReminder = ref(false);
+const isCreatingProjectBackupPublisherKey = ref(false);
+const projectBackupKeyReminderError = ref("");
 const projectDeletionScan = ref<ProjectDeletionScan | null>(null);
 const projectDeletionError = ref("");
 const message = ref("");
@@ -183,8 +190,23 @@ const currentUser = computed(
 const currentRoleText = computed(() =>
   currentUser.value?.roles.length ? currentUser.value.roles.join(" / ") : "未登录",
 );
+const currentProjectMember = computed(
+  () =>
+    localMembers.value.find((member) => member.id === currentUser.value?.id) ??
+    currentUser.value ??
+    null,
+);
 const canManageProject = computed(() =>
   can(currentUser.value, PERMISSION_ACTIONS.PROJECT_MANAGE, localProject.value ?? undefined),
+);
+const canCreateProjectBackupPublisherKey = computed(() =>
+  canGenerateKey(currentUser.value),
+);
+const shouldWarnProjectBackupKey = computed(() =>
+  shouldWarnProjectBackupMissingPublisherKey(
+    localProject.value,
+    currentProjectMember.value,
+  ),
 );
 const canEditProgressWeights = computed(() =>
   canConfigureStats(currentUser.value),
@@ -614,7 +636,54 @@ function handleRestoreDefaultWeights() {
   errorMessage.value = "";
 }
 
-async function handleExportProjectFile() {
+async function handleCreateProjectBackupPublisherKey(): Promise<void> {
+  const root = props.projectRoot ?? localRoot.value;
+
+  if (!root) {
+    projectBackupKeyReminderError.value = "请先打开项目，再创建负责人身份密钥。";
+    return;
+  }
+
+  if (!currentUser.value) {
+    projectBackupKeyReminderError.value = "请先登录。";
+    return;
+  }
+
+  if (!canCreateProjectBackupPublisherKey.value) {
+    projectBackupKeyReminderError.value = "当前成员没有生成身份密钥的权限。";
+    return;
+  }
+
+  isCreatingProjectBackupPublisherKey.value = true;
+  projectBackupKeyReminderError.value = "";
+  message.value = "";
+  errorMessage.value = "";
+
+  try {
+    const result = await createProjectBackupPublisherKey(
+      root,
+      localMembers.value,
+      currentUser.value,
+    );
+
+    if (result.status === "not_saved") {
+      projectBackupKeyReminderError.value = result.reason;
+      return;
+    }
+
+    handleMembersUpdated(result.members);
+    showProjectBackupKeyReminder.value = false;
+    message.value =
+      `负责人身份密钥已创建，私钥文件已保存为 ${result.fileName}，公钥已写入项目。请重新导出项目备份。`;
+  } catch (error) {
+    projectBackupKeyReminderError.value =
+      error instanceof Error ? error.message : "创建负责人身份密钥失败。";
+  } finally {
+    isCreatingProjectBackupPublisherKey.value = false;
+  }
+}
+
+async function exportProjectFileNow() {
   const root = props.projectRoot ?? localRoot.value;
 
   if (!root) {
@@ -666,6 +735,34 @@ async function handleExportProjectFile() {
   } finally {
     isExportingProjectFile.value = false;
   }
+}
+
+async function handleExportProjectFile() {
+  if (!props.projectRoot && !localRoot.value) {
+    errorMessage.value = "请先打开项目，再导出为 Textile 项目文件。";
+    return;
+  }
+
+  if (shouldWarnProjectBackupKey.value) {
+    projectBackupKeyReminderError.value = "";
+    message.value = "";
+    errorMessage.value = "";
+    showProjectBackupKeyReminder.value = true;
+    return;
+  }
+
+  await exportProjectFileNow();
+}
+
+async function handleContinueProjectBackupExport(): Promise<void> {
+  showProjectBackupKeyReminder.value = false;
+  projectBackupKeyReminderError.value = "";
+  await exportProjectFileNow();
+}
+
+function handleCancelProjectBackupKeyReminder(): void {
+  showProjectBackupKeyReminder.value = false;
+  projectBackupKeyReminderError.value = "";
 }
 
 function handleUpdateChannelChange(event: Event) {
@@ -1658,6 +1755,16 @@ onBeforeUnmount(() => {
       :error-message="projectDeletionError"
       @cancel="showDeleteProjectDialog = false"
       @confirm="handleDeleteProjectConfirmed"
+    />
+
+    <ProjectBackupKeyReminderDialog
+      v-if="showProjectBackupKeyReminder"
+      :can-create-key="canCreateProjectBackupPublisherKey"
+      :is-creating-key="isCreatingProjectBackupPublisherKey"
+      :error-message="projectBackupKeyReminderError"
+      @create-key="handleCreateProjectBackupPublisherKey"
+      @continue-export="handleContinueProjectBackupExport"
+      @cancel="handleCancelProjectBackupKeyReminder"
     />
 
     <section

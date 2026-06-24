@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import { createProjectBackupPublisherKey } from "../composables/useProjectBackupPublisherKey";
 import ChangePreview from "../components/ChangePreview.vue";
 import ConflictResolver from "../components/ConflictResolver.vue";
+import ProjectBackupKeyReminderDialog from "../components/ProjectBackupKeyReminderDialog.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import SigningKeySetupDialog from "../components/SigningKeySetupDialog.vue";
 import type {
@@ -14,6 +16,7 @@ import {
   completeProjectPackageExport,
   exportProjectPackage,
   getProjectPackageSuggestedFileName,
+  shouldWarnProjectBackupMissingPublisherKey,
 } from "../services/projectPackage";
 import {
   applyChangePackage,
@@ -121,6 +124,9 @@ const isExportingProjectFile = ref(false);
 const isLoadingReleaseSummary = ref(false);
 const isReadingPackage = ref(false);
 const isApplyingPackage = ref(false);
+const showProjectBackupKeyReminder = ref(false);
+const isCreatingProjectBackupPublisherKey = ref(false);
+const projectBackupKeyReminderError = ref("");
 const errorMessage = ref("");
 const message = ref("");
 const changePackage = ref<ReadChangePackage>();
@@ -162,6 +168,9 @@ const canImportProjectUpdate = computed(() =>
 const canReviewPackages = computed(() => canReviewChangePackage(currentUser.value));
 const canSignPackages = computed(() => canSignChangePackage(currentUser.value));
 const canImportOwnPrivateKey = computed(() => canImportPrivateKey(currentUser.value));
+const canCreateProjectBackupPublisherKey = computed(() =>
+  canGenerateKey(currentUser.value),
+);
 const canGenerateSigningKeyForSetup = computed(() => {
   const hasCurrentActivePublicKey = Boolean(
     currentSigningMember.value?.public_key &&
@@ -185,6 +194,12 @@ const canDangerousImport = computed(() =>
 );
 const canExportFinalRelease = computed(() => canExportRelease(currentUser.value));
 const canExportProjectBackup = computed(() => canProjectBackup(currentUser.value));
+const shouldWarnProjectBackupKey = computed(() =>
+  shouldWarnProjectBackupMissingPublisherKey(
+    currentProject.value,
+    currentSigningMember.value,
+  ),
+);
 const canExportAnyTaskChange = computed(() => canManageTask(currentUser.value));
 const exportableTasks = computed(() =>
   canExportAnyTaskChange.value
@@ -505,6 +520,54 @@ function syncMembersAfterKeySetup(members: Member[], successMessage: string): vo
   localMembers.value = members;
   emit("membersUpdated", members);
   message.value = successMessage;
+}
+
+async function handleCreateProjectBackupPublisherKey(): Promise<void> {
+  const projectRoot = projectRootForExport.value;
+
+  if (!projectRoot) {
+    projectBackupKeyReminderError.value = "请先打开项目，再创建负责人身份密钥。";
+    return;
+  }
+
+  if (!currentUser.value) {
+    projectBackupKeyReminderError.value = "请先登录。";
+    return;
+  }
+
+  if (!canCreateProjectBackupPublisherKey.value) {
+    projectBackupKeyReminderError.value = "当前成员没有生成身份密钥的权限。";
+    return;
+  }
+
+  isCreatingProjectBackupPublisherKey.value = true;
+  projectBackupKeyReminderError.value = "";
+  errorMessage.value = "";
+  message.value = "";
+
+  try {
+    const result = await createProjectBackupPublisherKey(
+      projectRoot,
+      membersForKeys.value,
+      currentUser.value,
+    );
+
+    if (result.status === "not_saved") {
+      projectBackupKeyReminderError.value = result.reason;
+      return;
+    }
+
+    syncMembersAfterKeySetup(
+      result.members,
+      `负责人身份密钥已创建，私钥文件已保存为 ${result.fileName}，公钥已写入项目。请重新导出项目备份。`,
+    );
+    showProjectBackupKeyReminder.value = false;
+  } catch (error) {
+    projectBackupKeyReminderError.value =
+      error instanceof Error ? error.message : "创建负责人身份密钥失败。";
+  } finally {
+    isCreatingProjectBackupPublisherKey.value = false;
+  }
 }
 
 async function handleImportSigningKey(file: File): Promise<void> {
@@ -999,13 +1062,15 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
   }
 }
 
-async function handleExportProjectFile() {
+async function exportProjectFileNow() {
+  const projectRoot = projectRootForExport.value;
+
   if (!canExportProjectBackup.value) {
     errorMessage.value = "当前成员没有导出 Textile 项目备份的权限。";
     return;
   }
 
-  if (!projectRootForExport.value) {
+  if (!projectRoot) {
     errorMessage.value = "请先打开项目，再导出 Textile 项目备份。";
     return;
   }
@@ -1015,7 +1080,6 @@ async function handleExportProjectFile() {
   message.value = "";
 
   try {
-    const projectRoot = projectRootForExport.value;
     const outcome = await withAppOperation("导出项目备份", async () => {
       if (!currentProject.value) {
         throw new Error("请先打开项目，再导出 Textile 项目备份。");
@@ -1055,6 +1119,39 @@ async function handleExportProjectFile() {
   } finally {
     isExportingProjectFile.value = false;
   }
+}
+
+async function handleExportProjectFile() {
+  if (!canExportProjectBackup.value) {
+    errorMessage.value = "当前成员没有导出 Textile 项目备份的权限。";
+    return;
+  }
+
+  if (!projectRootForExport.value) {
+    errorMessage.value = "请先打开项目，再导出 Textile 项目备份。";
+    return;
+  }
+
+  if (shouldWarnProjectBackupKey.value) {
+    projectBackupKeyReminderError.value = "";
+    errorMessage.value = "";
+    message.value = "";
+    showProjectBackupKeyReminder.value = true;
+    return;
+  }
+
+  await exportProjectFileNow();
+}
+
+async function handleContinueProjectBackupExport(): Promise<void> {
+  showProjectBackupKeyReminder.value = false;
+  projectBackupKeyReminderError.value = "";
+  await exportProjectFileNow();
+}
+
+function handleCancelProjectBackupKeyReminder(): void {
+  showProjectBackupKeyReminder.value = false;
+  projectBackupKeyReminderError.value = "";
 }
 
 watch(
@@ -1435,6 +1532,16 @@ watch(
         @import-key="handleImportSigningKey"
         @generate-key="handleGenerateSigningKey"
         @cancel="handleCancelSigningKeySetup"
+      />
+
+      <ProjectBackupKeyReminderDialog
+        v-if="showProjectBackupKeyReminder"
+        :can-create-key="canCreateProjectBackupPublisherKey"
+        :is-creating-key="isCreatingProjectBackupPublisherKey"
+        :error-message="projectBackupKeyReminderError"
+        @create-key="handleCreateProjectBackupPublisherKey"
+        @continue-export="handleContinueProjectBackupExport"
+        @cancel="handleCancelProjectBackupKeyReminder"
       />
     </section>
   </main>
