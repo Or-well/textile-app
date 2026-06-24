@@ -339,15 +339,24 @@ async function handleSaveEntry(entry: Entry) {
   }
 }
 
-async function handleWorkflowStatus(entry: Entry) {
+async function handleWorkflowStatus(entry: Entry, requestedStatus: EntryStatus) {
   isSaving.value = true;
   errorMessage.value = "";
   savedMessage.value = "";
 
   try {
+    const nextEntry =
+      requestedStatus === "proofread"
+        ? filteredEntries.value[selectedIndex.value + 1]
+        : undefined;
     const savedEntry = await saveEntry(entry, getSaveEntryOptions());
 
     replaceEntry(savedEntry);
+
+    if (requestedStatus === "proofread" && nextEntry) {
+      handleSelectEntry(nextEntry, "nearest");
+    }
+
     savedMessage.value = "词条状态已更新。";
   } catch (error) {
     errorMessage.value =

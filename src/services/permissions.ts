@@ -35,7 +35,7 @@ const CURRENT_USER_STORAGE_KEY = "textile.currentUser";
 let currentUser: Member | null = readStoredUser();
 let currentRolePermissions: RolePermissions | undefined;
 let currentPermissionSchemaVersion = 1;
-const CURRENT_PERMISSION_SCHEMA_VERSION = 2;
+export const CURRENT_PERMISSION_SCHEMA_VERSION = 2;
 
 function toSessionMember(user: Member): Member {
   const sessionMember = { ...user };
@@ -163,7 +163,7 @@ function getConfiguredRolePermissions(project?: ProjectConfig): RolePermissions 
           )
         : [];
     const entryManagementCompatibilityPermissions =
-      configured && permissionSchemaVersion < CURRENT_PERMISSION_SCHEMA_VERSION
+      configured && permissionSchemaVersion < 2
         ? (defaults[role] ?? []).filter((permission) =>
             ENTRY_MANAGEMENT_COMPATIBILITY_PERMISSIONS.includes(
               permission as (typeof ENTRY_MANAGEMENT_COMPATIBILITY_PERMISSIONS)[number],

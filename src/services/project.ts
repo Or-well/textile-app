@@ -16,6 +16,7 @@ import {
   assertCan,
   can,
   canManageMemberPermissionOverrides,
+  CURRENT_PERMISSION_SCHEMA_VERSION,
   getDefaultRolePermissions,
   getCurrentUser,
   setPermissionProject,
@@ -499,7 +500,7 @@ export async function saveRolePermissions(
     settings: {
       ...project.settings,
       role_permissions: nextRolePermissions,
-      permission_schema_version: 2,
+      permission_schema_version: CURRENT_PERMISSION_SCHEMA_VERSION,
     },
   };
   const nextActor = members.find((member) => member.id === actor.id) ?? actor;
@@ -1280,7 +1281,7 @@ export async function createProjectInStorage(
           DEFAULT_NEW_PROJECT_COLLABORATION_SETTINGS.require_signed_change_packages,
       },
       role_permissions: getDefaultRolePermissions(),
-      permission_schema_version: 2,
+      permission_schema_version: CURRENT_PERMISSION_SCHEMA_VERSION,
     },
   };
   const members = [owner];

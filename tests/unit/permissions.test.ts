@@ -7,6 +7,7 @@ import {
   can,
   canEditEntry,
   canProofreadEntry,
+  canResolveDispute,
   canReviewEntry,
   canRestoreEntryVersion,
   canTranslateEntry,
@@ -33,9 +34,32 @@ describe("effective permissions", () => {
 
   it("uses default role permissions", () => {
     const translator = createMember(["translator"]);
+    const proofreader = createMember(["proofreader"]);
+    const reviewer = createMember(["reviewer"]);
 
     expect(can(translator, PERMISSION_ACTIONS.ENTRY_TRANSLATE)).toBe(true);
+    expect(can(translator, PERMISSION_ACTIONS.ENTRY_PROOFREAD)).toBe(false);
     expect(can(translator, PERMISSION_ACTIONS.ENTRY_REVIEW)).toBe(false);
+    expect(can(proofreader, PERMISSION_ACTIONS.ENTRY_PROOFREAD)).toBe(true);
+    expect(can(proofreader, PERMISSION_ACTIONS.ENTRY_TRANSLATE)).toBe(false);
+    expect(can(proofreader, PERMISSION_ACTIONS.ENTRY_REVIEW)).toBe(false);
+    expect(can(reviewer, PERMISSION_ACTIONS.ENTRY_REVIEW)).toBe(true);
+    expect(can(reviewer, PERMISSION_ACTIONS.ENTRY_TRANSLATE)).toBe(false);
+    expect(can(reviewer, PERMISSION_ACTIONS.ENTRY_PROOFREAD)).toBe(false);
+
+    for (const member of [translator, proofreader, reviewer]) {
+      expect(
+        canResolveDispute(member, createEntry({ disputed: true })),
+      ).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.CONTEXT_CREATE)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.CONTEXT_UPDATE)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.CONTEXT_DELETE)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.COMMENT_CREATE)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.COMMENT_REPLY)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.COMMENT_RESOLVE)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.COMMENT_REOPEN)).toBe(true);
+      expect(can(member, PERMISSION_ACTIONS.COMMENT_DELETE_OWN)).toBe(true);
+    }
   });
 
   it("adds entry management defaults only for legacy permission configs", () => {

@@ -38,7 +38,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   save: [entry: Entry];
   saveNext: [entry: Entry];
-  workflowStatus: [entry: Entry];
+  workflowStatus: [entry: Entry, status: EntryStatus];
   markDisputed: [entry: Entry];
   resolveDispute: [entry: Entry];
   openContext: [];
@@ -224,7 +224,7 @@ function handleWorkflowStatus(status: EntryStatus) {
   const workflowEntry = buildWorkflowEntry(status);
 
   if (workflowEntry) {
-    emit("workflowStatus", workflowEntry);
+    emit("workflowStatus", workflowEntry, status);
   }
 }
 
