@@ -8,6 +8,8 @@ import type {
   ProjectConfig,
   ProjectEvent,
   Task,
+  Term,
+  TermDeletion,
 } from "../../src/model/types";
 import {
   generateOwnSigningKey,
@@ -20,6 +22,7 @@ import {
 } from "../../src/services/changePackageHash";
 import {
   applyChangePackage,
+  detectConflicts,
   exportChangePackage,
   readChangePackage,
   setChangesProjectStorage,
@@ -222,14 +225,45 @@ async function refreshChangePackageHash(
     await calculateChangePackageContentHash({
       entries: changePackage.entries,
       comments: changePackage.comments,
-      terms: changePackage.terms,
-      contexts: changePackage.contexts,
+    terms: changePackage.terms,
+    termDeletions: changePackage.termDeletions,
+    contexts: changePackage.contexts,
       sourceFiles: changePackage.sourceFiles,
       tasks: changePackage.tasks,
       projectFiles: changePackage.projectFiles,
       memberFiles: changePackage.memberFiles,
       events: changePackage.events,
     });
+}
+
+function createTerm(overrides: Partial<Term> = {}): Term {
+  return {
+    id: "term-1",
+    source: "魔術回路",
+    target: "魔术回路",
+    part_of_speech: "名词",
+    note: "",
+    variants: [],
+    case_sensitive: false,
+    created_by: "owner-1",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function createTermDeletion(
+  term: Term,
+  overrides: Partial<TermDeletion> = {},
+): TermDeletion {
+  return {
+    id: `term-delete-${term.id}`,
+    term_id: term.id,
+    term,
+    deleted_by: "member-2",
+    deleted_at: "2026-02-01T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 async function createProjectUpdateFixture() {
@@ -681,6 +715,53 @@ describe("ordinary change-package write plan", () => {
     });
   });
 
+  it("exports member term edits and deletions in the change package", async () => {
+    const fixture = await createExportFixture();
+    const contributor: Member = {
+      ...fixture.contributor,
+      roles: ["translator", "term_manager"],
+    };
+    const editedTerm = createTerm({
+      id: "term-edited",
+      target: "魔术线路",
+      updated_by: contributor.id,
+      updated_at: "2026-02-01T00:00:00.000Z",
+    });
+    const deletedTerm = createTerm({
+      id: "term-deleted",
+      source: "使い魔",
+      target: "使魔",
+    });
+    const deletion = createTermDeletion(deletedTerm, {
+      deleted_by: contributor.id,
+    });
+
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: [fixture.members[0]!, contributor],
+    });
+    await fixture.storage.writeJsonl("terms/terms.jsonl", [editedTerm]);
+    await fixture.storage.writeJsonl("changes/term-deletions.jsonl", [
+      deletion,
+    ]);
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage(contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: contributor,
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(changePackage.manifest.schema_version).toBe(2);
+    expect(changePackage.manifest.summary?.changed_terms).toBe(2);
+    expect(changePackage.terms["terms/terms.jsonl"]).toEqual([editedTerm]);
+    expect(changePackage.termDeletions?.["term-changes/deletions.jsonl"])
+      .toEqual([deletion]);
+  });
+
   it("merges ordinary credential patches without replacing member records", async () => {
     const fixture = await createChangePackageFixture();
     const membersFile = await fixture.storage.readJson<{ members: Member[] }>(
@@ -935,6 +1016,92 @@ describe("ordinary change-package write plan", () => {
         expect.objectContaining({ type: "change_package.applied" }),
       ]),
     );
+  });
+
+  it("imports ordinary package term deletions", async () => {
+    const fixture = await createChangePackageFixture();
+    const membersFile = await fixture.storage.readJson<{ members: Member[] }>(
+      "members.json",
+    );
+    const nextMembers = membersFile.members.map((member) =>
+      member.id === "member-2"
+        ? { ...member, roles: ["translator", "term_manager"] }
+        : member,
+    );
+    const deletedTerm = createTerm({ id: "term-delete-1" });
+    const deletion = createTermDeletion(deletedTerm);
+
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: nextMembers,
+    });
+    await fixture.storage.writeJsonl("terms/terms.jsonl", [deletedTerm]);
+    fixture.changePackage.manifest.schema_version = 2;
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.termDeletions = {
+      "term-changes/deletions.jsonl": [deletion],
+    };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).resolves.toMatchObject({ importedTerms: 1 });
+    await expect(
+      fixture.storage.readJsonl<Term>("terms/terms.jsonl"),
+    ).resolves.toEqual([]);
+  });
+
+  it("detects term conflicts before applying ordinary package term changes", async () => {
+    const fixture = await createChangePackageFixture();
+    const membersFile = await fixture.storage.readJson<{ members: Member[] }>(
+      "members.json",
+    );
+    const nextMembers = membersFile.members.map((member) =>
+      member.id === "member-2"
+        ? { ...member, roles: ["translator", "term_manager"] }
+        : member,
+    );
+    const mainTerm = createTerm({
+      id: "term-conflict",
+      target: "主项目译名",
+    });
+    const packageTerm = createTerm({
+      id: mainTerm.id,
+      target: "修改包译名",
+      updated_by: "member-2",
+      updated_at: "2026-02-01T00:00:00.000Z",
+    });
+
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: nextMembers,
+    });
+    await fixture.storage.writeJsonl("terms/terms.jsonl", [mainTerm]);
+    fixture.changePackage.manifest.schema_version = 2;
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.terms = {
+      "terms/terms.jsonl": [packageTerm],
+    };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "term",
+        termId: "term-conflict",
+        reasons: ["target"],
+      }),
+    ]);
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("仍有冲突未处理");
   });
 
   it("restores earlier files when a later package write fails", async () => {

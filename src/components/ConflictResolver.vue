@@ -5,7 +5,7 @@ import type {
   ConflictResolution,
   ConflictResolutionAction,
 } from "../services/changes";
-import type { Comment, Entry, EntryStatus } from "../model/types";
+import type { Comment, Entry, EntryStatus, Term } from "../model/types";
 import {
   ENTRY_STATUSES,
   hasVisibleText,
@@ -19,6 +19,8 @@ interface ConflictDraft {
   target?: string;
   status?: EntryStatus;
   context?: string;
+  term?: Term;
+  variantsText?: string;
 }
 
 const props = defineProps<{
@@ -49,6 +51,20 @@ watch(
         };
       }
 
+      if (conflict.kind === "term") {
+        const term =
+          conflict.mainTerm ??
+          conflict.packageTerm ??
+          conflict.deletion?.term;
+
+        return {
+          conflictId: conflict.conflictId,
+          action: "keep_main",
+          term: term ? cloneTerm(term) : undefined,
+          variantsText: term?.variants.join("\n") ?? "",
+        };
+      }
+
       return {
         conflictId: conflict.conflictId,
         entryId: conflict.entryId,
@@ -72,6 +88,17 @@ function updateAction(
   }
 
   draft.action = action;
+
+  if (conflict.kind === "term") {
+    const term =
+      action === "use_package"
+        ? conflict.packageTerm ?? conflict.deletion?.term
+        : conflict.mainTerm ?? conflict.packageTerm ?? conflict.deletion?.term;
+
+    draft.term = term ? cloneTerm(term) : undefined;
+    draft.variantsText = term?.variants.join("\n") ?? "";
+    return;
+  }
 
   if (conflict.kind !== "entry") {
     return;
@@ -100,8 +127,28 @@ function handleApply() {
       target: draft.target,
       status: draft.status,
       context: draft.context,
+      term: draft.term
+        ? {
+            ...draft.term,
+            variants: parseVariantsText(draft.variantsText ?? ""),
+          }
+        : undefined,
     })),
   );
+}
+
+function cloneTerm(term: Term): Term {
+  return {
+    ...term,
+    variants: [...term.variants],
+  };
+}
+
+function parseVariantsText(value: string): string[] {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function formatConflictReasons(conflict: ChangeConflict): string {
@@ -123,7 +170,21 @@ function formatConflictReasons(conflict: ChangeConflict): string {
     resolved_at: "解决时间",
     resolved_by: "解决人",
   };
-  const labels = conflict.kind === "entry" ? entryLabels : commentLabels;
+  const termLabels: Record<string, string> = {
+    source: "原文",
+    target: "推荐译名",
+    part_of_speech: "词性",
+    note: "备注",
+    variants: "变体",
+    case_sensitive: "大小写规则",
+    deleted: "删除状态",
+  };
+  const labels =
+    conflict.kind === "entry"
+      ? entryLabels
+      : conflict.kind === "comment"
+        ? commentLabels
+        : termLabels;
 
   return conflict.reasons
     .map((reason) => labels[reason] ?? reason)
@@ -135,7 +196,11 @@ function formatConflictTitle(conflict: ChangeConflict): string {
     return `词条 ${conflict.entryId}`;
   }
 
-  return `批注 ${conflict.commentId}（词条 ${conflict.entryId}）`;
+  if (conflict.kind === "comment") {
+    return `批注 ${conflict.commentId}（词条 ${conflict.entryId}）`;
+  }
+
+  return `术语 ${conflict.termId}`;
 }
 
 function formatTarget(entry: Entry): string {
@@ -169,6 +234,26 @@ function formatCommentResolution(comment: Comment): string {
   ].filter(Boolean);
 
   return parts.length > 0 ? parts.join("，") : "已解决";
+}
+
+function formatTerm(term: Term | undefined): string {
+  if (!term) {
+    return "无术语";
+  }
+
+  return `${term.source} → ${term.target}`;
+}
+
+function formatTermMeta(term: Term | undefined): string {
+  if (!term) {
+    return "";
+  }
+
+  return [
+    term.part_of_speech ? `词性：${term.part_of_speech}` : "",
+    term.variants.length > 0 ? `变体：${term.variants.join("、")}` : "",
+    term.case_sensitive ? "区分大小写" : "忽略大小写",
+  ].filter(Boolean).join("；");
 }
 </script>
 
@@ -207,10 +292,14 @@ function formatCommentResolution(comment: Comment): string {
             <small>状态：{{ conflict.mainEntry.status }}</small>
             <small>上下文：{{ formatContext(conflict.mainEntry) }}</small>
           </template>
-          <template v-else>
+          <template v-else-if="conflict.kind === 'comment'">
             <p>{{ conflict.mainComment.body }}</p>
             <small>状态：{{ formatCommentStatus(conflict.mainComment) }}</small>
             <small>{{ formatCommentResolution(conflict.mainComment) }}</small>
+          </template>
+          <template v-else>
+            <p>{{ formatTerm(conflict.mainTerm) }}</p>
+            <small>{{ formatTermMeta(conflict.mainTerm) }}</small>
           </template>
         </section>
         <section>
@@ -220,10 +309,26 @@ function formatCommentResolution(comment: Comment): string {
             <small>状态：{{ conflict.packageEntry.status }}</small>
             <small>上下文：{{ formatContext(conflict.packageEntry) }}</small>
           </template>
-          <template v-else>
+          <template v-else-if="conflict.kind === 'comment'">
             <p>{{ conflict.packageComment.body }}</p>
             <small>状态：{{ formatCommentStatus(conflict.packageComment) }}</small>
             <small>{{ formatCommentResolution(conflict.packageComment) }}</small>
+          </template>
+          <template v-else>
+            <p>
+              {{
+                conflict.deletion
+                  ? `删除：${formatTerm(conflict.deletion.term)}`
+                  : formatTerm(conflict.packageTerm)
+              }}
+            </p>
+            <small>
+              {{
+                conflict.deletion
+                  ? formatTermMeta(conflict.deletion.term)
+                  : formatTermMeta(conflict.packageTerm)
+              }}
+            </small>
           </template>
         </section>
       </div>
@@ -241,7 +346,10 @@ function formatCommentResolution(comment: Comment): string {
           >
             <option value="keep_main">保留当前项目</option>
             <option value="use_package">使用修改包版本</option>
-            <option v-if="conflict.kind === 'entry'" value="manual_merge">
+            <option
+              v-if="conflict.kind === 'entry' || (conflict.kind === 'term' && conflict.packageTerm)"
+              value="manual_merge"
+            >
               手动处理
             </option>
             <option value="skip">跳过</option>
@@ -270,6 +378,33 @@ function formatCommentResolution(comment: Comment): string {
           <span>处理后的上下文</span>
           <textarea v-model="draft.context" rows="3" />
         </label>
+
+        <template v-if="conflict.kind === 'term' && draft.action === 'manual_merge' && draft.term">
+          <label>
+            <span>术语原文</span>
+            <input v-model="draft.term.source" />
+          </label>
+          <label>
+            <span>推荐译名</span>
+            <input v-model="draft.term.target" />
+          </label>
+          <label>
+            <span>词性</span>
+            <input v-model="draft.term.part_of_speech" />
+          </label>
+          <label>
+            <span>备注</span>
+            <textarea v-model="draft.term.note" rows="3" />
+          </label>
+          <label>
+            <span>变体</span>
+            <textarea v-model="draft.variantsText" rows="3" />
+          </label>
+          <label class="checkbox-label">
+            <input v-model="draft.term.case_sensitive" type="checkbox" />
+            <span>区分大小写</span>
+          </label>
+        </template>
       </div>
     </article>
   </section>
@@ -389,6 +524,7 @@ label {
 }
 
 select,
+input,
 textarea {
   width: 100%;
   padding: 9px 10px;
@@ -402,6 +538,16 @@ textarea {
 textarea {
   resize: vertical;
   line-height: 1.6;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-label input {
+  width: auto;
 }
 
 @media (max-width: 720px) {

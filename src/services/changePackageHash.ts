@@ -4,6 +4,7 @@ import type {
   ProjectEvent,
   Task,
   Term,
+  TermDeletion,
 } from "../model/types";
 import { sha256Hex, stableStringify } from "./crypto";
 
@@ -11,6 +12,7 @@ export interface ChangePackagePayload {
   entries: Record<string, Entry[]>;
   comments: Record<string, Comment[]>;
   terms: Record<string, Term[]>;
+  termDeletions?: Record<string, TermDeletion[]>;
   contexts: Record<string, string>;
   sourceFiles: Record<string, string>;
   tasks: Record<string, Task[]>;
@@ -65,7 +67,7 @@ function normalizeTextRecord(
 }
 
 export function buildChangePackageHashPayload(payload: ChangePackagePayload) {
-  return {
+  const hashPayload = {
     entries: normalizeRecordRows(payload.entries),
     comments: normalizeRecordRows(payload.comments),
     terms: normalizeRecordRows(payload.terms),
@@ -76,6 +78,11 @@ export function buildChangePackageHashPayload(payload: ChangePackagePayload) {
     members: normalizeTextRecord(payload.memberFiles),
     logs: sortRows(payload.events),
   };
+  const termDeletions = normalizeRecordRows(payload.termDeletions ?? {});
+
+  return termDeletions.length > 0
+    ? { ...hashPayload, termDeletions }
+    : hashPayload;
 }
 
 export async function calculateChangePackageContentHash(

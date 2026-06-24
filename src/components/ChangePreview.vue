@@ -157,6 +157,10 @@ function submitterText(
         <dd>{{ preview.termCount }}</dd>
       </div>
       <div>
+        <dt>术语删除</dt>
+        <dd>{{ preview.deletedTermCount }}</dd>
+      </div>
+      <div>
         <dt>独立上下文文件</dt>
         <dd>{{ preview.contextCount }}</dd>
       </div>

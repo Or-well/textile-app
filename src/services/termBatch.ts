@@ -4,7 +4,7 @@ import {
   canDeleteTerm,
   canUpdateTerm,
 } from "./permissions";
-import { loadTermsFresh, saveTerms } from "./terms";
+import { loadTermsFresh, recordTermDeletions, saveTerms } from "./terms";
 
 export type TermBatchOperation =
   | "set_part_of_speech"
@@ -41,6 +41,7 @@ interface PreparedTermBatch {
   preview: TermBatchPreview;
   nextTerms: Term[];
   updatedTerms: Term[];
+  deletedTerms: Term[];
   deletedTermIds: string[];
 }
 
@@ -109,6 +110,7 @@ async function prepareTermBatch(
   const skipped: TermBatchSkippedItem[] = [];
   const applicableTermIds: string[] = [];
   const updatedTerms: Term[] = [];
+  const deletedTerms: Term[] = [];
   const deletedTermIds: string[] = [];
   const updatedAt = nowIso();
   const partOfSpeech = request.value?.trim() ?? "";
@@ -153,6 +155,7 @@ async function prepareTermBatch(
 
     if (request.operation === "delete") {
       deletedTermIds.push(termId);
+      deletedTerms.push(term);
       continue;
     }
 
@@ -169,6 +172,7 @@ async function prepareTermBatch(
             ? false
             : term.case_sensitive,
       updated_at: updatedAt,
+      updated_by: actor.id,
     });
   }
 
@@ -188,6 +192,7 @@ async function prepareTermBatch(
     preview,
     nextTerms,
     updatedTerms,
+    deletedTerms,
     deletedTermIds,
   };
 }
@@ -205,6 +210,10 @@ export async function executeTermBatch(
 
   if (prepared.preview.applicableTermIds.length > 0) {
     await saveTerms(prepared.nextTerms);
+    await recordTermDeletions(
+      prepared.deletedTerms,
+      resolveActor(request.actor).id,
+    );
   }
 
   return {

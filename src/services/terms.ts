@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import type { Term } from "../model/types";
+import type { Term, TermDeletion } from "../model/types";
 import { createId } from "../utils/id";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { parseCsvRecords } from "../utils/csv";
@@ -58,9 +58,11 @@ interface ImportTermRow {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
+  updated_by?: string;
 }
 
 const TERMS_PATH = "terms/terms.jsonl";
+const TERM_DELETIONS_PATH = "changes/term-deletions.jsonl";
 
 let currentProjectStorage: ProjectStorage | null = null;
 let cachedTerms: Term[] | null = null;
@@ -185,6 +187,7 @@ function normalizeTerm(term: ImportTermRow, userId: string): Term {
     created_by: term.created_by || userId,
     created_at: term.created_at || now,
     updated_at: term.updated_at || now,
+    updated_by: term.updated_by,
   };
 }
 
@@ -568,6 +571,44 @@ export async function saveTerms(terms: Term[]): Promise<Term[]> {
   return sortedTerms;
 }
 
+async function loadTermDeletions(): Promise<TermDeletion[]> {
+  const storage = getProjectStorage();
+
+  if (!(await storage.fileExists(TERM_DELETIONS_PATH))) {
+    return [];
+  }
+
+  return storage.readJsonl<TermDeletion>(TERM_DELETIONS_PATH);
+}
+
+export async function recordTermDeletions(
+  terms: Term[],
+  userId: string,
+): Promise<TermDeletion[]> {
+  if (terms.length === 0) {
+    return [];
+  }
+
+  const storage = getProjectStorage();
+  const deletedAt = nowIso();
+  const existing = await loadTermDeletions();
+  const deletionRecords = terms.map((term) => ({
+    id: createId("term_delete"),
+    term_id: term.id,
+    term,
+    deleted_by: userId,
+    deleted_at: deletedAt,
+  }));
+
+  await storage.ensureDirectory("changes");
+  await storage.writeJsonl(TERM_DELETIONS_PATH, [
+    ...existing,
+    ...deletionRecords,
+  ]);
+
+  return deletionRecords;
+}
+
 export async function addTerm(input: TermInput, userId: string): Promise<Term> {
   const actorId = getWriteUserId(userId);
 
@@ -584,6 +625,7 @@ export async function addTerm(input: TermInput, userId: string): Promise<Term> {
     created_by: actorId,
     created_at: nowIso(),
     updated_at: nowIso(),
+    updated_by: actorId,
   };
 
   await saveTerms([...terms, term]);
@@ -595,6 +637,8 @@ export async function updateTerm(
   termId: string,
   input: TermInput,
 ): Promise<Term> {
+  const actorId = getWriteUserId();
+
   assertTermWritePermission(canUpdateTerm(getCurrentUser()));
 
   const normalizedInput = normalizeTermInput(input);
@@ -612,6 +656,7 @@ export async function updateTerm(
     ...terms[termIndex],
     ...normalizedInput,
     updated_at: nowIso(),
+    updated_by: actorId,
   };
   const nextTerms = [...terms];
 
@@ -622,9 +667,12 @@ export async function updateTerm(
 }
 
 export async function deleteTerm(termId: string): Promise<void> {
+  const actorId = getWriteUserId();
+
   assertTermWritePermission(canDeleteTerm(getCurrentUser()));
 
   const terms = await loadTerms();
+  const deletedTerm = terms.find((term) => term.id === termId);
   const nextTerms = terms.filter((term) => term.id !== termId);
 
   if (nextTerms.length === terms.length) {
@@ -632,6 +680,7 @@ export async function deleteTerm(termId: string): Promise<void> {
   }
 
   await saveTerms(nextTerms);
+  await recordTermDeletions(deletedTerm ? [deletedTerm] : [], actorId);
 }
 
 export async function importTermsFile(
@@ -653,6 +702,7 @@ export async function importTermsFile(
     const nextTerm: Term = {
       ...term,
       updated_at: nowIso(),
+      updated_by: actorId,
     };
 
     if (termIndex >= 0) {

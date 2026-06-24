@@ -10,6 +10,7 @@ import type {
   ProjectEvent,
   Task,
   Term,
+  TermDeletion,
 } from "../model/types";
 import {
   applyEntryWorkflowOperation,
@@ -69,6 +70,8 @@ import {
 import {
   assertCan,
   canDangerousImportChangePackage,
+  canCreateTerm,
+  canDeleteTerm,
   canDeleteComment,
   canExportMemberChangePackage,
   canExportProjectUpdatePackage,
@@ -77,6 +80,7 @@ import {
   canImportProjectUpdatePackage,
   canManageTask,
   canSignChangePackage,
+  canUpdateTerm,
   setPermissionProject,
 } from "./permissions";
 
@@ -128,6 +132,7 @@ export interface ReadChangePackage {
   entries: Record<string, Entry[]>;
   comments: Record<string, Comment[]>;
   terms: Record<string, Term[]>;
+  termDeletions?: Record<string, TermDeletion[]>;
   contexts: Record<string, string>;
   sourceFiles: Record<string, string>;
   tasks: Record<string, Task[]>;
@@ -147,6 +152,7 @@ export interface ChangePackagePreview {
   changedEntryContextCount: number;
   changedDisputeCount: number;
   termCount: number;
+  deletedTermCount: number;
   contextCount: number;
   sourceFileCount: number;
   taskCount: number;
@@ -221,7 +227,20 @@ export interface CommentChangeConflict {
   reasons: CommentConflictReason[];
 }
 
-export type ChangeConflict = EntryChangeConflict | CommentChangeConflict;
+export interface TermChangeConflict {
+  kind: "term";
+  conflictId: string;
+  termId: string;
+  mainTerm?: Term;
+  packageTerm?: Term;
+  deletion?: TermDeletion;
+  reasons: TermConflictReason[];
+}
+
+export type ChangeConflict =
+  | EntryChangeConflict
+  | CommentChangeConflict
+  | TermChangeConflict;
 
 export type ConflictResolutionAction =
   | "keep_main"
@@ -236,6 +255,7 @@ export interface ConflictResolution {
   target?: string;
   status?: Entry["status"];
   context?: string;
+  term?: Term;
 }
 
 export interface ApplyChangePackageResult {
@@ -257,7 +277,9 @@ export interface ApplyChangePackageOptions {
   actor?: Member | null;
 }
 
-const SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION = 1;
+const SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION = 2;
+const TERM_DELETION_PACKAGE_PATH = "term-changes/deletions.jsonl";
+const LOCAL_TERM_DELETIONS_PATH = "changes/term-deletions.jsonl";
 type EntryConflictReason =
   | "target"
   | "status"
@@ -274,6 +296,14 @@ type CommentConflictReason =
   | "status"
   | "resolved_at"
   | "resolved_by";
+type TermConflictReason =
+  | "source"
+  | "target"
+  | "part_of_speech"
+  | "note"
+  | "variants"
+  | "case_sensitive"
+  | "deleted";
 type EntryProtectedField =
   | "id"
   | "file_id"
@@ -366,6 +396,14 @@ const COMMENT_CONFLICT_FIELDS = [
   "resolved_at",
   "resolved_by",
 ] as const satisfies readonly CommentConflictReason[];
+const TERM_CONFLICT_FIELDS = [
+  "source",
+  "target",
+  "part_of_speech",
+  "note",
+  "variants",
+  "case_sensitive",
+] as const satisfies readonly TermConflictReason[];
 const MEMBER_CREDENTIAL_PATCH_KEYS = [
   "id",
   "password_hash",
@@ -518,7 +556,9 @@ function getPackageSummary(payload: ChangePackagePayload): ChangePackageSummary 
   return {
     changed_entries: countRecordRows(payload.entries),
     changed_comments: countRecordRows(payload.comments),
-    changed_terms: countRecordRows(payload.terms),
+    changed_terms:
+      countRecordRows(payload.terms) +
+      countRecordRows(payload.termDeletions ?? {}),
     changed_contexts: countRecordFiles(payload.contexts),
     changed_tasks: countRecordRows(payload.tasks),
     changed_source_files: countRecordFiles(payload.sourceFiles),
@@ -531,6 +571,21 @@ function getPackageSummary(payload: ChangePackagePayload): ChangePackageSummary 
 
 function hasPackageContent(summary: ChangePackageSummary): boolean {
   return Object.values(summary).some((count) => count > 0);
+}
+
+function requiresChangePackageSchemaV2(
+  payload: ChangePackagePayload,
+  userId: string,
+): boolean {
+  if (countRecordRows(payload.termDeletions ?? {}) > 0) {
+    return true;
+  }
+
+  return Object.values(payload.terms).some((terms) =>
+    terms.some(
+      (term) => term.updated_by === userId && term.created_by !== userId,
+    ),
+  );
 }
 
 function buildSignaturePayload(
@@ -1218,10 +1273,25 @@ async function collectUserTerms(
   }
 
   const rows = (await storage.readJsonl<Term>("terms/terms.jsonl")).filter(
-    (term) => term.created_by === userId,
+    (term) => term.created_by === userId || term.updated_by === userId,
   );
 
   return rows.length > 0 ? { "terms/terms.jsonl": rows } : {};
+}
+
+async function collectUserTermDeletions(
+  storage: ProjectStorage,
+  userId: string,
+): Promise<Record<string, TermDeletion[]>> {
+  if (!(await storage.fileExists(LOCAL_TERM_DELETIONS_PATH))) {
+    return {};
+  }
+
+  const rows = (await storage.readJsonl<TermDeletion>(
+    LOCAL_TERM_DELETIONS_PATH,
+  )).filter((termDeletion) => termDeletion.deleted_by === userId);
+
+  return rows.length > 0 ? { [TERM_DELETION_PACKAGE_PATH]: rows } : {};
 }
 
 async function collectAllTerms(storage: ProjectStorage): Promise<Record<string, Term[]>> {
@@ -1533,6 +1603,56 @@ function getCommentConflictReasons(
         normalizedPackageComment[field],
       ),
   );
+}
+
+function normalizePackageTerm(term: Term): Term {
+  return {
+    ...term,
+    variants: Array.isArray(term.variants) ? term.variants : [],
+    note: term.note ?? "",
+    part_of_speech: term.part_of_speech ?? "",
+    case_sensitive: term.case_sensitive === true,
+  };
+}
+
+function getTermConflictReasons(
+  mainTerm: Term,
+  packageTerm: Term,
+): TermConflictReason[] {
+  const normalizedMainTerm = normalizePackageTerm(mainTerm);
+  const normalizedPackageTerm = normalizePackageTerm(packageTerm);
+
+  return TERM_CONFLICT_FIELDS.filter(
+    (field) =>
+      !samePackageValue(
+        normalizedMainTerm[field],
+        normalizedPackageTerm[field],
+      ),
+  );
+}
+
+function findExistingTermIndex(terms: Term[], packageTerm: Term): number {
+  const byId = terms.findIndex((term) => term.id === packageTerm.id);
+
+  if (byId >= 0) {
+    return byId;
+  }
+
+  return terms.findIndex((term) => term.source === packageTerm.source);
+}
+
+function findExistingTerm(terms: Term[], packageTerm: Term): Term | undefined {
+  const index = findExistingTermIndex(terms, packageTerm);
+
+  return index >= 0 ? terms[index] : undefined;
+}
+
+function normalizeTermDeletion(deletion: TermDeletion): TermDeletion {
+  return {
+    ...deletion,
+    term_id: deletion.term_id || deletion.term.id,
+    term: normalizePackageTerm(deletion.term),
+  };
 }
 
 function mergeOrdinaryPackageComment(
@@ -2195,6 +2315,16 @@ async function precheckChangePackageImport(
     await assertJsonlTargetReadable<Term>(storage, path, "术语");
   }
 
+  for (const path of Object.keys(changePackage.termDeletions ?? {})) {
+    if (path !== TERM_DELETION_PACKAGE_PATH) {
+      throw new Error(`术语删除目标路径不正确：${path}`);
+    }
+
+    await assertJsonlTargetReadable<Term>(storage, "terms/terms.jsonl", "术语", {
+      mustExist: !isProjectUpdate,
+    });
+  }
+
   for (const path of Object.keys(changePackage.tasks)) {
     assertPackagePath(path, "tasks/", "任务", ".jsonl");
     await assertJsonlTargetReadable<Task>(storage, path, "任务");
@@ -2318,6 +2448,65 @@ function mergeOrdinaryMemberCredentialPatches(
   };
 }
 
+async function assertOrdinaryPackageTerms(
+  storage: ProjectStorage,
+  changePackage: ReadChangePackage,
+  currentMembers: Member[],
+): Promise<void> {
+  const exporter = currentMembers.find(
+    (member) => member.id === changePackage.manifest.user_id,
+  );
+  const existingTerms = (await storage.fileExists("terms/terms.jsonl"))
+    ? await storage.readJsonl<Term>("terms/terms.jsonl")
+    : [];
+
+  for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
+    if (path !== "terms/terms.jsonl") {
+      throw new Error("普通修改包只能修改项目主术语表。");
+    }
+
+    for (const packageTerm of packageTerms) {
+      if (
+        packageTerm.created_by !== changePackage.manifest.user_id &&
+        packageTerm.updated_by !== changePackage.manifest.user_id
+      ) {
+        throw new Error("普通修改包只能提交导出者创建或编辑的术语。");
+      }
+
+      const existingTerm = findExistingTerm(existingTerms, packageTerm);
+
+      if (!existingTerm) {
+        if (!canCreateTerm(exporter)) {
+          throw new Error("普通修改包包含无权新建的术语，不能导入。");
+        }
+        continue;
+      }
+
+      if (
+        getTermConflictReasons(existingTerm, packageTerm).length > 0 &&
+        !canUpdateTerm(exporter)
+      ) {
+        throw new Error("普通修改包包含无权编辑的术语，不能导入。");
+      }
+    }
+  }
+
+  for (const deletion of Object.values(changePackage.termDeletions ?? {}).flat()) {
+    const normalizedDeletion = normalizeTermDeletion(deletion);
+
+    if (
+      normalizedDeletion.deleted_by !== changePackage.manifest.user_id ||
+      normalizedDeletion.term_id !== normalizedDeletion.term.id
+    ) {
+      throw new Error("普通修改包包含无效的术语删除记录。");
+    }
+
+    if (!canDeleteTerm(exporter)) {
+      throw new Error("普通修改包包含无权删除的术语，不能导入。");
+    }
+  }
+}
+
 function mergeRowsById<T extends { id: string }>(
   existingRows: T[],
   packageRows: T[],
@@ -2412,6 +2601,7 @@ export async function exportChangePackage(
     entries: {},
     comments: {},
     terms: {},
+    termDeletions: {},
     contexts: {},
     sourceFiles: {},
     tasks: {},
@@ -2482,6 +2672,7 @@ export async function exportChangePackage(
       );
     }
     payload.terms = await collectUserTerms(storage, userId);
+    payload.termDeletions = await collectUserTermDeletions(storage, userId);
 
     if (options.includeOwnCredentials) {
       payload.memberFiles = await collectOwnCredentialMemberFiles(storage, userId);
@@ -2544,7 +2735,7 @@ export async function exportChangePackage(
     );
   const contentHash = await calculateChangePackageContentHash(payload);
   const manifest: ChangePackageManifest = {
-    schema_version: 1,
+    schema_version: requiresChangePackageSchemaV2(payload, userId) ? 2 : 1,
     project_id: project.project_id,
     package_id: buildPackageId(userId, manifestPackageType, createdAt, options.taskId),
     package_type: manifestPackageType,
@@ -2593,6 +2784,7 @@ export async function exportChangePackage(
     "entries/": null,
     "comments/": null,
     "terms/": null,
+    "term-changes/": null,
     "contexts/": null,
     "source/": null,
     "tasks/": null,
@@ -2610,6 +2802,10 @@ export async function exportChangePackage(
   }
 
   for (const [path, rows] of Object.entries(payload.terms)) {
+    files[path] = stringifyJsonl(rows);
+  }
+
+  for (const [path, rows] of Object.entries(payload.termDeletions ?? {})) {
     files[path] = stringifyJsonl(rows);
   }
 
@@ -2735,6 +2931,10 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
     );
     const comments = parsePackageJsonl<Comment>(files, "comments/");
     const terms = parsePackageJsonl<Term>(files, "terms/");
+    const termDeletions = parsePackageJsonl<TermDeletion>(
+      files,
+      "term-changes/",
+    );
     const tasks = parsePackageJsonl<Task>(files, "tasks/");
     const contexts = Object.fromEntries(
       Object.entries(files).filter(
@@ -2767,6 +2967,7 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
       entries,
       comments,
       terms,
+      termDeletions,
       contexts,
       sourceFiles,
       tasks,
@@ -2897,6 +3098,7 @@ export async function validateChangePackage(
     entries: changePackage.entries,
     comments: changePackage.comments,
     terms: changePackage.terms,
+    termDeletions: changePackage.termDeletions ?? {},
     contexts: changePackage.contexts,
     sourceFiles: changePackage.sourceFiles,
     tasks: changePackage.tasks,
@@ -3037,6 +3239,7 @@ export function previewChangePackage(
     changedEntryContextCount: validation.changedEntryContextCount,
     changedDisputeCount: validation.changedDisputeCount,
     termCount: countRecordRows(changePackage.terms),
+    deletedTermCount: countRecordRows(changePackage.termDeletions ?? {}),
     contextCount: countRecordFiles(changePackage.contexts),
     sourceFileCount: countRecordFiles(changePackage.sourceFiles),
     taskCount: countRecordRows(changePackage.tasks),
@@ -3100,6 +3303,10 @@ export async function detectConflicts(
   }
 
   if (useOrdinarySafeguards) {
+    const currentTerms = (await getProjectStorage().fileExists("terms/terms.jsonl"))
+      ? await getProjectStorage().readJsonl<Term>("terms/terms.jsonl")
+      : [];
+
     for (const [path, packageComments] of Object.entries(
       changePackage.comments,
     )) {
@@ -3136,6 +3343,54 @@ export async function detectConflicts(
         }
       }
     }
+
+    for (const packageTerm of Object.values(changePackage.terms).flat()) {
+      const mainTerm = findExistingTerm(currentTerms, packageTerm);
+
+      if (!mainTerm) {
+        continue;
+      }
+
+      const reasons = getTermConflictReasons(mainTerm, packageTerm);
+
+      if (reasons.length > 0) {
+        conflicts.push({
+          kind: "term",
+          conflictId: `term:${packageTerm.id}`,
+          termId: packageTerm.id,
+          mainTerm,
+          packageTerm,
+          reasons,
+        });
+      }
+    }
+
+    for (const deletion of Object.values(changePackage.termDeletions ?? {}).flat()) {
+      const normalizedDeletion = normalizeTermDeletion(deletion);
+      const mainTerm = currentTerms.find(
+        (term) => term.id === normalizedDeletion.term_id,
+      );
+
+      if (!mainTerm) {
+        continue;
+      }
+
+      const reasons = getTermConflictReasons(
+        mainTerm,
+        normalizedDeletion.term,
+      );
+
+      if (reasons.length > 0) {
+        conflicts.push({
+          kind: "term",
+          conflictId: `term-delete:${normalizedDeletion.term_id}`,
+          termId: normalizedDeletion.term_id,
+          mainTerm,
+          deletion: normalizedDeletion,
+          reasons: [...reasons, "deleted"],
+        });
+      }
+    }
   }
 
   return conflicts;
@@ -3150,6 +3405,7 @@ async function buildMemberChangePayload(
     entries: await collectUserChangedEntries(storage, project, userId),
     comments: await collectUserComments(storage, userId),
     terms: await collectUserTerms(storage, userId),
+    termDeletions: await collectUserTermDeletions(storage, userId),
     contexts: {},
     sourceFiles: {},
     tasks: await collectUserCreatedTasks(storage, userId),
@@ -3629,6 +3885,11 @@ export async function applyChangePackage(
       validation,
       currentMembers,
     );
+    await assertOrdinaryPackageTerms(
+      storage,
+      changePackage,
+      currentMembers,
+    );
   }
 
   await precheckChangePackageImport(changePackage, validation, conflicts);
@@ -3899,15 +4160,101 @@ export async function applyChangePackage(
     writePlan.writeJsonl(path, commentRowsByPath.get(path) ?? []);
   }
 
-  for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
-    const existingTerms = (await storage.fileExists(path))
-      ? await storage.readJsonl<Term>(path)
+  if (useOrdinarySafeguards) {
+    const termsPath = "terms/terms.jsonl";
+    const currentTerms = (await storage.fileExists(termsPath))
+      ? await storage.readJsonl<Term>(termsPath)
       : [];
-    const result = mergeRowsById(existingTerms, packageTerms);
+    let changedTerms = false;
 
-    if (result.imported > 0) {
-      writePlan.writeJsonl(path, result.rows);
-      importedTerms += result.imported;
+    for (const packageTerm of Object.values(changePackage.terms).flat()) {
+      const conflict = conflicts.find(
+        (item) =>
+          item.kind === "term" &&
+          item.packageTerm?.id === packageTerm.id,
+      );
+      const resolution = conflict
+        ? findResolution(resolutions, conflict)
+        : undefined;
+
+      if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+        continue;
+      }
+
+      const nextTerm =
+        resolution?.action === "manual_merge"
+          ? resolution.term
+          : packageTerm;
+
+      if (!nextTerm) {
+        throw new Error("术语冲突缺少手动处理结果。");
+      }
+
+      const termIndex = findExistingTermIndex(currentTerms, nextTerm);
+
+      if (termIndex >= 0) {
+        if (
+          stableStringify(normalizePackageTerm(currentTerms[termIndex]!)) ===
+          stableStringify(normalizePackageTerm(nextTerm))
+        ) {
+          continue;
+        }
+
+        currentTerms[termIndex] = normalizePackageTerm(nextTerm);
+      } else {
+        currentTerms.push(normalizePackageTerm(nextTerm));
+      }
+
+      importedTerms += 1;
+      changedTerms = true;
+    }
+
+    for (const deletion of Object.values(changePackage.termDeletions ?? {}).flat()) {
+      const normalizedDeletion = normalizeTermDeletion(deletion);
+      const conflict = conflicts.find(
+        (item) =>
+          item.kind === "term" &&
+          item.deletion?.term_id === normalizedDeletion.term_id,
+      );
+      const resolution = conflict
+        ? findResolution(resolutions, conflict)
+        : undefined;
+
+      if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+        continue;
+      }
+
+      if (resolution?.action === "manual_merge") {
+        throw new Error("术语删除冲突只能保留当前项目或使用修改包版本。");
+      }
+
+      const termIndex = currentTerms.findIndex(
+        (term) => term.id === normalizedDeletion.term_id,
+      );
+
+      if (termIndex < 0) {
+        continue;
+      }
+
+      currentTerms.splice(termIndex, 1);
+      importedTerms += 1;
+      changedTerms = true;
+    }
+
+    if (changedTerms) {
+      writePlan.writeJsonl(termsPath, currentTerms);
+    }
+  } else {
+    for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
+      const existingTerms = (await storage.fileExists(path))
+        ? await storage.readJsonl<Term>(path)
+        : [];
+      const result = mergeRowsById(existingTerms, packageTerms);
+
+      if (result.imported > 0) {
+        writePlan.writeJsonl(path, result.rows);
+        importedTerms += result.imported;
+      }
     }
   }
 

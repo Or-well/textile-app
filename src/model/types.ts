@@ -162,6 +162,15 @@ export interface Term {
   created_by: string;
   created_at?: string;
   updated_at: string;
+  updated_by?: string;
+}
+
+export interface TermDeletion {
+  id: string;
+  term_id: string;
+  term: Term;
+  deleted_by: string;
+  deleted_at: string;
 }
 
 export interface Task {
