@@ -172,11 +172,18 @@ watch(
           <div>
             <h3>{{ ROLE_LABELS[selectedRole] }}</h3>
             <p>
-              {{ selectedRole === "owner" ? "关键权限已锁定，不能取消。" : "按分组调整此角色权限。" }}
+              {{
+                selectedRole === "owner"
+                  ? "项目负责人关键权限已锁定，不能取消。"
+                  : "角色权限是该角色成员的默认权限；成员个人权限可额外允许或禁止。"
+              }}
             </p>
           </div>
           <span class="permission-count">{{ selectedPermissions.length }} 项</span>
         </header>
+        <p class="notice-text">
+          成员个人禁止权限优先于角色默认权限和额外允许权限；维护、危险导入、成员和密钥权限应只给可信成员。
+        </p>
 
         <div class="permission-groups">
           <PermissionGroup

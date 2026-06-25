@@ -19,6 +19,10 @@ export interface SignedTrustTransitionCommit {
   archivePath: string;
 }
 
+export interface ProjectUpdateTransitionOptions {
+  requireSignature?: boolean;
+}
+
 export interface ArchivedTrustTransition {
   path: string;
   fileName: string;
@@ -46,31 +50,41 @@ function createTransitionEvent(
 function assertProjectUpdateExport(
   exported: ExportedChangePackage,
   actor: Member,
+  options: ProjectUpdateTransitionOptions = {},
 ): asserts exported is ExportedChangePackage & {
   completion: Extract<
     ExportedChangePackage["completion"],
     { kind: "project_update" }
   >;
 } {
+  const requireSignature = options.requireSignature !== false;
+
   if (
     exported.completion.kind !== "project_update" ||
-    !exported.signature ||
-    exported.signature.user_id !== actor.id ||
     exported.manifest.user_id !== actor.id
   ) {
+    throw new Error("项目更新过渡必须使用当前发布者导出的项目更新包。");
+  }
+
+  if (requireSignature && !exported.signature) {
     throw new Error("可信过渡必须使用当前发布者签名的项目更新包。");
+  }
+
+  if (exported.signature && exported.signature.user_id !== actor.id) {
+    throw new Error("项目更新过渡包签名人与当前发布者不一致。");
   }
 }
 
-export async function commitSignedTrustTransition(
+export async function commitProjectUpdateTransition(
   root: ProjectDirectoryHandle,
   exported: ExportedChangePackage,
   members: Member[],
   actor: Member,
   eventType: string,
   detail: Record<string, unknown>,
+  options: ProjectUpdateTransitionOptions = {},
 ): Promise<SignedTrustTransitionCommit> {
-  assertProjectUpdateExport(exported, actor);
+  assertProjectUpdateExport(exported, actor, options);
 
   const storage = createProjectStorage(root);
   const currentProject = await storage.readJson<ProjectConfig>("project.json");
@@ -115,6 +129,7 @@ export async function commitSignedTrustTransition(
     : [];
   const transitionEvent = createTransitionEvent(actor, eventType, {
     ...detail,
+    signed: Boolean(exported.signature),
     package_id: exported.manifest.package_id ?? "",
     base_revision: exported.completion.baseRevision,
     target_revision: exported.completion.targetRevision,
@@ -144,6 +159,25 @@ export async function commitSignedTrustTransition(
     members,
     archivePath,
   };
+}
+
+export async function commitSignedTrustTransition(
+  root: ProjectDirectoryHandle,
+  exported: ExportedChangePackage,
+  members: Member[],
+  actor: Member,
+  eventType: string,
+  detail: Record<string, unknown>,
+): Promise<SignedTrustTransitionCommit> {
+  return commitProjectUpdateTransition(
+    root,
+    exported,
+    members,
+    actor,
+    eventType,
+    detail,
+    { requireSignature: true },
+  );
 }
 
 export async function loadLatestTrustTransitionArchive(

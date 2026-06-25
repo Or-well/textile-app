@@ -158,7 +158,7 @@ watch(
           <div>
             <h3>{{ selectedMember.name }}</h3>
             <p>
-              禁止项优先：勾选禁止后，即使角色已允许，该成员也不能使用对应功能。
+              额外允许只影响这个成员；额外禁止优先级最高，即使角色已允许也会禁止对应功能。
             </p>
           </div>
           <span class="permission-count">{{ effectivePermissions.length }} 项有效权限</span>
@@ -171,6 +171,7 @@ watch(
         <div class="override-columns">
           <section class="override-column">
             <h4>额外允许权限</h4>
+            <p class="column-note">在角色默认权限之外，只给这个成员增加功能。</p>
             <PermissionGroup
               v-for="group in PERMISSION_GROUPS"
               :key="`allow-${group.id}`"
@@ -185,6 +186,7 @@ watch(
 
           <section class="override-column">
             <h4>额外禁止权限</h4>
+            <p class="column-note">优先级高于角色默认权限和额外允许权限。</p>
             <PermissionGroup
               v-for="group in PERMISSION_GROUPS"
               :key="`deny-${group.id}`"
@@ -288,9 +290,14 @@ h4 {
 }
 
 .override-header p,
-.notice-text {
+.notice-text,
+.column-note {
   color: #5b6472;
   line-height: 1.6;
+}
+
+.column-note {
+  font-size: 13px;
 }
 
 .permission-count {

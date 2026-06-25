@@ -25,7 +25,8 @@ import { hasLoadedPrivateKey, memberKeyFileToBlob } from "../../services/keyMana
 import { verifyOwnerTransferKeyProof } from "../../services/keyManager";
 import { can, isOwnerMember } from "../../services/permissions";
 import type { ProjectDirectoryHandle } from "../../services/projectFs";
-import { commitSignedTrustTransition } from "../../services/signingTrustTransition";
+import { projectRequiresSignedChangePackages } from "../../services/collaboration";
+import { commitProjectUpdateTransition } from "../../services/signingTrustTransition";
 import {
   saveGeneratedFile,
   saveGeneratedFileFromFactory,
@@ -98,7 +99,14 @@ const ownerTransferTargets = computed(() =>
 const selectedOwnerTransferTarget = computed(() =>
   props.members.find((member) => member.id === ownerTargetId.value),
 );
+const requiresSignedOwnerTransfer = computed(() =>
+  projectRequiresSignedChangePackages(props.project),
+);
 const ownerTransferProofStatus = computed(() => {
+  if (!requiresSignedOwnerTransfer.value) {
+    return "当前项目未强制签名，不需要交接证明。";
+  }
+
   const target = selectedOwnerTransferTarget.value;
 
   if (!ownerTransferProofMemberId.value || !ownerTransferProofKeyId.value) {
@@ -128,6 +136,10 @@ const ownerTransferBlockReason = computed(() => {
     return "请先打开项目文件夹，才能转让负责人。";
   }
 
+  if (!props.project) {
+    return "当前项目配置不可用，不能转让负责人。";
+  }
+
   if (ownerTransferTargets.value.length === 0) {
     return "当前没有可转让的启用成员。";
   }
@@ -142,19 +154,21 @@ const ownerTransferBlockReason = computed(() => {
     return "没有找到新的项目负责人。";
   }
 
-  if (!target.public_key || !target.key_id || target.key_revoked_at) {
-    return "新的项目负责人还没有有效身份公钥。请先在身份密钥页面登记该成员公钥，并确认该成员已保存对应私钥。";
-  }
+  if (requiresSignedOwnerTransfer.value) {
+    if (!target.public_key || !target.key_id || target.key_revoked_at) {
+      return "新的项目负责人还没有有效身份公钥。请先在身份密钥页面登记该成员公钥，并确认该成员已保存对应私钥。";
+    }
 
-  if (
-    ownerTransferProofMemberId.value !== target.id ||
-    ownerTransferProofKeyId.value !== target.key_id
-  ) {
-    return "请导入由新负责人当前私钥生成、绑定当前项目版本的负责人交接证明。";
-  }
+    if (
+      ownerTransferProofMemberId.value !== target.id ||
+      ownerTransferProofKeyId.value !== target.key_id
+    ) {
+      return "请导入由新负责人当前私钥生成、绑定当前项目版本的负责人交接证明。";
+    }
 
-  if (!props.currentUser || !hasLoadedPrivateKey(props.currentUser)) {
-    return "请先在身份密钥页面导入当前负责人的私钥，用旧负责人身份签名过渡项目更新包。";
+    if (!props.currentUser || !hasLoadedPrivateKey(props.currentUser)) {
+      return "请先在身份密钥页面导入当前负责人的私钥，用旧负责人身份签名过渡项目更新包。";
+    }
   }
 
   return "";
@@ -467,7 +481,10 @@ async function handleTransferOwner() {
     return;
   }
 
-  if (!target.public_key || !target.key_id || target.key_revoked_at) {
+  if (
+    requiresSignedOwnerTransfer.value &&
+    (!target.public_key || !target.key_id || target.key_revoked_at)
+  ) {
     errorMessage.value =
       "新的项目负责人还没有有效身份公钥。请先在身份密钥页面登记该成员公钥，并确认该成员已保存对应私钥。";
     message.value = "";
@@ -476,22 +493,33 @@ async function handleTransferOwner() {
 
   const actor = getActor();
 
-  if (!hasLoadedPrivateKey(actor)) {
+  if (requiresSignedOwnerTransfer.value && !hasLoadedPrivateKey(actor)) {
     errorMessage.value =
       "转让负责人前，需要先导入当前负责人的旧私钥，用旧负责人签名发布包含新负责人的过渡项目更新包。";
     message.value = "";
     return;
   }
 
-  if (
-    !window.confirm(
-      [
+  const confirmMessage = requiresSignedOwnerTransfer.value
+    ? [
         `确认要把项目负责人转让给“${target.name}”吗？`,
         "",
         "Textile 将先导出一份由当前负责人旧密钥签名、内容包含新负责人和其公钥的项目更新包。成员接收该过渡包后，才能验证新负责人之后发布的项目更新包。",
-      ].join("\n"),
-    ) ||
-    !window.confirm("再次确认：确认过渡项目更新包保存后，当前负责人将变为管理员。继续？")
+      ].join("\n")
+    : [
+        `确认要把项目负责人转让给“${target.name}”吗？`,
+        "",
+        "当前项目未强制签名，Textile 将导出一份未签名项目更新包作为人工信任交接文件。其他成员接收时需要自行确认来源。",
+        target.public_key && target.key_id && !target.key_revoked_at
+          ? ""
+          : "新的项目负责人当前没有有效身份公钥，之后无法发布已签名的项目更新包。",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+  if (
+    !window.confirm(confirmMessage) ||
+    !window.confirm("再次确认：确认项目更新包保存后，当前负责人将变为管理员。继续？")
   ) {
     return;
   }
@@ -509,10 +537,12 @@ async function handleTransferOwner() {
     const createdAt = nowIso();
     const exportOptions: ExportChangePackageOptions = {
       mode: "project_update",
-      sign: true,
+      sign: requiresSignedOwnerTransfer.value,
       actor: transfer.previousOwner,
       projectUpdateMembers: transfer.members,
-      signatureMember: transfer.previousOwner,
+      signatureMember: requiresSignedOwnerTransfer.value
+        ? transfer.previousOwner
+        : undefined,
       createdAt,
     };
     let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
@@ -538,10 +568,10 @@ async function handleTransferOwner() {
     }
 
     if (!exported) {
-      throw new Error("负责人交接过渡包没有生成。");
+      throw new Error("负责人交接项目更新包没有生成。");
     }
 
-    const transition = await commitSignedTrustTransition(
+    const transition = await commitProjectUpdateTransition(
       root,
       exported,
       transfer.members,
@@ -552,6 +582,7 @@ async function handleTransferOwner() {
         new_owner_id: transfer.newOwner.id,
         new_owner_key_id: transfer.newOwner.key_id ?? "",
       },
+      { requireSignature: requiresSignedOwnerTransfer.value },
     );
 
     emit("projectUpdated", transition.project);
@@ -559,7 +590,9 @@ async function handleTransferOwner() {
     ownerTransferProofMemberId.value = "";
     ownerTransferProofKeyId.value = "";
     message.value =
-      `项目负责人已转让。过渡包已归档到 ${transition.archivePath}，请分发给成员。`;
+      requiresSignedOwnerTransfer.value
+        ? `项目负责人已转让。签名过渡包已归档到 ${transition.archivePath}，请分发给成员。`
+        : `项目负责人已转让。未签名项目更新包已归档到 ${transition.archivePath}，请分发给成员并提醒对方人工确认来源。`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "成员管理操作失败。请稍后再试。";
@@ -793,7 +826,13 @@ watch(ownerTargetId, () => {
     <section class="panel-block">
       <header class="block-header">
         <h3>转让负责人</h3>
-        <p>项目负责人只能有一位，转让需要二次确认。</p>
+        <p>
+          {{
+            requiresSignedOwnerTransfer
+              ? "项目负责人只能有一位，转让需要签名项目更新包和二次确认。"
+              : "项目负责人只能有一位。当前项目未强制签名，转让将使用人工信任项目更新包。"
+          }}
+        </p>
       </header>
 
       <div class="owner-transfer">
@@ -813,6 +852,7 @@ watch(ownerTargetId, () => {
           </select>
         </label>
         <label
+          v-if="requiresSignedOwnerTransfer"
           class="file-button owner-transfer-proof-button"
           :class="{ disabled: isWorking || !ownerTargetId }"
         >
@@ -833,6 +873,7 @@ watch(ownerTargetId, () => {
           {{ isWorking ? "正在准备转让..." : "转让负责人" }}
         </button>
         <p
+          v-if="requiresSignedOwnerTransfer"
           class="owner-transfer-proof-status"
           :class="{
             valid:
@@ -842,6 +883,9 @@ watch(ownerTargetId, () => {
           }"
         >
           {{ ownerTransferProofStatus }}
+        </p>
+        <p v-else class="owner-transfer-proof-status">
+          未强制签名：无需交接证明或当前负责人私钥。请把导出的项目更新包交给成员，并提醒人工确认来源。
         </p>
         <p
           v-if="ownerTransferBlockReason"

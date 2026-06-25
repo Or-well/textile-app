@@ -245,7 +245,7 @@ async function handleCreateProject() {
 
             <label class="check-row">
               <input v-model="requireSignedChangePackages" type="checkbox" />
-              <span>强制使用签名修改包</span>
+              <span>强制签名协作包</span>
             </label>
 
             <label>

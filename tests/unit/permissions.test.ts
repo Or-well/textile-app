@@ -59,6 +59,15 @@ describe("effective permissions", () => {
       expect(can(member, PERMISSION_ACTIONS.COMMENT_RESOLVE)).toBe(true);
       expect(can(member, PERMISSION_ACTIONS.COMMENT_REOPEN)).toBe(true);
       expect(can(member, PERMISSION_ACTIONS.COMMENT_DELETE_OWN)).toBe(true);
+      expect(
+        can(member, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE),
+      ).toBe(true);
+      expect(
+        can(member, PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE),
+      ).toBe(false);
+      expect(
+        can(member, PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT),
+      ).toBe(false);
     }
   });
 

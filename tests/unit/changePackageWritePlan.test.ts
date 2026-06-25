@@ -266,10 +266,19 @@ function createTermDeletion(
   };
 }
 
-async function createProjectUpdateFixture() {
+async function createProjectUpdateFixture(options: {
+  requireSignedChangePackages?: boolean;
+  sign?: boolean;
+} = {}) {
   const baseProject = createProject({
     revision: "base-revision",
     revision_hash: "base-revision",
+    settings: {
+      collaboration: {
+        require_signed_change_packages:
+          options.requireSignedChangePackages === true,
+      },
+    },
     files: [
       {
         id: "file-1",
@@ -322,14 +331,16 @@ async function createProjectUpdateFixture() {
     "project-update-source.hproj",
   );
   const sourceStorage = createProjectStorage(sourceRoot);
-  const keyResult = await generateOwnSigningKey(sourceRoot, [owner], owner);
-  const signingOwner = keyResult.member;
+  const signingOwner =
+    options.sign === false
+      ? owner
+      : (await generateOwnSigningKey(sourceRoot, [owner], owner)).member;
 
   setChangesProjectStorage(sourceStorage);
 
   const exported = await exportChangePackage(signingOwner.id, {
     mode: "project_update",
-    sign: true,
+    sign: options.sign !== false,
     actor: signingOwner,
   });
   const packageBytes = new Uint8Array(await exported.blob.arrayBuffer());
@@ -492,7 +503,7 @@ describe("ordinary change-package write plan", () => {
         sign: true,
         actor: fixture.contributor,
       }),
-    ).rejects.toThrow("已选择给修改包签名");
+    ).rejects.toThrow("已选择给本次导出签名");
   });
 
   it("exports signed member packages after generating a signing key", async () => {
@@ -1470,6 +1481,33 @@ describe("ordinary change-package write plan", () => {
 });
 
 describe("project update package write plan", () => {
+  it("rejects unsigned project update export when project requires signatures", async () => {
+    await expect(
+      createProjectUpdateFixture({
+        requireSignedChangePackages: true,
+        sign: false,
+      }),
+    ).rejects.toThrow("创建身份密钥");
+  });
+
+  it("exports and applies unsigned project updates when signatures are optional", async () => {
+    const fixture = await createProjectUpdateFixture({ sign: false });
+
+    expect(fixture.changePackage.manifest.package_type).toBe("project_update");
+    expect(fixture.changePackage.signature).toBeUndefined();
+
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({
+      appliedEntries: 1,
+      importedProjectSettings: 1,
+    });
+  });
+
   it("applies an owner transfer package signed by the previous owner", async () => {
     const project = createProject({
       revision: "base-revision",

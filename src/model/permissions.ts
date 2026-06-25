@@ -201,12 +201,12 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
   },
   {
     id: "context",
-    label: "上下文",
+    label: "词条上下文",
     permissions: [
-      { action: PERMISSION_ACTIONS.CONTEXT_VIEW, label: "查看上下文" },
-      { action: PERMISSION_ACTIONS.CONTEXT_CREATE, label: "新增上下文" },
-      { action: PERMISSION_ACTIONS.CONTEXT_UPDATE, label: "编辑上下文" },
-      { action: PERMISSION_ACTIONS.CONTEXT_DELETE, label: "删除上下文" },
+      { action: PERMISSION_ACTIONS.CONTEXT_VIEW, label: "查看词条上下文" },
+      { action: PERMISSION_ACTIONS.CONTEXT_CREATE, label: "新增词条上下文" },
+      { action: PERMISSION_ACTIONS.CONTEXT_UPDATE, label: "编辑词条上下文" },
+      { action: PERMISSION_ACTIONS.CONTEXT_DELETE, label: "删除词条上下文" },
     ],
   },
   {
@@ -242,7 +242,7 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
     label: "修改包",
     permissions: [
       { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT, label: "导出修改包" },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT, label: "导入修改包" },
+      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT, label: "导入任意修改包" },
       {
         action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES,
         label: "导出普通修改包",
@@ -259,12 +259,20 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
         action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
         label: "接收项目更新包",
       },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW, label: "预览修改包" },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN, label: "签名修改包" },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_VERIFY, label: "验签修改包" },
+      {
+        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
+        label: "导出项目维护修改",
+      },
+      {
+        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
+        label: "导入项目维护修改",
+      },
+      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW, label: "预览修改包内容" },
+      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN, label: "签名修改包/项目更新包" },
+      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_VERIFY, label: "验证修改包签名" },
       {
         action: PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT,
-        label: "危险导入",
+        label: "危险导入完整性失败的包",
       },
     ],
   },
@@ -297,16 +305,8 @@ export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
       { action: PERMISSION_ACTIONS.TERM_MANAGE, label: "管理术语" },
       { action: PERMISSION_ACTIONS.TASK_READ, label: "读取任务" },
       { action: PERMISSION_ACTIONS.TASK_MANAGE, label: "管理任务" },
-      { action: PERMISSION_ACTIONS.COMMENT_READ, label: "读取批注旧权限" },
-      { action: PERMISSION_ACTIONS.COMMENT_WRITE, label: "写入批注旧权限" },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
-        label: "导出维护修改包",
-      },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
-        label: "导入维护修改包",
-      },
+      { action: PERMISSION_ACTIONS.COMMENT_READ, label: "查看批注（兼容权限）" },
+      { action: PERMISSION_ACTIONS.COMMENT_WRITE, label: "写入批注（兼容权限）" },
       { action: PERMISSION_ACTIONS.STATS_READ, label: "查看统计" },
       { action: PERMISSION_ACTIONS.TECH_MAINTAIN, label: "技术维护" },
     ],
@@ -355,6 +355,7 @@ const KEY_ADMIN_PERMISSIONS = [
 const MEMBER_CHANGE_PACKAGE_PERMISSIONS = [
   PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT,
   PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES,
+  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
   PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
 ] as const satisfies readonly PermissionAction[];
 

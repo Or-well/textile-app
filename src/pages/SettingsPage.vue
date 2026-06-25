@@ -1464,7 +1464,7 @@ onBeforeUnmount(() => {
         <section v-else-if="activeSection === 'sync'" class="settings-card">
           <header class="card-header">
             <h2>协作与备份</h2>
-            <p>当前项目推荐使用签名修改包进行协作。</p>
+            <p>当前项目推荐使用签名协作包进行协作。</p>
           </header>
 
           <div class="collaboration-status">
@@ -1475,8 +1475,8 @@ onBeforeUnmount(() => {
           <div class="form-stack">
             <div class="form-row">
               <div class="row-label">
-                <span>强制使用签名修改包</span>
-                <p>开启后，导出和导入修改包都必须带有有效成员签名。</p>
+                <span>强制签名协作包</span>
+                <p>开启后，普通修改包、任务修改包、维护修改包和项目更新包都必须带有有效成员签名。</p>
               </div>
               <div class="row-control">
                 <label class="checkbox-control">
@@ -1485,7 +1485,7 @@ onBeforeUnmount(() => {
                     type="checkbox"
                     :disabled="!canManageProject || isSavingCollaborationSettings"
                   />
-                  <span>要求修改包签名</span>
+                  <span>要求协作包签名</span>
                 </label>
                 <div class="form-actions">
                   <button

@@ -23,7 +23,7 @@ const emit = defineEmits<{
     </dl>
 
     <p class="collaboration-note">
-      成员导出普通修改包，负责人合并后发布签名项目更新包。
+      成员导出普通修改包，负责人合并后发布项目更新包。
     </p>
 
     <div class="collaboration-actions">

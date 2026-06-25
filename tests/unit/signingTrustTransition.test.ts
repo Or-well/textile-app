@@ -4,6 +4,7 @@ import {
   exportChangePackage,
   setChangesProjectStorage,
 } from "../../src/services/changes";
+import { prepareOwnerTransfer } from "../../src/services/auth";
 import {
   activatePreparedOwnSigningKey,
   commitPreparedOwnSigningKeyGeneration,
@@ -14,6 +15,7 @@ import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
 import {
   commitOfflineTrustRebuild,
+  commitProjectUpdateTransition,
   commitSignedTrustTransition,
   loadLatestTrustTransitionArchive,
   prepareOfflineTrustRebuild,
@@ -75,6 +77,83 @@ async function createProjectWithOwner() {
 }
 
 describe("signing trust transitions", () => {
+  it("commits an unsigned owner transfer transition when signature is optional", async () => {
+    const root = createMemoryProjectDirectory({}, "unsigned-owner-transfer.hproj");
+    const storage = createProjectStorage(root);
+    const project = createProject();
+    const owner = createMember(["owner"], {
+      id: "owner-1",
+      name: "Owner",
+    });
+    const nextOwner = createMember(["admin"], {
+      id: "owner-2",
+      name: "Next Owner",
+    });
+
+    await storage.writeJson("project.json", project);
+    await storage.writeJson("members.json", {
+      schema_version: 1,
+      members: [owner, nextOwner],
+    });
+    await storage.writeJsonl("logs/events.jsonl", []);
+    setChangesProjectStorage(storage);
+
+    const transfer = prepareOwnerTransfer([owner, nextOwner], owner, nextOwner.id);
+    const exported = await exportChangePackage(owner.id, {
+      mode: "project_update",
+      sign: false,
+      actor: owner,
+      projectUpdateMembers: transfer.members,
+    });
+
+    expect(exported.signature).toBeUndefined();
+
+    await expect(
+      commitSignedTrustTransition(
+        root,
+        exported,
+        transfer.members,
+        owner,
+        "member.owner_transferred",
+        {
+          previous_owner_id: owner.id,
+          new_owner_id: nextOwner.id,
+        },
+      ),
+    ).rejects.toThrow("可信过渡必须使用当前发布者签名");
+
+    const committed = await commitProjectUpdateTransition(
+      root,
+      exported,
+      transfer.members,
+      owner,
+      "member.owner_transferred",
+      {
+        previous_owner_id: owner.id,
+        new_owner_id: nextOwner.id,
+      },
+      { requireSignature: false },
+    );
+
+    expect(committed.project.revision).toBe(exported.manifest.target_revision);
+    await expect(storage.readJson<{ members: Member[] }>("members.json")).resolves.toMatchObject({
+      members: [
+        { id: owner.id, roles: ["admin"] },
+        { id: nextOwner.id, roles: expect.arrayContaining(["owner"]) },
+      ],
+    });
+    await expect(storage.readJsonl<ProjectEvent>("logs/events.jsonl")).resolves.toEqual([
+      expect.objectContaining({
+        type: "member.owner_transferred",
+        detail: expect.objectContaining({
+          signed: false,
+          previous_owner_id: owner.id,
+          new_owner_id: nextOwner.id,
+        }),
+      }),
+    ]);
+  });
+
   it("archives and atomically commits a signed key transition", async () => {
     const context = await createProjectWithOwner();
     const rotation = await prepareOwnSigningKeyRotation(

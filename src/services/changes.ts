@@ -484,7 +484,9 @@ function isProjectUpdatePackage(packageType: ChangePackageType): boolean {
   return packageType === "project_update";
 }
 
-function isSignableChangePackageMode(mode: ExportChangePackageMode): boolean {
+function isSignableChangePackageMode(
+  mode: ExportChangePackageMode | ChangePackageType,
+): boolean {
   return (
     mode === "member_changes" ||
     mode === "task_changes" ||
@@ -498,19 +500,19 @@ function getSigningReadinessMessage(
   requiredByProject: boolean,
 ): string {
   const prefix = requiredByProject
-    ? "当前项目要求修改包签名"
-    : "已选择给修改包签名";
+    ? "当前项目要求本次导出签名"
+    : "已选择给本次导出签名";
 
   if (readiness === "missing_public_key") {
-    return `${prefix}。请先创建身份密钥后再导出修改包。`;
+    return `${prefix}。请先创建身份密钥后再导出。`;
   }
 
   if (readiness === "revoked_key") {
-    return "当前身份密钥已撤销，不能用于修改包签名。请生成新密钥后再导出。";
+    return "当前身份密钥已撤销，不能用于签名。请生成新密钥后再导出。";
   }
 
   if (readiness === "private_key_not_loaded") {
-    return `${prefix}。请先导入私钥文件后再导出修改包。`;
+    return `${prefix}。请先导入私钥文件后再导出。`;
   }
 
   return "";
@@ -524,8 +526,8 @@ function assertCanCreateSignature(
   if (!canSignChangePackage(actor)) {
     throw new Error(
       requiredByProject
-        ? "当前项目要求修改包签名，但当前成员没有签名修改包的权限。"
-        : "当前成员没有签名修改包的权限，不能导出签名修改包。",
+        ? "当前项目要求本次导出签名，但当前成员没有签名权限。"
+        : "当前成员没有签名权限，不能导出签名修改包或已签名的项目更新包。",
     );
   }
 
@@ -2700,10 +2702,6 @@ export async function exportChangePackage(
       throw new Error("当前成员没有发布项目更新包的权限。");
     }
 
-    if (!options.sign) {
-      throw new Error("项目更新包必须使用负责人签名后才能导出。");
-    }
-
     payload.entries = await collectAllEntries(storage, project);
     payload.comments = await collectAllComments(storage);
     payload.terms = await collectAllTerms(storage);
@@ -2728,11 +2726,8 @@ export async function exportChangePackage(
   }
 
   const requiresSignature =
-    options.mode === "project_update" ||
-    (
-      projectRequiresSignedChangePackages(project) &&
-      isSignableChangePackageMode(options.mode)
-    );
+    projectRequiresSignedChangePackages(project) &&
+    isSignableChangePackageMode(options.mode);
   const contentHash = await calculateChangePackageContentHash(payload);
   const manifest: ChangePackageManifest = {
     schema_version: requiresChangePackageSchemaV2(payload, userId) ? 2 : 1,
@@ -3177,7 +3172,8 @@ export async function validateChangePackage(
   const requiresOwnerCredentialConfirmation =
     !isProjectUpdate && (hasOwnerCredentialChange || hasOwnerPromotion);
   const requiresSignedPackage =
-    !isProjectUpdate && projectRequiresSignedChangePackages(project);
+    projectRequiresSignedChangePackages(project) &&
+    isSignableChangePackageMode(packageType);
   const riskLevel: ChangePackageRiskLevel =
     contentIntegrity === "failed" || requiresOwnerCredentialConfirmation
       ? "danger"
@@ -3202,7 +3198,9 @@ export async function validateChangePackage(
     canImportNormally:
       packageProjectId === project.project_id &&
       contentIntegrity !== "failed" &&
-      (!isProjectUpdate || signatureStatus === "valid") &&
+      (!isProjectUpdate ||
+        !requiresSignedPackage ||
+        signatureStatus === "valid") &&
       (!requiresSignedPackage || signatureStatus === "valid"),
     requiresDangerousImport:
       packageProjectId === project.project_id && contentIntegrity === "failed",
@@ -3459,16 +3457,19 @@ function assertProjectUpdateCanApply(
     throw new Error("项目更新包内容完整性未通过，不能导入。");
   }
 
-  if (validation.signatureStatus !== "valid") {
+  if (
+    validation.requiresSignedPackage &&
+    validation.signatureStatus !== "valid"
+  ) {
     throw new Error("项目更新包必须带有有效负责人签名。");
   }
 
-  const signer = currentMembers.find(
+  const declaredPublisher = currentMembers.find(
     (member) => member.id === changePackage.manifest.user_id,
   );
 
-  if (!canExportProjectUpdatePackage(signer)) {
-    throw new Error("项目更新包签名人不是当前项目允许发布更新的成员。");
+  if (!canExportProjectUpdatePackage(declaredPublisher)) {
+    throw new Error("项目更新包发布人不是当前项目允许发布更新的成员。");
   }
 
   const currentRevision = getProjectRevision(currentProject);

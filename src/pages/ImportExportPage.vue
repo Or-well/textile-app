@@ -215,10 +215,10 @@ const requiresSignedChangePackage = computed(() =>
   projectRequiresSignedChangePackages(props.project ?? localProject.value),
 );
 const mustSignChangePackage = computed(
-  () => exportMode.value === "project_update" || requiresSignedChangePackage.value,
+  () => requiresSignedChangePackage.value,
 );
 const canChooseChangePackageSignature = computed(
-  () => exportMode.value !== "project_update" && !requiresSignedChangePackage.value,
+  () => !requiresSignedChangePackage.value,
 );
 const canIncludeOwnCredentials = computed(
   () => exportMode.value === "member_changes" || exportMode.value === "task_changes",
@@ -609,7 +609,7 @@ async function handleImportSigningKey(file: File): Promise<void> {
 
     syncMembersAfterKeySetup(
       result.members,
-      "私钥文件已导入，本机可用于导出签名修改包。",
+      "私钥文件已导入，本机可用于导出签名修改包或已签名的项目更新包。",
     );
     closeSigningKeySetup(true);
   } catch (error) {
@@ -656,7 +656,7 @@ async function handleGenerateSigningKey(): Promise<void> {
       hasCurrentActivePublicKey
     ) {
       signingKeySetupError.value =
-        "项目更新包必须使用当前已登记公钥对应的旧私钥签名。请导入匹配的私钥；如果旧私钥已丢失，需要重新分发项目备份建立信任。";
+        "已选择签名的项目更新包必须使用当前已登记公钥对应的私钥。请导入匹配的私钥；如果私钥已丢失，需要重新分发项目备份建立信任。";
       return;
     }
 
@@ -702,11 +702,11 @@ async function handleGenerateSigningKey(): Promise<void> {
             currentUser.value,
           )
         ).members,
-        `新密钥和公钥登记文件已保存。请先把 ${savedFiles.files[1]?.fileName ?? registration.fileName} 交给负责人登记，并接收包含该公钥的可信项目更新后再导出签名修改包。`,
+        `新密钥和公钥登记文件已保存。请先把 ${savedFiles.files[1]?.fileName ?? registration.fileName} 交给负责人登记，并接收包含该公钥的可信项目更新后再导出签名修改包或已签名的项目更新包。`,
       );
 
       signingKeySetupError.value =
-        `新密钥和公钥登记文件已保存。请先把 ${savedFiles.files[1]?.fileName ?? registration.fileName} 交给负责人登记，并接收包含该公钥的可信项目更新后再导出签名修改包。`;
+        `新密钥和公钥登记文件已保存。请先把 ${savedFiles.files[1]?.fileName ?? registration.fileName} 交给负责人登记，并接收包含该公钥的可信项目更新后再导出签名修改包或已签名的项目更新包。`;
       return;
     }
 
@@ -744,8 +744,8 @@ async function ensureSigningKeyIfNeeded(shouldSign: boolean): Promise<boolean> {
 
   const requiredByProject = mustSignChangePackage.value;
   const signingReason = requiredByProject
-    ? "当前项目要求修改包签名"
-    : "你已选择给本次修改包签名";
+    ? "当前项目要求本次导出签名"
+    : "你已选择给本次导出签名";
 
   if (!currentUser.value) {
     errorMessage.value = "请先登录。";
@@ -754,7 +754,7 @@ async function ensureSigningKeyIfNeeded(shouldSign: boolean): Promise<boolean> {
 
   if (!canSignPackages.value) {
     errorMessage.value =
-      `${signingReason}，但当前成员没有签名修改包的权限。请联系负责人调整权限。`;
+      `${signingReason}，但当前成员没有签名权限。请联系负责人调整权限。`;
     return false;
   }
 
@@ -801,7 +801,9 @@ async function handleExportChanges() {
     errorMessage.value =
       exportMode.value === "maintenance_changes"
         ? "当前成员没有导出项目维护修改的权限。"
-        : "当前成员没有导出修改包的权限。";
+        : exportMode.value === "project_update"
+          ? "当前成员没有发布项目更新包的权限。"
+          : "当前成员没有导出普通修改包的权限。";
     return;
   }
 
@@ -863,7 +865,9 @@ async function handleExportChanges() {
         emit("projectUpdated", updatedProject);
       }
 
-      message.value = `已发布签名项目更新包：${result.fileName}`;
+      message.value = result.signature
+        ? `已发布已签名的项目更新包：${result.fileName}`
+        : `已发布未签名项目更新包：${result.fileName}`;
     } else {
       message.value = result.signature
         ? `已导出已签名普通修改包：${result.fileName}`
@@ -1286,7 +1290,7 @@ watch(
               value="project_update"
               :disabled="!canExportProjectUpdate"
             />
-            <span>发布签名项目更新包</span>
+            <span>发布项目更新包</span>
           </label>
         </fieldset>
 
@@ -1302,7 +1306,7 @@ watch(
           </small>
         </label>
 
-        <div v-if="exportMode !== 'project_update'" class="signature-option">
+        <div class="signature-option">
           <label class="checkbox-line">
             <input
               type="checkbox"
@@ -1313,8 +1317,8 @@ watch(
             <span>
               {{
                 mustSignChangePackage
-                  ? "当前项目要求给修改包签名"
-                  : "给本次修改包签名"
+                  ? "当前项目要求给本次导出签名"
+                  : "给本次导出签名"
               }}
             </span>
           </label>
@@ -1325,7 +1329,7 @@ watch(
             v-if="!mustSignChangePackage && !canSignPackages"
             class="field-help"
           >
-            当前成员没有签名修改包权限，只能导出未签名修改包。
+            当前成员没有签名权限，只能导出未签名包。
           </small>
         </div>
 
@@ -1372,7 +1376,7 @@ watch(
       >
         <h2>导入修改包</h2>
         <p class="section-note">
-          负责人合并普通修改包；所有成员可接收负责人发布的签名项目更新包。
+          负责人合并普通修改包；成员可接收项目更新包，也可在确认来源后导入项目维护修改。
         </p>
         <label v-if="canSelectImportFile" class="file-field">
           <span>选择修改包</span>
