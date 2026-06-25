@@ -2382,6 +2382,8 @@ npm.cmd run tauri:release:check
 npm.cmd run tauri:build
 ```
 
+本地 `tauri:build` 通过 `src-tauri/tauri.conf.json` 的 `beforeBuildCommand` 调用 `scripts/tauri-before-build.mjs`，默认会继续执行 `npm run build`。GitHub Release workflow 已经在进入 `tauri-action` 前单独运行 Web build 并检查生成文件，因此 `tauri-action` 步骤设置 `TEXTILE_SKIP_FRONTEND_BUILD=1`，让该脚本跳过重复前端构建，避免 Windows CI 在第二次 Vite/Rolldown 构建后出现原生崩溃。
+
 Windows 产物通常在：
 
 ```text

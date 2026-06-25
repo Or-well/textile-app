@@ -922,7 +922,7 @@ npm.cmd run tauri:build
 
 1. 同步 Tauri 版本。
 2. 调用 Tauri build。
-3. 通过 Tauri 的 `beforeBuildCommand` 运行 Web build。
+3. 通过 Tauri 的 `beforeBuildCommand` 调用 `scripts/tauri-before-build.mjs`，默认运行 Web build。
 4. 构建 Windows 安装包。
 5. 因为 `createUpdaterArtifacts` 为 `true`，生成 updater `.sig` 文件。
 
@@ -2163,6 +2163,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TEXTILE_SKIP_FRONTEND_BUILD: "1"
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Textile v__VERSION__"
@@ -2181,6 +2182,7 @@ jobs:
 - tag 必须与 `package.json` 版本匹配。
 - 测试和 Web 构建失败时不会执行发布。
 - 构建若修改了未提交的版本清单，`git diff --exit-code` 会阻止发布。
+- `TEXTILE_SKIP_FRONTEND_BUILD: "1"` 只在 `tauri-action` 步骤生效。因为 workflow 前面已经完成 Web build 和生成文件检查，Tauri 打包阶段会复用 `dist/`，避免 Windows CI 第二次运行 Vite/Rolldown 构建时出现原生崩溃。
 - `releaseDraft: true` 只创建草稿，避免未检查的版本立即公开。
 - `includeUpdaterJson: true` 让 action 自动上传 `latest.json`；这是 `tauri-action@v0.6.2` 支持的参数名。
 - `updaterJsonPreferNsis: true` 在 NSIS 和 MSI 同时存在时，让 `latest.json` 优先使用 NSIS `.exe`。

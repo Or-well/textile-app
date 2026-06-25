@@ -10,6 +10,10 @@
 
 - 默认角色权限、角色标签和权限分组改由 `src/config/permissions.json` 维护，启动时会校验未知权限、未知角色和 owner 锁定权限。
 
+### Fixed
+
+- 修复 GitHub Release workflow 在 `tauri-action` 阶段重复执行前端构建，可能导致 Windows CI 中 `beforeBuildCommand` 以 `-1073741819` 崩溃的问题。
+
 ## [0.9.0] - 2026-06-25
 
 ### Added
