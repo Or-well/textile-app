@@ -15,13 +15,11 @@
 当前扫描到的项目结构要点：
 
 - 存在：`src/components/`、`src/composables/`、`src/model/`、`src/pages/`、`src/services/`、`src/utils/`、`src-tauri/`、`tests/unit/`。
-- 不存在：`src/views/`、`src/types/`、`docs/vue-typescript-project-tutorial.md`。
 - 当前业务类型主要在 `src/model/types.ts`，权限和状态类型在 `src/model/permissions.ts`、`src/model/status.ts`、`src/model/taskStatus.ts` 等文件中。
 - 当前页面目录使用 `src/pages/`，没有 `src/views/`。
 - 当前路由由 `src/App.vue` 手写解析 URL，没有引入 `vue-router`。
 - 当前状态管理没有 Pinia/Vuex；共享项目状态主要由 `App.vue`、页面状态和 service 模块承担。
 - 当前有一个 composable：`src/composables/useAppDraft.ts`。
-- 当前没有扫描到 `provide(` / `inject(`。
 - 当前没有业务后端 API；扫描到的 `fetch` 用于 Web 更新清单检查。
 
 当前源码清单快照：
