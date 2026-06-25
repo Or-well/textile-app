@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_PERMISSION_ACTIONS,
   OWNER_LOCKED_PERMISSIONS,
+  PERMISSION_GROUPS,
   PERMISSION_ACTIONS,
+  ROLE_LABELS,
+  ROLE_ORDER,
 } from "../../src/model/permissions";
 import {
   can,
@@ -22,6 +26,52 @@ import {
 import { createEntry, createMember, createProject } from "./factories";
 
 describe("effective permissions", () => {
+  it("loads permission catalog and default roles from validated config", () => {
+    const defaults = getDefaultRolePermissions();
+
+    expect(ROLE_ORDER).toEqual([
+      "owner",
+      "admin",
+      "tech_lead",
+      "translator",
+      "proofreader",
+      "reviewer",
+      "publisher",
+      "term_manager",
+      "readonly",
+    ]);
+    expect(ROLE_LABELS.owner).toBe("项目负责人");
+    expect(PERMISSION_GROUPS.find((group) => group.id === "change-package"))
+      .toMatchObject({
+        label: "修改包",
+        permissions: expect.arrayContaining([
+          expect.objectContaining({
+            action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
+            label: "导入项目维护修改",
+          }),
+        ]),
+      });
+    expect(ALL_PERMISSION_ACTIONS).toContain(
+      PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
+    );
+
+    for (const permission of OWNER_LOCKED_PERMISSIONS) {
+      expect(defaults.owner).toContain(permission);
+    }
+  });
+
+  it("returns cloned default role permissions", () => {
+    const first = getDefaultRolePermissions();
+
+    first.owner = first.owner?.filter(
+      (permission) => permission !== PERMISSION_ACTIONS.PROJECT_MANAGE,
+    );
+
+    expect(getDefaultRolePermissions().owner).toContain(
+      PERMISSION_ACTIONS.PROJECT_MANAGE,
+    );
+  });
+
   it("rejects missing and inactive members", () => {
     expect(can(null, PERMISSION_ACTIONS.PROJECT_READ)).toBe(false);
     expect(

@@ -1,3 +1,4 @@
+import permissionsConfig from "../config/permissions.json";
 import type { Role } from "./types";
 
 export const PERMISSION_ACTIONS = {
@@ -91,30 +92,6 @@ export const PERMISSION_ACTIONS = {
 export type PermissionAction =
   (typeof PERMISSION_ACTIONS)[keyof typeof PERMISSION_ACTIONS];
 
-export const ROLE_ORDER: Role[] = [
-  "owner",
-  "admin",
-  "tech_lead",
-  "translator",
-  "proofreader",
-  "reviewer",
-  "publisher",
-  "term_manager",
-  "readonly",
-];
-
-export const ROLE_LABELS: Record<Role, string> = {
-  owner: "项目负责人",
-  admin: "管理员",
-  tech_lead: "技术负责人",
-  translator: "翻译",
-  proofreader: "校对",
-  reviewer: "审核",
-  publisher: "发布负责人",
-  term_manager: "术语负责人",
-  readonly: "只读成员",
-};
-
 export const OWNER_LOCKED_PERMISSIONS = [
   PERMISSION_ACTIONS.PROJECT_MANAGE,
   PERMISSION_ACTIONS.MEMBER_MANAGE,
@@ -133,509 +110,287 @@ export interface PermissionGroupDefinition {
   permissions: PermissionDefinition[];
 }
 
-export const PERMISSION_GROUPS: PermissionGroupDefinition[] = [
-  {
-    id: "project",
-    label: "项目",
-    permissions: [
-      { action: PERMISSION_ACTIONS.APP_CACHE_CLEAR, label: "清理缓存" },
-      { action: PERMISSION_ACTIONS.PROJECT_READ, label: "查看项目" },
-      { action: PERMISSION_ACTIONS.PROJECT_MANAGE, label: "管理项目" },
-      { action: PERMISSION_ACTIONS.PROJECT_BACKUP, label: "导出项目备份" },
-      { action: PERMISSION_ACTIONS.PROJECT_DELETE, label: "移除项目记录" },
-      { action: PERMISSION_ACTIONS.PROJECT_MAINTENANCE, label: "项目维护" },
-    ],
-  },
-  {
-    id: "member-role",
-    label: "成员与权限",
-    permissions: [
-      { action: PERMISSION_ACTIONS.MEMBER_VIEW, label: "查看成员" },
-      { action: PERMISSION_ACTIONS.MEMBER_MANAGE, label: "管理成员" },
-      { action: PERMISSION_ACTIONS.MEMBER_RESET_PASSWORD, label: "重置密码" },
-      { action: PERMISSION_ACTIONS.ROLE_VIEW, label: "查看角色权限" },
-      { action: PERMISSION_ACTIONS.ROLE_MANAGE, label: "管理角色权限" },
-    ],
-  },
-  {
-    id: "file",
-    label: "文件",
-    permissions: [
-      { action: PERMISSION_ACTIONS.FILE_VIEW, label: "查看文件" },
-      { action: PERMISSION_ACTIONS.FILE_CREATE, label: "新建文件" },
-      { action: PERMISSION_ACTIONS.FILE_UPDATE, label: "更新文件" },
-      { action: PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION, label: "导入译文" },
-      { action: PERMISSION_ACTIONS.FILE_RENAME, label: "重命名文件" },
-      { action: PERMISSION_ACTIONS.FILE_LOCK, label: "锁定文件" },
-      { action: PERMISSION_ACTIONS.FILE_HIDE, label: "隐藏文件" },
-      { action: PERMISSION_ACTIONS.FILE_DELETE, label: "删除文件" },
-    ],
-  },
-  {
-    id: "entry",
-    label: "词条",
-    permissions: [
-      { action: PERMISSION_ACTIONS.ENTRY_READ, label: "查看词条" },
-      { action: PERMISSION_ACTIONS.ENTRY_EDIT, label: "编辑词条" },
-      { action: PERMISSION_ACTIONS.ENTRY_TRANSLATE, label: "翻译" },
-      { action: PERMISSION_ACTIONS.ENTRY_PROOFREAD, label: "校对" },
-      { action: PERMISSION_ACTIONS.ENTRY_REVIEW, label: "审核" },
-      { action: PERMISSION_ACTIONS.ENTRY_ROLLBACK, label: "退回词条" },
-      { action: PERMISSION_ACTIONS.ENTRY_LOCK, label: "锁定词条" },
-      { action: PERMISSION_ACTIONS.ENTRY_HIDE, label: "隐藏词条" },
-      { action: PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED, label: "标记争议" },
-      { action: PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE, label: "解决争议" },
-    ],
-  },
-  {
-    id: "term",
-    label: "术语",
-    permissions: [
-      { action: PERMISSION_ACTIONS.TERM_READ, label: "查看术语" },
-      { action: PERMISSION_ACTIONS.TERM_CREATE, label: "新建术语" },
-      { action: PERMISSION_ACTIONS.TERM_UPDATE, label: "编辑术语" },
-      { action: PERMISSION_ACTIONS.TERM_DELETE, label: "删除术语" },
-      { action: PERMISSION_ACTIONS.TERM_IMPORT, label: "导入术语" },
-      { action: PERMISSION_ACTIONS.TERM_EXPORT, label: "导出术语" },
-    ],
-  },
-  {
-    id: "context",
-    label: "词条上下文",
-    permissions: [
-      { action: PERMISSION_ACTIONS.CONTEXT_VIEW, label: "查看词条上下文" },
-      { action: PERMISSION_ACTIONS.CONTEXT_CREATE, label: "新增词条上下文" },
-      { action: PERMISSION_ACTIONS.CONTEXT_UPDATE, label: "编辑词条上下文" },
-      { action: PERMISSION_ACTIONS.CONTEXT_DELETE, label: "删除词条上下文" },
-    ],
-  },
-  {
-    id: "task",
-    label: "任务",
-    permissions: [
-      { action: PERMISSION_ACTIONS.TASK_VIEW, label: "查看任务" },
-      { action: PERMISSION_ACTIONS.TASK_CREATE, label: "新建任务" },
-      { action: PERMISSION_ACTIONS.TASK_UPDATE, label: "编辑任务" },
-      { action: PERMISSION_ACTIONS.TASK_ASSIGN, label: "分配任务" },
-      { action: PERMISSION_ACTIONS.TASK_SUBMIT, label: "提交任务" },
-      { action: PERMISSION_ACTIONS.TASK_COMPLETE, label: "完成任务" },
-      { action: PERMISSION_ACTIONS.TASK_RECLAIM, label: "收回任务" },
-      { action: PERMISSION_ACTIONS.TASK_DELETE, label: "删除任务" },
-      { action: PERMISSION_ACTIONS.TASK_REOPEN, label: "重新打开任务" },
-    ],
-  },
-  {
-    id: "comment",
-    label: "批注",
-    permissions: [
-      { action: PERMISSION_ACTIONS.COMMENT_VIEW, label: "查看批注" },
-      { action: PERMISSION_ACTIONS.COMMENT_CREATE, label: "新增批注" },
-      { action: PERMISSION_ACTIONS.COMMENT_REPLY, label: "回复批注" },
-      { action: PERMISSION_ACTIONS.COMMENT_RESOLVE, label: "解决批注" },
-      { action: PERMISSION_ACTIONS.COMMENT_REOPEN, label: "重新打开批注" },
-      { action: PERMISSION_ACTIONS.COMMENT_DELETE_OWN, label: "删除自己的批注" },
-      { action: PERMISSION_ACTIONS.COMMENT_DELETE_ANY, label: "删除任意批注" },
-    ],
-  },
-  {
-    id: "change-package",
-    label: "修改包",
-    permissions: [
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT, label: "导出修改包" },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT, label: "导入任意修改包" },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES,
-        label: "导出普通修改包",
-      },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MEMBER_CHANGES,
-        label: "导入普通修改包",
-      },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
-        label: "发布项目更新包",
-      },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
-        label: "接收项目更新包",
-      },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
-        label: "导出项目维护修改",
-      },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
-        label: "导入项目维护修改",
-      },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW, label: "预览修改包内容" },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN, label: "签名修改包/项目更新包" },
-      { action: PERMISSION_ACTIONS.CHANGE_PACKAGE_VERIFY, label: "验证修改包签名" },
-      {
-        action: PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT,
-        label: "危险导入完整性失败的包",
-      },
-    ],
-  },
-  {
-    id: "release",
-    label: "成品导出",
-    permissions: [
-      { action: PERMISSION_ACTIONS.RELEASE_EXPORT, label: "导出成品" },
-    ],
-  },
-  {
-    id: "key",
-    label: "签名密钥",
-    permissions: [
-      { action: PERMISSION_ACTIONS.KEY_VIEW, label: "查看密钥状态" },
-      { action: PERMISSION_ACTIONS.KEY_GENERATE, label: "生成密钥" },
-      { action: PERMISSION_ACTIONS.KEY_IMPORT_PRIVATE, label: "导入私钥文件" },
-      { action: PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE, label: "导出私钥文件" },
-      { action: PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC, label: "登记成员公钥" },
-      { action: PERMISSION_ACTIONS.KEY_ROTATE, label: "生成新密钥" },
-      { action: PERMISSION_ACTIONS.KEY_REVOKE, label: "撤销密钥" },
-    ],
-  },
-  {
-    id: "maintenance",
-    label: "兼容与维护",
-    permissions: [
-      { action: PERMISSION_ACTIONS.FILE_MANAGE_FOLDER, label: "管理文件分组" },
-      { action: PERMISSION_ACTIONS.ENTRY_UPDATE_STATUS, label: "更新词条状态" },
-      { action: PERMISSION_ACTIONS.TERM_MANAGE, label: "管理术语" },
-      { action: PERMISSION_ACTIONS.TASK_READ, label: "读取任务" },
-      { action: PERMISSION_ACTIONS.TASK_MANAGE, label: "管理任务" },
-      { action: PERMISSION_ACTIONS.COMMENT_READ, label: "查看批注（兼容权限）" },
-      { action: PERMISSION_ACTIONS.COMMENT_WRITE, label: "写入批注（兼容权限）" },
-      { action: PERMISSION_ACTIONS.STATS_READ, label: "查看统计" },
-      { action: PERMISSION_ACTIONS.TECH_MAINTAIN, label: "技术维护" },
-    ],
-  },
-];
+interface PermissionConfigFile {
+  schema_version: number;
+  roles: {
+    order: string[];
+    labels: Record<string, string>;
+  };
+  groups: Array<{
+    id: string;
+    label: string;
+    permissions: Array<{
+      action: string;
+      label: string;
+    }>;
+  }>;
+  default_role_permissions: Record<string, string[]>;
+}
 
-export const ALL_PERMISSION_ACTIONS = Array.from(
-  new Set(
-    PERMISSION_GROUPS.flatMap((group) =>
-      group.permissions.map((permission) => permission.action),
-    ),
-  ),
-) as PermissionAction[];
+interface ValidatedPermissionConfig {
+  roleOrder: Role[];
+  roleLabels: Record<Role, string>;
+  permissionGroups: PermissionGroupDefinition[];
+  allPermissionActions: PermissionAction[];
+  roleDefaultPermissions: Record<Role, readonly PermissionAction[]>;
+}
 
-const READ_ONLY_PERMISSIONS = [
-  PERMISSION_ACTIONS.PROJECT_READ,
-  PERMISSION_ACTIONS.MEMBER_VIEW,
-  PERMISSION_ACTIONS.ROLE_VIEW,
-  PERMISSION_ACTIONS.FILE_VIEW,
-  PERMISSION_ACTIONS.ENTRY_READ,
-  PERMISSION_ACTIONS.TERM_READ,
-  PERMISSION_ACTIONS.CONTEXT_VIEW,
-  PERMISSION_ACTIONS.TASK_VIEW,
-  PERMISSION_ACTIONS.TASK_READ,
-  PERMISSION_ACTIONS.COMMENT_VIEW,
-  PERMISSION_ACTIONS.COMMENT_READ,
-  PERMISSION_ACTIONS.KEY_VIEW,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_VERIFY,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
-  PERMISSION_ACTIONS.STATS_READ,
-] as const satisfies readonly PermissionAction[];
+const CONFIG_SCHEMA_VERSION = 1;
+const KNOWN_ROLES = [
+  "owner",
+  "admin",
+  "tech_lead",
+  "translator",
+  "proofreader",
+  "reviewer",
+  "publisher",
+  "term_manager",
+  "readonly",
+] as const satisfies readonly Role[];
 
-const OWN_KEY_PERMISSIONS = [
-  PERMISSION_ACTIONS.KEY_GENERATE,
-  PERMISSION_ACTIONS.KEY_IMPORT_PRIVATE,
-  PERMISSION_ACTIONS.KEY_EXPORT_PRIVATE,
-  PERMISSION_ACTIONS.KEY_ROTATE,
-] as const satisfies readonly PermissionAction[];
+const KNOWN_ROLE_SET = new Set<string>(KNOWN_ROLES);
+const KNOWN_PERMISSION_ACTION_SET = new Set<string>(
+  Object.values(PERMISSION_ACTIONS),
+);
 
-const KEY_ADMIN_PERMISSIONS = [
-  ...OWN_KEY_PERMISSIONS,
-  PERMISSION_ACTIONS.KEY_REGISTER_PUBLIC,
-  PERMISSION_ACTIONS.KEY_REVOKE,
-] as const satisfies readonly PermissionAction[];
+function configError(message: string): Error {
+  return new Error(`权限配置错误：${message}`);
+}
 
-const MEMBER_CHANGE_PACKAGE_PERMISSIONS = [
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
-] as const satisfies readonly PermissionAction[];
+function assertNonEmptyString(value: unknown, context: string): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw configError(`${context} 必须是非空字符串。`);
+  }
+}
 
-const PROJECT_UPDATE_PUBLISH_PERMISSIONS = [
-  ...MEMBER_CHANGE_PACKAGE_PERMISSIONS,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MEMBER_CHANGES,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
-  PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_PROJECT_UPDATE,
-] as const satisfies readonly PermissionAction[];
+function assertKnownRole(value: string, context: string): asserts value is Role {
+  if (!KNOWN_ROLE_SET.has(value)) {
+    throw configError(`${context} 使用了未知角色：${value}`);
+  }
+}
 
-export const ROLE_DEFAULT_PERMISSIONS: Record<Role, readonly PermissionAction[]> = {
-  owner: [
-    ...READ_ONLY_PERMISSIONS,
-    ...OWNER_LOCKED_PERMISSIONS,
-    PERMISSION_ACTIONS.APP_CACHE_CLEAR,
-    PERMISSION_ACTIONS.PROJECT_DELETE,
-    PERMISSION_ACTIONS.PROJECT_MAINTENANCE,
-    PERMISSION_ACTIONS.MEMBER_RESET_PASSWORD,
-    PERMISSION_ACTIONS.FILE_CREATE,
-    PERMISSION_ACTIONS.FILE_UPDATE,
-    PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION,
-    PERMISSION_ACTIONS.FILE_RENAME,
-    PERMISSION_ACTIONS.FILE_LOCK,
-    PERMISSION_ACTIONS.FILE_HIDE,
-    PERMISSION_ACTIONS.FILE_DELETE,
-    PERMISSION_ACTIONS.FILE_MANAGE_FOLDER,
-    PERMISSION_ACTIONS.ENTRY_EDIT,
-    PERMISSION_ACTIONS.ENTRY_TRANSLATE,
-    PERMISSION_ACTIONS.ENTRY_PROOFREAD,
-    PERMISSION_ACTIONS.ENTRY_REVIEW,
-    PERMISSION_ACTIONS.ENTRY_ROLLBACK,
-    PERMISSION_ACTIONS.ENTRY_UPDATE_STATUS,
-    PERMISSION_ACTIONS.ENTRY_LOCK,
-    PERMISSION_ACTIONS.ENTRY_HIDE,
-    PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-    PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
-    PERMISSION_ACTIONS.TERM_MANAGE,
-    PERMISSION_ACTIONS.TERM_CREATE,
-    PERMISSION_ACTIONS.TERM_UPDATE,
-    PERMISSION_ACTIONS.TERM_DELETE,
-    PERMISSION_ACTIONS.TERM_IMPORT,
-    PERMISSION_ACTIONS.TERM_EXPORT,
-    PERMISSION_ACTIONS.CONTEXT_CREATE,
-    PERMISSION_ACTIONS.CONTEXT_UPDATE,
-    PERMISSION_ACTIONS.CONTEXT_DELETE,
-    PERMISSION_ACTIONS.TASK_CREATE,
-    PERMISSION_ACTIONS.TASK_UPDATE,
-    PERMISSION_ACTIONS.TASK_ASSIGN,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.TASK_COMPLETE,
-    PERMISSION_ACTIONS.TASK_RECLAIM,
-    PERMISSION_ACTIONS.TASK_DELETE,
-    PERMISSION_ACTIONS.TASK_REOPEN,
-    PERMISSION_ACTIONS.TASK_MANAGE,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_WRITE,
-    PERMISSION_ACTIONS.COMMENT_RESOLVE,
-    PERMISSION_ACTIONS.COMMENT_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_ANY,
-    ...KEY_ADMIN_PERMISSIONS,
-    ...PROJECT_UPDATE_PUBLISH_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT,
-    PERMISSION_ACTIONS.RELEASE_EXPORT,
-    PERMISSION_ACTIONS.TECH_MAINTAIN,
-  ],
-  admin: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.APP_CACHE_CLEAR,
-    PERMISSION_ACTIONS.PROJECT_MANAGE,
-    PERMISSION_ACTIONS.PROJECT_BACKUP,
-    PERMISSION_ACTIONS.PROJECT_MAINTENANCE,
-    PERMISSION_ACTIONS.MEMBER_MANAGE,
-    PERMISSION_ACTIONS.MEMBER_RESET_PASSWORD,
-    PERMISSION_ACTIONS.ROLE_MANAGE,
-    PERMISSION_ACTIONS.FILE_CREATE,
-    PERMISSION_ACTIONS.FILE_UPDATE,
-    PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION,
-    PERMISSION_ACTIONS.FILE_RENAME,
-    PERMISSION_ACTIONS.FILE_LOCK,
-    PERMISSION_ACTIONS.FILE_HIDE,
-    PERMISSION_ACTIONS.FILE_DELETE,
-    PERMISSION_ACTIONS.FILE_MANAGE_FOLDER,
-    PERMISSION_ACTIONS.ENTRY_EDIT,
-    PERMISSION_ACTIONS.ENTRY_TRANSLATE,
-    PERMISSION_ACTIONS.ENTRY_PROOFREAD,
-    PERMISSION_ACTIONS.ENTRY_REVIEW,
-    PERMISSION_ACTIONS.ENTRY_ROLLBACK,
-    PERMISSION_ACTIONS.ENTRY_UPDATE_STATUS,
-    PERMISSION_ACTIONS.ENTRY_LOCK,
-    PERMISSION_ACTIONS.ENTRY_HIDE,
-    PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-    PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
-    PERMISSION_ACTIONS.TERM_MANAGE,
-    PERMISSION_ACTIONS.TERM_CREATE,
-    PERMISSION_ACTIONS.TERM_UPDATE,
-    PERMISSION_ACTIONS.TERM_DELETE,
-    PERMISSION_ACTIONS.TERM_IMPORT,
-    PERMISSION_ACTIONS.TERM_EXPORT,
-    PERMISSION_ACTIONS.CONTEXT_CREATE,
-    PERMISSION_ACTIONS.CONTEXT_UPDATE,
-    PERMISSION_ACTIONS.CONTEXT_DELETE,
-    PERMISSION_ACTIONS.TASK_CREATE,
-    PERMISSION_ACTIONS.TASK_UPDATE,
-    PERMISSION_ACTIONS.TASK_ASSIGN,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.TASK_COMPLETE,
-    PERMISSION_ACTIONS.TASK_RECLAIM,
-    PERMISSION_ACTIONS.TASK_DELETE,
-    PERMISSION_ACTIONS.TASK_REOPEN,
-    PERMISSION_ACTIONS.TASK_MANAGE,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_WRITE,
-    PERMISSION_ACTIONS.COMMENT_RESOLVE,
-    PERMISSION_ACTIONS.COMMENT_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_ANY,
-    ...KEY_ADMIN_PERMISSIONS,
-    ...PROJECT_UPDATE_PUBLISH_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
-  ],
-  tech_lead: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.APP_CACHE_CLEAR,
-    PERMISSION_ACTIONS.PROJECT_MANAGE,
-    PERMISSION_ACTIONS.PROJECT_BACKUP,
-    PERMISSION_ACTIONS.PROJECT_MAINTENANCE,
-    PERMISSION_ACTIONS.MEMBER_MANAGE,
-    PERMISSION_ACTIONS.ROLE_MANAGE,
-    PERMISSION_ACTIONS.FILE_CREATE,
-    PERMISSION_ACTIONS.FILE_UPDATE,
-    PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION,
-    PERMISSION_ACTIONS.FILE_RENAME,
-    PERMISSION_ACTIONS.FILE_LOCK,
-    PERMISSION_ACTIONS.FILE_HIDE,
-    PERMISSION_ACTIONS.FILE_DELETE,
-    PERMISSION_ACTIONS.FILE_MANAGE_FOLDER,
-    PERMISSION_ACTIONS.ENTRY_ROLLBACK,
-    PERMISSION_ACTIONS.ENTRY_LOCK,
-    PERMISSION_ACTIONS.ENTRY_HIDE,
-    PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-    PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
-    PERMISSION_ACTIONS.TERM_CREATE,
-    PERMISSION_ACTIONS.TERM_UPDATE,
-    PERMISSION_ACTIONS.TERM_DELETE,
-    PERMISSION_ACTIONS.TERM_IMPORT,
-    PERMISSION_ACTIONS.TERM_EXPORT,
-    PERMISSION_ACTIONS.CONTEXT_CREATE,
-    PERMISSION_ACTIONS.CONTEXT_UPDATE,
-    PERMISSION_ACTIONS.CONTEXT_DELETE,
-    PERMISSION_ACTIONS.TASK_CREATE,
-    PERMISSION_ACTIONS.TASK_UPDATE,
-    PERMISSION_ACTIONS.TASK_ASSIGN,
-    PERMISSION_ACTIONS.TASK_COMPLETE,
-    PERMISSION_ACTIONS.TASK_RECLAIM,
-    PERMISSION_ACTIONS.TASK_DELETE,
-    PERMISSION_ACTIONS.TASK_REOPEN,
-    PERMISSION_ACTIONS.TASK_MANAGE,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_RESOLVE,
-    PERMISSION_ACTIONS.COMMENT_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_ANY,
-    ...KEY_ADMIN_PERMISSIONS,
-    ...PROJECT_UPDATE_PUBLISH_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_REVIEW,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT_MAINTENANCE,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_DANGEROUS_IMPORT,
-    PERMISSION_ACTIONS.RELEASE_EXPORT,
-    PERMISSION_ACTIONS.TECH_MAINTAIN,
-  ],
-  translator: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.ENTRY_EDIT,
-    PERMISSION_ACTIONS.ENTRY_TRANSLATE,
-    PERMISSION_ACTIONS.ENTRY_UPDATE_STATUS,
-    PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-    PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
-    PERMISSION_ACTIONS.FILE_IMPORT_TRANSLATION,
-    PERMISSION_ACTIONS.CONTEXT_CREATE,
-    PERMISSION_ACTIONS.CONTEXT_UPDATE,
-    PERMISSION_ACTIONS.CONTEXT_DELETE,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.TASK_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_WRITE,
-    PERMISSION_ACTIONS.COMMENT_RESOLVE,
-    PERMISSION_ACTIONS.COMMENT_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    ...OWN_KEY_PERMISSIONS,
-    ...MEMBER_CHANGE_PACKAGE_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-    PERMISSION_ACTIONS.PROJECT_BACKUP,
-  ],
-  proofreader: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.ENTRY_EDIT,
-    PERMISSION_ACTIONS.ENTRY_PROOFREAD,
-    PERMISSION_ACTIONS.ENTRY_ROLLBACK,
-    PERMISSION_ACTIONS.ENTRY_UPDATE_STATUS,
-    PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-    PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
-    PERMISSION_ACTIONS.CONTEXT_CREATE,
-    PERMISSION_ACTIONS.CONTEXT_UPDATE,
-    PERMISSION_ACTIONS.CONTEXT_DELETE,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.TASK_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_WRITE,
-    PERMISSION_ACTIONS.COMMENT_RESOLVE,
-    PERMISSION_ACTIONS.COMMENT_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    ...OWN_KEY_PERMISSIONS,
-    ...MEMBER_CHANGE_PACKAGE_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-    PERMISSION_ACTIONS.PROJECT_BACKUP,
-  ],
-  reviewer: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.ENTRY_REVIEW,
-    PERMISSION_ACTIONS.ENTRY_ROLLBACK,
-    PERMISSION_ACTIONS.ENTRY_UPDATE_STATUS,
-    PERMISSION_ACTIONS.ENTRY_MARK_DISPUTED,
-    PERMISSION_ACTIONS.ENTRY_RESOLVE_DISPUTE,
-    PERMISSION_ACTIONS.CONTEXT_CREATE,
-    PERMISSION_ACTIONS.CONTEXT_UPDATE,
-    PERMISSION_ACTIONS.CONTEXT_DELETE,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.TASK_COMPLETE,
-    PERMISSION_ACTIONS.TASK_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_WRITE,
-    PERMISSION_ACTIONS.COMMENT_RESOLVE,
-    PERMISSION_ACTIONS.COMMENT_REOPEN,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    ...OWN_KEY_PERMISSIONS,
-    ...MEMBER_CHANGE_PACKAGE_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-    PERMISSION_ACTIONS.PROJECT_BACKUP,
-  ],
-  publisher: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.RELEASE_EXPORT,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.PROJECT_BACKUP,
-    ...OWN_KEY_PERMISSIONS,
-    ...MEMBER_CHANGE_PACKAGE_PERMISSIONS,
-  ],
-  term_manager: [
-    ...READ_ONLY_PERMISSIONS,
-    PERMISSION_ACTIONS.TERM_MANAGE,
-    PERMISSION_ACTIONS.TERM_CREATE,
-    PERMISSION_ACTIONS.TERM_UPDATE,
-    PERMISSION_ACTIONS.TERM_DELETE,
-    PERMISSION_ACTIONS.TERM_IMPORT,
-    PERMISSION_ACTIONS.TERM_EXPORT,
-    PERMISSION_ACTIONS.TASK_SUBMIT,
-    PERMISSION_ACTIONS.COMMENT_CREATE,
-    PERMISSION_ACTIONS.COMMENT_REPLY,
-    PERMISSION_ACTIONS.COMMENT_WRITE,
-    PERMISSION_ACTIONS.COMMENT_DELETE_OWN,
-    ...OWN_KEY_PERMISSIONS,
-    ...MEMBER_CHANGE_PACKAGE_PERMISSIONS,
-    PERMISSION_ACTIONS.CHANGE_PACKAGE_SIGN,
-  ],
-  readonly: READ_ONLY_PERMISSIONS,
+function assertKnownPermissionAction(
+  value: string,
+  context: string,
+): asserts value is PermissionAction {
+  if (!KNOWN_PERMISSION_ACTION_SET.has(value)) {
+    throw configError(`${context} 使用了未知权限：${value}`);
+  }
+}
+
+function validateRoleOrder(order: readonly string[]): Role[] {
+  if (!Array.isArray(order)) {
+    throw configError("roles.order 必须是数组。");
+  }
+
+  const seen = new Set<string>();
+  const roles = order.map((role, index) => {
+    assertNonEmptyString(role, `roles.order[${index}]`);
+    assertKnownRole(role, `roles.order[${index}]`);
+
+    if (seen.has(role)) {
+      throw configError(`roles.order 重复定义角色：${role}`);
+    }
+
+    seen.add(role);
+    return role;
+  });
+
+  for (const role of KNOWN_ROLES) {
+    if (!seen.has(role)) {
+      throw configError(`roles.order 缺少角色：${role}`);
+    }
+  }
+
+  return roles;
+}
+
+function validateRoleLabels(
+  labels: Record<string, string>,
+  roleOrder: readonly Role[],
+): Record<Role, string> {
+  if (!labels || typeof labels !== "object") {
+    throw configError("roles.labels 必须是对象。");
+  }
+
+  for (const role of Object.keys(labels)) {
+    assertKnownRole(role, "roles.labels");
+  }
+
+  return Object.fromEntries(
+    roleOrder.map((role) => {
+      assertNonEmptyString(labels[role], `roles.labels.${role}`);
+
+      return [role, labels[role]];
+    }),
+  ) as Record<Role, string>;
+}
+
+function validatePermissionGroups(
+  groups: PermissionConfigFile["groups"],
+): {
+  groups: PermissionGroupDefinition[];
+  catalogActions: PermissionAction[];
+} {
+  if (!Array.isArray(groups)) {
+    throw configError("groups 必须是数组。");
+  }
+
+  const groupIds = new Set<string>();
+  const catalogActions: PermissionAction[] = [];
+  const catalogActionSet = new Set<string>();
+  const validatedGroups = groups.map((group, groupIndex) => {
+    assertNonEmptyString(group.id, `groups[${groupIndex}].id`);
+    assertNonEmptyString(group.label, `groups[${groupIndex}].label`);
+
+    if (groupIds.has(group.id)) {
+      throw configError(`groups 重复定义分组：${group.id}`);
+    }
+
+    if (!Array.isArray(group.permissions)) {
+      throw configError(`groups[${groupIndex}].permissions 必须是数组。`);
+    }
+
+    groupIds.add(group.id);
+    const groupActions = new Set<string>();
+    const permissions = group.permissions.map((permission, permissionIndex) => {
+      const context = `groups[${groupIndex}].permissions[${permissionIndex}]`;
+
+      assertNonEmptyString(permission.action, `${context}.action`);
+      assertKnownPermissionAction(permission.action, `${context}.action`);
+      assertNonEmptyString(permission.label, `${context}.label`);
+
+      if (groupActions.has(permission.action)) {
+        throw configError(`${context} 在同一分组内重复：${permission.action}`);
+      }
+
+      groupActions.add(permission.action);
+
+      if (!catalogActionSet.has(permission.action)) {
+        catalogActionSet.add(permission.action);
+        catalogActions.push(permission.action);
+      }
+
+      return {
+        action: permission.action,
+        label: permission.label,
+      };
+    });
+
+    return {
+      id: group.id,
+      label: group.label,
+      permissions,
+    };
+  });
+
+  return { groups: validatedGroups, catalogActions };
+}
+
+function validateRoleDefaultPermissions(
+  defaults: Record<string, string[]>,
+  roleOrder: readonly Role[],
+  catalogActions: readonly PermissionAction[],
+): Record<Role, readonly PermissionAction[]> {
+  if (!defaults || typeof defaults !== "object") {
+    throw configError("default_role_permissions 必须是对象。");
+  }
+
+  for (const role of Object.keys(defaults)) {
+    assertKnownRole(role, "default_role_permissions");
+  }
+
+  const catalogActionSet = new Set<string>(catalogActions);
+  const roleDefaults = {} as Record<Role, readonly PermissionAction[]>;
+
+  for (const role of roleOrder) {
+    const rawPermissions = defaults[role];
+
+    if (!Array.isArray(rawPermissions)) {
+      throw configError(`default_role_permissions.${role} 必须是数组。`);
+    }
+
+    const seen = new Set<string>();
+    const permissions: PermissionAction[] = [];
+
+    for (const [index, permission] of rawPermissions.entries()) {
+      const context = `default_role_permissions.${role}[${index}]`;
+
+      assertNonEmptyString(permission, context);
+      assertKnownPermissionAction(permission, context);
+
+      if (!catalogActionSet.has(permission)) {
+        throw configError(`${context} 没有出现在权限目录中：${permission}`);
+      }
+
+      if (!seen.has(permission)) {
+        seen.add(permission);
+        permissions.push(permission);
+      }
+    }
+
+    roleDefaults[role] = permissions;
+  }
+
+  for (const permission of OWNER_LOCKED_PERMISSIONS) {
+    if (!roleDefaults.owner.includes(permission)) {
+      throw configError(`owner 默认权限缺少锁定权限：${permission}`);
+    }
+  }
+
+  return roleDefaults;
+}
+
+function validatePermissionConfig(config: PermissionConfigFile): ValidatedPermissionConfig {
+  if (config.schema_version !== CONFIG_SCHEMA_VERSION) {
+    throw configError(
+      `不支持的 schema_version：${String(config.schema_version)}`,
+    );
+  }
+
+  const roleOrder = validateRoleOrder(config.roles.order);
+  const roleLabels = validateRoleLabels(config.roles.labels, roleOrder);
+  const permissionCatalog = validatePermissionGroups(config.groups);
+  const roleDefaultPermissions = validateRoleDefaultPermissions(
+    config.default_role_permissions,
+    roleOrder,
+    permissionCatalog.catalogActions,
+  );
+
+  return {
+    roleOrder,
+    roleLabels,
+    permissionGroups: permissionCatalog.groups,
+    allPermissionActions: permissionCatalog.catalogActions,
+    roleDefaultPermissions,
+  };
+}
+
+const validatedPermissionConfig = validatePermissionConfig(
+  permissionsConfig as PermissionConfigFile,
+);
+
+export const ROLE_ORDER: Role[] = [...validatedPermissionConfig.roleOrder];
+export const ROLE_LABELS: Record<Role, string> = {
+  ...validatedPermissionConfig.roleLabels,
 };
+export const PERMISSION_GROUPS: PermissionGroupDefinition[] =
+  validatedPermissionConfig.permissionGroups.map((group) => ({
+    ...group,
+    permissions: group.permissions.map((permission) => ({ ...permission })),
+  }));
+export const ALL_PERMISSION_ACTIONS: PermissionAction[] = [
+  ...validatedPermissionConfig.allPermissionActions,
+];
+export const ROLE_DEFAULT_PERMISSIONS: Record<Role, readonly PermissionAction[]> =
+  (() => {
+    const defaults = {} as Record<Role, readonly PermissionAction[]>;
+
+    for (const role of validatedPermissionConfig.roleOrder) {
+      defaults[role] = [
+        ...validatedPermissionConfig.roleDefaultPermissions[role],
+      ];
+    }
+
+    return defaults;
+  })();

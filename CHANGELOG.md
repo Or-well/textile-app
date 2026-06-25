@@ -4,6 +4,12 @@
 
 格式参考 Keep a Changelog，版本号以根目录 `package.json` 为准。
 
+## [0.9.1] - 2026-06-25
+
+### Changed
+
+- 默认角色权限、角色标签和权限分组改由 `src/config/permissions.json` 维护，启动时会校验未知权限、未知角色和 owner 锁定权限。
+
 ## [0.9.0] - 2026-06-25
 
 ### Added
