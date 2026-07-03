@@ -15,13 +15,11 @@
 当前扫描到的项目结构要点：
 
 - 存在：`src/components/`、`src/composables/`、`src/model/`、`src/pages/`、`src/services/`、`src/utils/`、`src-tauri/`、`tests/unit/`。
-- 不存在：`src/views/`、`src/types/`、`docs/vue-typescript-project-tutorial.md`。
 - 当前业务类型主要在 `src/model/types.ts`，权限和状态类型在 `src/model/permissions.ts`、`src/model/status.ts`、`src/model/taskStatus.ts` 等文件中。
 - 当前页面目录使用 `src/pages/`，没有 `src/views/`。
 - 当前路由由 `src/App.vue` 手写解析 URL，没有引入 `vue-router`。
 - 当前状态管理没有 Pinia/Vuex；共享项目状态主要由 `App.vue`、页面状态和 service 模块承担。
 - 当前有一个 composable：`src/composables/useAppDraft.ts`。
-- 当前没有扫描到 `provide(` / `inject(`。
 - 当前没有业务后端 API；扫描到的 `fetch` 用于 Web 更新清单检查。
 
 当前源码清单快照：
@@ -138,6 +136,7 @@ src/
     project.ts
     projectDeletion.ts
     projectFs.ts
+    projectLocation.ts
     projectPackage.ts
     projectStorage.ts
     projectWritePlan.ts
@@ -893,6 +892,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - 提供统一 `ProjectDirectoryHandle`。
 - 适配真实 File System Access API 句柄。
+- 适配 Tauri 桌面版 native path 项目根目录。
 - 适配 `.hproj` 的内存目录。
 - 提供 JSON、JSONL、文本、二进制、目录和删除操作。
 - 防止 `..` 路径越界。
@@ -919,11 +919,25 @@ comments/<file_id>/<6位entry index>.jsonl
 - `fileExists`
 - `deleteEntry`
 - `createMemoryProjectDirectory`
+- `createNativeProjectDirectory`
+
+Tauri 桌面版：
+
+- `openProjectDirectory()` 优先调用 Rust `pick_project_directory`，拿到系统真实目录路径。
+- 前端用 `native-folder` handle 适配现有 `ProjectDirectoryHandle` 接口，业务 service 仍通过 `ProjectStorage` 访问项目文件。
+- Rust 命令提供相对项目路径的文本、二进制、目录、存在性和删除操作，并拒绝绝对路径、`..` 和符号链接越界。
+- `nativePath` 只记录项目根目录路径，不写入项目数据、`.hproj` 或修改包。
+
+Web/PWA：
+
+- 继续使用 File System Access API 的目录句柄。
+- 浏览器目录句柄仍不暴露系统绝对路径。
 
 风险点：
 
 - 不是事务存储。
 - 多文件操作需要上层安排安全顺序。
+- Tauri native path 能打开系统路径，但仍依赖上层写入计划保证多文件一致性。
 - 内存项目写入不会自动持久化到原 `.hproj`，默认 `.hproj` 导入流程应落地为普通项目文件夹。
 - 大 JSONL 文件每次写入都会整体重写。
 
@@ -933,7 +947,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 职责：
 
-- 统一普通文件夹和 `.hproj` 内存项目的读写入口。
+- 统一普通文件夹、Tauri native path 文件夹和 `.hproj` 内存项目的读写入口。
 - 暴露文本、二进制、JSON、JSONL、目录、存在性和删除操作。
 - 保留 `root` 作为底层 adapter 兼容出口，供项目包打包、最近项目句柄等低层能力使用。
 
@@ -942,6 +956,61 @@ comments/<file_id>/<6位entry index>.jsonl
 - 新增业务 service 应优先接收或读取 `ProjectStorage`。
 - 不要在页面中直接调用 storage 写项目文件，页面仍应调用 service。
 - `projectFs.ts` 只作为底层文件系统 adapter；业务规则、权限和写入顺序仍放在 service。
+
+### `projectLocation.ts`
+
+职责：
+
+- 打开当前项目所在系统文件夹。
+- 根据 `OpenedProject` 判断项目来源是否支持系统文件管理器打开。
+- 将页面发出的项目级操作转成 Tauri native 命令。
+
+输入：
+
+- `OpenedProject`。
+
+输出：
+
+- 成功时请求系统打开项目目录。
+- 不可用时抛出用户可理解的中文错误。
+
+不负责：
+
+- 不选择项目目录。
+- 不读写项目文件。
+- 不删除项目文件夹。
+- 不为 Web/PWA 或 `.hproj` 内存项目伪造系统路径。
+
+行为：
+
+- `nativePath` 存在且运行于 Tauri 桌面版时，调用 Rust `open_project_directory_path`。
+- packed `.hproj` 报告没有本地项目文件夹。
+- Web/PWA 或缺少 `nativePath` 的旧项目句柄报告无法获取系统路径。
+
+### `projectDeletion.ts`
+
+职责：
+
+- 扫描当前项目来源，生成危险操作确认摘要。
+- 执行“从启动页移除项目”。
+- 在 Tauri native path 项目中执行“删除本地项目文件夹”。
+
+模式：
+
+- `local_record_only`：只移除最近项目记录、当前项目会话和本机工作台位置，磁盘文件不会被删除。
+- `native_project_folder`：删除磁盘上的当前项目文件夹，并在成功后由 `App.vue` 清理最近项目记录、会话、内存私钥和工作台位置。
+
+保护：
+
+- 删除前必须重新读取当前项目来源，确认 `project.json`、`members.json` 和 `entries/` 存在。
+- Rust `delete_project_directory_path` 会再次读取 `project.json`，要求其中 `project_id` 与当前项目 ID 一致。
+- 只有带 `nativePath` 的 Tauri native 项目支持删除本地项目文件夹；Web/PWA 和 packed `.hproj` 不支持。
+- 设置页把“移除项目记录”和“删除本地项目文件夹”展示为两个独立危险操作，并要求输入项目名称和对应确认短语。
+
+限制：
+
+- 当前删除是系统文件删除，不提供 Textile 内置恢复能力；执行前应导出 `.hproj` 备份。
+- 删除过程中如果系统拒绝访问，可能留下需要人工检查的残留。
 
 ## 21. `project.ts`
 
@@ -2109,18 +2178,19 @@ store: projectHandles
 
 最多 12 条。
 
-`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。只有普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。
+`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。Web/PWA 普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。Tauri native path 项目不写 IndexedDB 句柄，`displayPath` 保存系统目录路径，恢复时由 `App.vue` 重建 native root adapter。
 
 权限恢复分两种入口：
 
 - 用户点击最近项目时，`recentProjects.ts` 会在 `queryPermission` 为 `prompt` 时调用 `requestPermission({ mode: "readwrite" })`，授权成功后直接打开项目。
 - 启动时按 URL 自动恢复项目只检查权限状态，不主动弹授权；如果不是 `granted`，回到启动页并提示用户从最近项目点击继续。
+- Tauri native path 项目默认视为已授权；重新打开时仍会读取并校验 `project.json`、`members.json` 和 entries 路径，路径失效或项目 ID 不匹配会阻止进入。
 
 ## 45. 页面与 service 调用关系
 
 | 页面/组件 | 主要 service |
 | --- | --- |
-| `App.vue` | project、auth、permissions、session、recentProjects、workspacePosition、stats、tasks、appUpdate、projectDeletion |
+| `App.vue` | project、auth、permissions、session、recentProjects、workspacePosition、stats、tasks、appUpdate、projectDeletion、projectLocation |
 | `CreateProjectPage` | project |
 | `ProjectListPage` | recentProjects 间接由 App 处理 |
 | `LoginPage` | auth 间接由 App 处理 |
@@ -2563,6 +2633,15 @@ npm run test:unit
 
 测试位于 `tests/unit/`。除核心业务规则外，还覆盖补偿式写入计划、`.hproj` 导入、程序更新状态展示、可靠生成文件保存，以及私钥与当前成员公钥/key ID 的匹配规则。修改包哈希的排序和序列化逻辑集中在 `src/services/changePackageHash.ts`，固定协议样本用于阻止无意的哈希格式变化。
 
+Native path 和本地项目文件夹危险操作的单元测试：
+
+- `tests/unit/projectLocation.test.ts` 覆盖“打开项目文件夹”的 native path 调用、Web/PWA、`.hproj` 和旧记录缺少路径时的拒绝分支。
+- `tests/unit/projectDeletion.test.ts` 覆盖 `local_record_only` 与 `native_project_folder` 两种删除模式、native path 可删除条件、项目 ID 不匹配阻断和 native 删除失败透传。
+- `tests/unit/projectFs.test.ts` 覆盖 `createNativeProjectDirectory()` 元数据，以及 native adapter 通过 Tauri command 读、写、列目录和删除相对项目路径。
+- `tests/unit/recentProjects.test.ts` 覆盖 native-folder 和 packed `.hproj` 不写 IndexedDB directory handle，普通 Web/PWA 文件夹仍保存句柄。
+
+Tauri Rust 侧删除保护使用 `cargo test` 覆盖 `src-tauri/src/lib.rs` 中的 `delete_native_project_directory()`：缺少 `project.json`、`members.json`、`entries/`、项目 ID 不匹配、目标不是目录时都会拒绝删除；项目结构和 ID 匹配时才删除测试临时目录。
+
 最低完整检查：
 
 ```bash
@@ -2601,6 +2680,7 @@ npm run build
 - 没有多标签页并发锁。
 - 尚无集成测试和端到端自动化测试。
 - Web 下载地址未配置。
+- Web/PWA 项目仍无法获得系统绝对路径；native path 只适用于 Tauri 桌面版。
 - 私钥文件未加密，内存私钥刷新后丢失。
 - 独立 `contexts/` 协议目录与当前 Entry 内联上下文并存。
 - `exports/` 和 `changes/` 多数情况下不会自动写入。

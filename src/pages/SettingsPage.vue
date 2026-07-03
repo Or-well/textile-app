@@ -34,6 +34,7 @@ import {
 import { appendEventToRoot } from "../services/history";
 import {
   scanProjectDeletion,
+  type ProjectDeletionMode,
   type ProjectDeletionScan,
 } from "../services/projectDeletion";
 import {
@@ -107,7 +108,7 @@ const emit = defineEmits<{
   openImportExport: [];
   cacheStateChanged: [];
   currentSessionCleared: [];
-  deleteProjectRequested: [];
+  deleteProjectRequested: [mode: ProjectDeletionMode];
 }>();
 
 const sectionItems: Array<{ key: SettingsSection; label: string }> = [
@@ -173,6 +174,7 @@ const isClearingCache = ref(false);
 const isScanningProjectDeletion = ref(false);
 const showClearCacheDialog = ref(false);
 const showDeleteProjectDialog = ref(false);
+const projectDeletionMode = ref<ProjectDeletionMode>("local_record_only");
 const showLicenseDialog = ref(false);
 const showProjectBackupKeyReminder = ref(false);
 const isCreatingProjectBackupPublisherKey = ref(false);
@@ -216,6 +218,12 @@ const canClearCache = computed(() =>
 );
 const canRemoveProject = computed(() =>
   canDeleteProject(currentUser.value, localProject.value ?? undefined),
+);
+const canDeleteLocalProjectFolder = computed(
+  () =>
+    canRemoveProject.value &&
+    localRoot.value?.storageKind === "native-folder" &&
+    Boolean(localRoot.value.nativePath),
 );
 const weightTotal = computed(
   () =>
@@ -896,9 +904,14 @@ async function handleClearCache(items: CacheCleanupItemId[]): Promise<void> {
   }
 }
 
-async function handleRequestDeleteProject(): Promise<void> {
+async function handleRequestDeleteProject(
+  mode: ProjectDeletionMode = "local_record_only",
+): Promise<void> {
   if (!canRemoveProject.value) {
-    errorMessage.value = "当前用户没有移除项目记录的权限。";
+    errorMessage.value =
+      mode === "native_project_folder"
+        ? "当前用户没有删除本地项目文件夹的权限。"
+        : "当前用户没有移除项目记录的权限。";
     return;
   }
 
@@ -906,6 +919,7 @@ async function handleRequestDeleteProject(): Promise<void> {
     return;
   }
 
+  projectDeletionMode.value = mode;
   projectDeletionScan.value = null;
   projectDeletionError.value = "";
   showDeleteProjectDialog.value = true;
@@ -915,6 +929,7 @@ async function handleRequestDeleteProject(): Promise<void> {
     projectDeletionScan.value = await scanProjectDeletion(
       getWritableRoot(),
       localProject.value,
+      mode,
     );
   } catch (error) {
     projectDeletionError.value =
@@ -926,7 +941,7 @@ async function handleRequestDeleteProject(): Promise<void> {
 
 function handleDeleteProjectConfirmed(): void {
   showDeleteProjectDialog.value = false;
-  emit("deleteProjectRequested");
+  emit("deleteProjectRequested", projectDeletionMode.value);
 }
 
 function handleMembersUpdated(members: Member[]): void {
@@ -1724,15 +1739,30 @@ onBeforeUnmount(() => {
             <div class="danger-row">
               <div>
                 <strong>从启动页移除项目</strong>
-                <p>从最近项目移除并清除当前项目会话。当前版本不会自动删除磁盘上的项目文件。如需彻底删除，请确认备份后手动删除项目文件夹。</p>
+                <p>从最近项目移除并清除当前项目会话。磁盘上的项目文件夹不会被删除。</p>
               </div>
               <button
                 class="danger-button"
                 type="button"
                 :disabled="!canRemoveProject"
-                @click="handleRequestDeleteProject"
+                @click="handleRequestDeleteProject('local_record_only')"
               >
                 移除项目记录
+              </button>
+            </div>
+
+            <div class="danger-row">
+              <div>
+                <strong>删除本地项目文件夹</strong>
+                <p>删除磁盘上的当前项目文件夹，并清除最近项目记录和会话。仅桌面版本地项目可用，执行前请先导出 .hproj 备份。</p>
+              </div>
+              <button
+                class="danger-button"
+                type="button"
+                :disabled="!canDeleteLocalProjectFolder"
+                @click="handleRequestDeleteProject('native_project_folder')"
+              >
+                删除项目文件夹
               </button>
             </div>
           </div>
@@ -1751,6 +1781,7 @@ onBeforeUnmount(() => {
       v-if="showDeleteProjectDialog && localProject"
       :project-name="localProject.name"
       :scan="projectDeletionScan"
+      :mode="projectDeletionMode"
       :busy="isScanningProjectDeletion"
       :error-message="projectDeletionError"
       @cancel="showDeleteProjectDialog = false"

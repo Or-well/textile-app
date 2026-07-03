@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { ProjectDeletionScan } from "../../services/projectDeletion";
+import type {
+  ProjectDeletionMode,
+  ProjectDeletionScan,
+} from "../../services/projectDeletion";
 
 const props = defineProps<{
   projectName: string;
+  mode: ProjectDeletionMode;
   scan: ProjectDeletionScan | null;
   busy?: boolean;
   errorMessage?: string;
@@ -17,13 +21,42 @@ const emit = defineEmits<{
 const backupConfirmed = ref(false);
 const projectNameInput = ref("");
 const deletePhraseInput = ref("");
-const requiredPhrase = "移除项目";
+const isDiskDelete = computed(() => props.mode === "native_project_folder");
+const requiredPhrase = computed(() =>
+  isDiskDelete.value ? "删除项目文件夹" : "移除项目",
+);
 const canSubmit = computed(
   () =>
     Boolean(props.scan?.canDelete) &&
     backupConfirmed.value &&
     projectNameInput.value === props.projectName &&
-    deletePhraseInput.value === requiredPhrase,
+    deletePhraseInput.value === requiredPhrase.value,
+);
+const dialogTitle = computed(() =>
+  isDiskDelete.value ? "删除本地项目文件夹" : "从启动页移除当前项目",
+);
+const summaryTitle = computed(() =>
+  isDiskDelete.value
+    ? props.scan?.canDelete
+      ? "将删除本地项目文件夹"
+      : "无法删除本地项目文件夹"
+    : props.scan?.canDelete
+      ? "将移除本机记录"
+      : "无法继续",
+);
+const confirmText = computed(() =>
+  isDiskDelete.value
+    ? "我理解此操作会删除磁盘上的项目文件夹，Textile 无法恢复。"
+    : "我理解此操作只移除本机记录，不删除磁盘文件。",
+);
+const confirmButtonText = computed(() =>
+  props.busy
+    ? isDiskDelete.value
+      ? "正在删除..."
+      : "正在移除..."
+    : isDiskDelete.value
+      ? "删除项目文件夹"
+      : "移除项目记录",
 );
 </script>
 
@@ -37,19 +70,22 @@ const canSubmit = computed(
     >
       <header>
         <p class="eyebrow">危险操作</p>
-        <h2 id="delete-project-title">从启动页移除当前项目</h2>
-        <p>
+        <h2 id="delete-project-title">{{ dialogTitle }}</h2>
+        <p v-if="!isDiskDelete">
           此操作只会从最近项目移除、清除当前项目会话并返回项目启动页。磁盘文件不会被删除。
         </p>
-        <p>
-          当前版本不会自动删除磁盘上的项目文件。如需彻底删除，请确认备份后手动删除项目文件夹。
+        <p v-else>
+          此操作会删除磁盘上的当前项目文件夹，并清除最近项目记录和当前项目会话。
+        </p>
+        <p v-if="isDiskDelete">
+          请先导出 .hproj 备份。删除完成后，Textile 无法恢复该项目文件夹。
         </p>
       </header>
 
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
       <section v-if="scan" class="danger-summary">
-        <strong>{{ scan.canDelete ? "将移除本机记录" : "无法继续" }}</strong>
+        <strong>{{ summaryTitle }}</strong>
         <dl>
           <div>
             <dt>处理范围</dt>
@@ -57,11 +93,11 @@ const canSubmit = computed(
           </div>
           <div>
             <dt>项目文件</dt>
-            <dd>不会删除</dd>
+            <dd>{{ isDiskDelete ? `${scan.fileCount} 个文件` : "不会删除" }}</dd>
           </div>
           <div>
-            <dt>返回位置</dt>
-            <dd>项目启动页</dd>
+            <dt>{{ isDiskDelete ? "项目目录" : "返回位置" }}</dt>
+            <dd>{{ isDiskDelete ? `${scan.directoryCount} 个目录` : "项目启动页" }}</dd>
           </div>
         </dl>
 
@@ -81,7 +117,7 @@ const canSubmit = computed(
 
       <label class="confirm-check">
         <input v-model="backupConfirmed" type="checkbox" :disabled="busy || !scan?.canDelete" />
-        <span>我理解此操作只移除本机记录，不删除磁盘文件。</span>
+        <span>{{ confirmText }}</span>
       </label>
 
       <label class="confirm-field">
@@ -119,7 +155,7 @@ const canSubmit = computed(
           :disabled="busy || !canSubmit"
           @click="emit('confirm')"
         >
-          {{ busy ? "正在移除..." : "移除项目记录" }}
+          {{ confirmButtonText }}
         </button>
       </footer>
     </article>

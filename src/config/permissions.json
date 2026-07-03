@@ -33,7 +33,7 @@
         { "action": "project.read", "label": "查看项目" },
         { "action": "project.manage", "label": "管理项目" },
         { "action": "project.backup", "label": "导出项目备份" },
-        { "action": "project.delete", "label": "移除项目记录" },
+        { "action": "project.delete", "label": "移除或删除项目" },
         { "action": "project.maintenance", "label": "项目维护" }
       ]
     },

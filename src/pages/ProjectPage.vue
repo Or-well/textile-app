@@ -21,6 +21,7 @@ defineProps<{
 
 const emit = defineEmits<{
   openFiles: [];
+  openProjectFolder: [];
   openImportExport: [panel: "export" | "import"];
 }>();
 
@@ -44,6 +45,13 @@ const canImportPackage = computed(
       summary="查看项目进度、词条状态和当前协作概况。"
     >
       <template #actions>
+        <button
+          class="secondary-button"
+          type="button"
+          @click="emit('openProjectFolder')"
+        >
+          打开项目文件夹
+        </button>
         <button class="primary-button" type="button" @click="emit('openFiles')">
           查看文件
         </button>
@@ -161,16 +169,26 @@ h2 {
   font-size: 18px;
 }
 
-.primary-button {
+.primary-button,
+.secondary-button {
   min-height: 40px;
   padding: 0 14px;
-  border: 0;
   border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
   font: inherit;
   font-size: 14px;
   cursor: pointer;
+}
+
+.primary-button {
+  border: 0;
+  background: #2f6f73;
+  color: #ffffff;
+}
+
+.secondary-button {
+  border: 1px solid #c8d0dc;
+  background: #ffffff;
+  color: #1f2937;
 }
 
 .overview-grid {

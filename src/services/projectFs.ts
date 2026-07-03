@@ -1,7 +1,8 @@
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
+import { isTauriRuntime } from "../utils/tauriRuntime";
 import { withAppOperation } from "./appOperation";
 
-export type ProjectStorageKind = "folder" | "packed";
+export type ProjectStorageKind = "folder" | "packed" | "native-folder";
 
 export interface ProjectFileHandle {
   getFile(): Promise<File>;
@@ -17,6 +18,7 @@ export interface ProjectDirectoryHandle {
   name: string;
   storageKind?: ProjectStorageKind;
   sourceFileName?: string;
+  nativePath?: string;
   isDirty?: () => boolean;
   markClean?: () => void;
   queryPermission?: (descriptor?: {
@@ -44,6 +46,20 @@ type DirectoryPickerWindow = Window &
     }) => Promise<ProjectDirectoryHandle>;
   };
 
+type NativeProjectEntryKind = "file" | "directory" | "other";
+
+interface NativeProjectDirectorySelectionResult {
+  selected: boolean;
+  path?: string;
+  name?: string;
+  reason?: string;
+}
+
+interface NativeProjectEntryStatus {
+  exists: boolean;
+  kind?: NativeProjectEntryKind;
+}
+
 type PackedProjectContent = Record<string, string | Uint8Array>;
 
 interface PackedProjectState {
@@ -54,6 +70,29 @@ interface PackedProjectState {
 }
 
 const textEncoder = new TextEncoder();
+
+async function invokeTauriCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const { invoke } = await import("@tauri-apps/api/core");
+
+  return invoke<T>(command, args);
+}
+
+function toUint8Array(bytes: Uint8Array | number[]): Uint8Array {
+  return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+}
+
+function createAbortError(message: string): Error {
+  if (typeof DOMException !== "undefined") {
+    return new DOMException(message, "AbortError");
+  }
+
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
 
 function splitProjectPath(path: string): string[] {
   return path
@@ -343,6 +382,183 @@ class PackedProjectDirectoryHandle implements ProjectDirectoryHandle {
   }
 }
 
+class NativeProjectWritableFileStream implements ProjectWritableFileStream {
+  private content: string | Uint8Array = new Uint8Array();
+  private readonly rootPath: string;
+  private readonly path: string;
+
+  constructor(rootPath: string, path: string) {
+    this.rootPath = rootPath;
+    this.path = path;
+  }
+
+  async write(content: string | Blob | Uint8Array): Promise<void> {
+    if (typeof content === "string") {
+      this.content = content;
+      return;
+    }
+
+    if (content instanceof Blob) {
+      this.content = new Uint8Array(await content.arrayBuffer());
+      return;
+    }
+
+    this.content = new Uint8Array(content);
+  }
+
+  async close(): Promise<void> {
+    if (typeof this.content === "string") {
+      await invokeTauriCommand<void>("write_project_text_file", {
+        rootPath: this.rootPath,
+        relativePath: this.path,
+        content: this.content,
+      });
+      return;
+    }
+
+    await invokeTauriCommand<void>("write_project_binary_file", {
+      rootPath: this.rootPath,
+      relativePath: this.path,
+      bytes: this.content,
+    });
+  }
+}
+
+class NativeProjectFileHandle implements ProjectFileHandle {
+  private readonly rootPath: string;
+  private readonly path: string;
+
+  constructor(rootPath: string, path: string) {
+    this.rootPath = rootPath;
+    this.path = path;
+  }
+
+  async getFile(): Promise<File> {
+    const bytes = toUint8Array(
+      await invokeTauriCommand<Uint8Array | number[]>("read_project_binary_file", {
+        rootPath: this.rootPath,
+        relativePath: this.path,
+      }),
+    );
+    const buffer = bytes.buffer.slice(
+      bytes.byteOffset,
+      bytes.byteOffset + bytes.byteLength,
+    ) as ArrayBuffer;
+
+    return new File([buffer], getFileName(this.path), {
+      type: "application/octet-stream",
+    });
+  }
+
+  async createWritable(): Promise<ProjectWritableFileStream> {
+    return new NativeProjectWritableFileStream(this.rootPath, this.path);
+  }
+}
+
+class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
+  readonly storageKind = "native-folder" as const;
+  readonly nativePath: string;
+  private readonly rootName: string;
+  private readonly path: string;
+
+  constructor(nativePath: string, rootName: string, path = "") {
+    this.nativePath = nativePath;
+    this.rootName = rootName;
+    this.path = path;
+  }
+
+  get name(): string {
+    return this.path ? getFileName(this.path) : this.rootName;
+  }
+
+  async queryPermission(): Promise<PermissionState> {
+    return "granted";
+  }
+
+  async requestPermission(): Promise<PermissionState> {
+    return "granted";
+  }
+
+  async getFileHandle(
+    name: string,
+    options: { create?: boolean } = {},
+  ): Promise<ProjectFileHandle> {
+    const filePath = joinProjectPath(this.path, name);
+
+    if (!options.create) {
+      const status = await getNativeProjectEntryStatus(this.nativePath, filePath);
+
+      if (!status.exists || status.kind !== "file") {
+        throw new Error("项目文件不存在。");
+      }
+    }
+
+    return new NativeProjectFileHandle(this.nativePath, filePath);
+  }
+
+  async getDirectoryHandle(
+    name: string,
+    options: { create?: boolean } = {},
+  ): Promise<ProjectDirectoryHandle> {
+    const directoryPath = joinProjectPath(this.path, name);
+
+    if (options.create) {
+      await invokeTauriCommand<void>("ensure_project_directory", {
+        rootPath: this.nativePath,
+        relativePath: directoryPath,
+      });
+    } else {
+      const status = await getNativeProjectEntryStatus(
+        this.nativePath,
+        directoryPath,
+      );
+
+      if (!status.exists || status.kind !== "directory") {
+        throw new Error("项目目录不存在。");
+      }
+    }
+
+    return new NativeProjectDirectoryHandle(
+      this.nativePath,
+      this.rootName,
+      directoryPath,
+    );
+  }
+
+  async removeEntry(
+    name: string,
+    options: { recursive?: boolean } = {},
+  ): Promise<void> {
+    await invokeTauriCommand<void>("delete_project_entry", {
+      rootPath: this.nativePath,
+      relativePath: joinProjectPath(this.path, name),
+      recursive: options.recursive ?? false,
+    });
+  }
+
+  async *keys(): AsyncIterableIterator<string> {
+    const names = await invokeTauriCommand<string[]>("list_project_directory", {
+      rootPath: this.nativePath,
+      relativePath: this.path,
+    });
+
+    yield* names;
+  }
+}
+
+async function getNativeProjectEntryStatus(
+  rootPath: string,
+  relativePath: string,
+): Promise<NativeProjectEntryStatus> {
+  return invokeTauriCommand<NativeProjectEntryStatus>(
+    "native_project_entry_status",
+    {
+      rootPath,
+      relativePath,
+    },
+  );
+}
+
 async function getDirectoryByPath(
   root: ProjectDirectoryHandle,
   path: string,
@@ -424,7 +640,41 @@ export function markProjectPackageExported(root: ProjectDirectoryHandle): void {
   root.markClean?.();
 }
 
+function getNativeRootName(nativePath: string): string {
+  const normalized = nativePath.replace(/[\\/]+$/, "");
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+
+  return parts[parts.length - 1] ?? "Textile 项目";
+}
+
+export function createNativeProjectDirectory(
+  nativePath: string,
+  name = getNativeRootName(nativePath),
+): ProjectDirectoryHandle {
+  return new NativeProjectDirectoryHandle(nativePath, name);
+}
+
+async function openNativeProjectDirectory(): Promise<ProjectDirectoryHandle> {
+  const result = await invokeTauriCommand<NativeProjectDirectorySelectionResult>(
+    "pick_project_directory",
+  );
+
+  if (!result.selected) {
+    throw createAbortError(result.reason ?? "文件夹选择已取消。");
+  }
+
+  if (!result.path) {
+    throw new Error("无法确认项目文件夹路径。");
+  }
+
+  return createNativeProjectDirectory(result.path, result.name);
+}
+
 export async function openProjectDirectory(): Promise<ProjectDirectoryHandle> {
+  if (isTauriRuntime()) {
+    return openNativeProjectDirectory();
+  }
+
   const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
 
   if (!picker) {

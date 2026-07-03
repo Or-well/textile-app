@@ -112,7 +112,7 @@ async function writeProjectHandle(
   recordId: string,
   root?: ProjectDirectoryHandle,
 ): Promise<void> {
-  if (!root || root.storageKind === "packed") {
+  if (!root || root.storageKind === "packed" || root.storageKind === "native-folder") {
     return;
   }
 

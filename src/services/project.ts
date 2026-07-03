@@ -39,6 +39,7 @@ import {
 import {
   openProjectDirectory,
   type ProjectDirectoryHandle,
+  type ProjectStorageKind,
 } from "./projectFs";
 import {
   createProjectStorage,
@@ -62,7 +63,7 @@ export interface OpenedProject {
   storage: ProjectStorage;
   config: ProjectConfig;
   members: Member[];
-  storageKind: "folder" | "packed";
+  storageKind: ProjectStorageKind;
   sourceFileName?: string;
 }
 

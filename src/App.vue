@@ -38,13 +38,21 @@ import {
   openProjectRoot,
   type OpenedProject,
 } from "./services/project";
+import {
+  createNativeProjectDirectory,
+  type ProjectDirectoryHandle,
+} from "./services/projectFs";
 import { openUserManual } from "./services/helpManual";
+import { openProjectLocation } from "./services/projectLocation";
 import {
   clearLoadedSigningPrivateKeys,
   unloadSigningPrivateKeyForMember,
 } from "./services/keyManager";
 import type { ProjectPackagePreview } from "./services/projectPackage";
-import { deleteCurrentProjectSource } from "./services/projectDeletion";
+import {
+  deleteCurrentProjectSource,
+  type ProjectDeletionMode,
+} from "./services/projectDeletion";
 import {
   getRecentProjectHandle,
   getRecentProjectAccessState,
@@ -70,6 +78,7 @@ import {
   rememberProjectFilePosition,
   removeProjectWorkspacePositions,
 } from "./services/workspacePosition";
+import { isTauriRuntime } from "./utils/tauriRuntime";
 
 type ProjectSection =
   | "overview"
@@ -265,12 +274,46 @@ function configureProjectServices(project: OpenedProject) {
   updatePackedProjectNotice(project);
 }
 
+function looksLikeAbsoluteNativePath(path: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("\\\\") || path.startsWith("/");
+}
+
 function getProjectDisplayPath(project: OpenedProject): string {
+  if (project.root.nativePath) {
+    return project.root.nativePath;
+  }
+
   if (project.storageKind === "packed") {
     return project.sourceFileName ?? project.root.sourceFileName ?? "Textile 项目文件";
   }
 
   return project.root.name || "本地项目文件夹";
+}
+
+async function getRecentProjectRoot(
+  record: RecentProjectRecord | undefined,
+  fallbackRecordId = "",
+): Promise<ProjectDirectoryHandle | null> {
+  const storedRecordId = record?.recordId || fallbackRecordId;
+
+  const storedRoot = storedRecordId
+    ? await getRecentProjectHandle(storedRecordId)
+    : null;
+
+  if (storedRoot) {
+    return storedRoot;
+  }
+
+  if (
+    record &&
+    record.sourceType === "folder" &&
+    isTauriRuntime() &&
+    looksLikeAbsoluteNativePath(record.displayPath)
+  ) {
+    return createNativeProjectDirectory(record.displayPath);
+  }
+
+  return null;
 }
 
 async function rememberOpenedProject(
@@ -503,6 +546,22 @@ async function handleOpenHelp() {
   }
 }
 
+async function handleOpenProjectFolder() {
+  appNoticeMessage.value = "";
+
+  if (!currentProject.value) {
+    appNoticeMessage.value = "请先打开项目文件夹。";
+    return;
+  }
+
+  try {
+    await openProjectLocation(currentProject.value);
+  } catch (error) {
+    appNoticeMessage.value =
+      error instanceof Error ? error.message : "无法打开项目文件夹。";
+  }
+}
+
 async function handlePreviewProjectFile(file: File) {
   isPreviewingProjectFile.value = true;
   appErrorMessage.value = "";
@@ -547,7 +606,7 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
       return;
     }
 
-    const storedRoot = await getRecentProjectHandle(record.recordId);
+    const storedRoot = await getRecentProjectRoot(record);
 
     if (!storedRoot) {
       appErrorMessage.value =
@@ -754,7 +813,9 @@ function handleProjectUpdated(config: ProjectConfig) {
   void refreshProjectSummary();
 }
 
-async function handleDeleteProjectRequested() {
+async function handleDeleteProjectRequested(
+  mode: ProjectDeletionMode = "local_record_only",
+) {
   if (!currentProject.value) {
     return;
   }
@@ -766,6 +827,7 @@ async function handleDeleteProjectRequested() {
       project.root,
       project.config,
       currentUser.value,
+      mode,
     );
 
     recentProjects.value = await removeRecentProject(
@@ -790,7 +852,9 @@ async function handleDeleteProjectRequested() {
     replace("/projects");
   } catch (error) {
     appErrorMessage.value =
-      error instanceof Error ? error.message : "移除项目记录失败。请稍后再试。";
+      error instanceof Error
+        ? error.message
+        : "项目危险操作失败。请稍后再试。";
   }
 }
 
@@ -913,9 +977,7 @@ async function restoreProjectFromRoute() {
     const recentRecord = recentProjects.value.find(
       (record) => record.projectId === currentRoute.projectId,
     );
-    const root = await getRecentProjectHandle(
-      recentRecord?.recordId ?? currentRoute.projectId,
-    );
+    const root = await getRecentProjectRoot(recentRecord, currentRoute.projectId);
 
     if (!root) {
       appErrorMessage.value =
@@ -1049,6 +1111,7 @@ onBeforeUnmount(() => {
         :stats="currentStats"
         :task-count="taskCount"
         @open-files="handleOpenProjectSection('files')"
+        @open-project-folder="handleOpenProjectFolder"
         @open-import-export="handleOpenImportExport"
       />
 
