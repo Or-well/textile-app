@@ -63,7 +63,7 @@ describe("project deletion", () => {
     setTauriRuntime(true);
     const root = createProjectRoot({
       storageKind: "native-folder",
-      nativePath: "C:\\Projects\\Demo",
+      nativePath: "\\\\?\\C:\\Projects\\Demo",
     });
 
     const scan = await scanProjectDeletion(root, project, "native_project_folder");
@@ -126,13 +126,13 @@ describe("project deletion", () => {
   it("calls native project-folder deletion for native path projects", async () => {
     setTauriRuntime(true);
     invokeMock.mockResolvedValue({
-      deletedPath: "C:\\Projects\\Demo",
+      deletedPath: "\\\\?\\C:\\Projects\\Demo",
       fileCount: 4,
       directoryCount: 2,
     });
     const root = createProjectRoot({
       storageKind: "native-folder",
-      nativePath: "C:\\Projects\\Demo",
+      nativePath: "\\\\?\\C:\\Projects\\Demo",
     });
 
     const result = await deleteCurrentProjectSource(
@@ -143,7 +143,7 @@ describe("project deletion", () => {
     );
 
     expect(invokeMock).toHaveBeenCalledWith("delete_project_directory_path", {
-      rootPath: "C:\\Projects\\Demo",
+      rootPath: "\\\\?\\C:\\Projects\\Demo",
       projectId: "project-1",
     });
     expect(result).toMatchObject({

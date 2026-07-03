@@ -1,14 +1,15 @@
 {
-  "version": "0.10.0",
-  "latest_version": "0.10.0",
-  "build_id": "0.10.0-bdf544118d96",
-  "assets_hash": "bdf544118d9646e338dd2c72dd0bbdcc7f5b810fba8193cc3d66f531211637f3",
+  "version": "0.10.1",
+  "latest_version": "0.10.1",
+  "build_id": "0.10.1-e7c33501f3df",
+  "assets_hash": "e7c33501f3df842a6f99063fb69e060ec68c03c5335aa9f056f74a755bf7abae",
   "schema_version": 1,
-  "release_date": "2026-07-03",
+  "release_date": "2026-07-04",
   "channel": "stable",
   "critical": false,
   "download_url": "",
   "notes": [
-    "修复词条历史、文件历史、批注、术语创建人和修改包预览等位置直接显示底层成员 ID 的问题，统一显示成员名、禁用状态或“已删除成员”。"
+    "“从启动页移除项目”的确认弹窗改为轻量确认，不再要求勾选、输入项目名称和确认短语；删除本地项目文件夹仍保留强确认。",
+    "修复 Windows native path 在删除项目确认弹窗和最近项目展示中可能显示 `\\\\?\\` 系统路径前缀的问题。"
   ]
 }

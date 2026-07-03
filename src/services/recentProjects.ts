@@ -3,6 +3,7 @@ import {
   removeLocalStorageItem,
   writeLocalStorageItem,
 } from "../utils/browserStorage";
+import { formatNativePathForDisplay } from "../utils/nativePath";
 import { compareInstants, nowIso } from "../utils/time";
 import type { ProjectDirectoryHandle } from "./projectFs";
 
@@ -62,10 +63,28 @@ function buildRecentProjectRecordId(input: RecentProjectInput): string {
 function normalizeRecords(records: RecentProjectRecord[]): RecentProjectRecord[] {
   return records
     .filter((record) => record?.projectId && record.name)
-    .map((record) => ({
-      ...record,
-      recordId: record.recordId || record.projectId,
-    }));
+    .map((record) => {
+      const displayPath =
+        record.sourceType === "folder"
+          ? formatNativePathForDisplay(record.displayPath)
+          : record.displayPath;
+      const recordId =
+        displayPath === record.displayPath
+          ? record.recordId || record.projectId
+          : buildRecentProjectRecordId({
+              projectId: record.projectId,
+              name: record.name,
+              sourceType: record.sourceType,
+              displayPath,
+              lastUserId: record.lastUserId,
+            });
+
+      return {
+        ...record,
+        displayPath,
+        recordId,
+      };
+    });
 }
 
 function writeRecentProjects(records: RecentProjectRecord[]): void {
@@ -180,12 +199,19 @@ export async function rememberRecentProject(
   input: RecentProjectInput,
   root?: ProjectDirectoryHandle,
 ): Promise<RecentProjectRecord[]> {
-  const recordId = buildRecentProjectRecordId(input);
+  const normalizedInput: RecentProjectInput = {
+    ...input,
+    displayPath:
+      input.sourceType === "folder"
+        ? formatNativePathForDisplay(input.displayPath)
+        : input.displayPath,
+  };
+  const recordId = buildRecentProjectRecordId(normalizedInput);
   const existing = readRecentProjects().filter(
     (record) => record.recordId !== recordId,
   );
   const record: RecentProjectRecord = {
-    ...input,
+    ...normalizedInput,
     recordId,
     lastOpenedAt: nowIso(),
   };

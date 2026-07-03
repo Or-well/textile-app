@@ -136,14 +136,14 @@ describe("recent projects", () => {
       configurable: true,
       value: { open: fakeIndexedDb.open },
     });
-    const root = createNativeProjectDirectory("C:\\Projects\\Demo", "Demo");
+    const root = createNativeProjectDirectory("\\\\?\\C:\\Projects\\Demo", "Demo");
 
     await rememberRecentProject(
       {
         projectId: "project-1",
         name: "Demo",
         sourceType: "folder",
-        displayPath: "C:\\Projects\\Demo",
+        displayPath: "\\\\?\\C:\\Projects\\Demo",
       },
       root,
     );
@@ -153,6 +153,27 @@ describe("recent projects", () => {
       projectId: "project-1",
       displayPath: "C:\\Projects\\Demo",
       sourceType: "folder",
+    });
+  });
+
+  it("normalizes legacy extended-length display paths when listing recent projects", () => {
+    window.localStorage.setItem(
+      "textile.recentProjects.v1",
+      JSON.stringify([
+        {
+          recordId: "project-1::folder::\\\\?\\C:\\Projects\\Demo",
+          projectId: "project-1",
+          name: "Demo",
+          sourceType: "folder",
+          displayPath: "\\\\?\\C:\\Projects\\Demo",
+          lastOpenedAt: "2026-07-04T00:00:00.000Z",
+        },
+      ]),
+    );
+
+    expect(listRecentProjects()[0]).toMatchObject({
+      recordId: "project-1::folder::C:\\Projects\\Demo",
+      displayPath: "C:\\Projects\\Demo",
     });
   });
 

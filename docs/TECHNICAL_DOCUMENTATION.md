@@ -1005,7 +1005,7 @@ Web/PWA：
 - 删除前必须重新读取当前项目来源，确认 `project.json`、`members.json` 和 `entries/` 存在。
 - Rust `delete_project_directory_path` 会再次读取 `project.json`，要求其中 `project_id` 与当前项目 ID 一致。
 - 只有带 `nativePath` 的 Tauri native 项目支持删除本地项目文件夹；Web/PWA 和 packed `.hproj` 不支持。
-- 设置页把“移除项目记录”和“删除本地项目文件夹”展示为两个独立危险操作，并要求输入项目名称和对应确认短语。
+- 设置页把“移除项目记录”和“删除本地项目文件夹”展示为两个独立操作；移除记录只需点击确认按钮，删除本地项目文件夹仍要求输入项目名称和确认短语。
 
 限制：
 

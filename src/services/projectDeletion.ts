@@ -1,4 +1,5 @@
 import type { Member, ProjectConfig } from "../model/types";
+import { formatNativePathForDisplay } from "../utils/nativePath";
 import { isTauriRuntime } from "../utils/tauriRuntime";
 import { withAppOperation } from "./appOperation";
 import {
@@ -97,7 +98,8 @@ export async function scanProjectDeletion(
   if (mode === "native_project_folder") {
     const counts = await countProjectEntries(root);
     const nativePath = root.nativePath;
-    const canDelete = Boolean(nativePath) && isTauriRuntime() && root.storageKind !== "packed";
+    const canDelete =
+      Boolean(nativePath) && isTauriRuntime() && root.storageKind !== "packed";
 
     return {
       canDelete,
@@ -105,7 +107,7 @@ export async function scanProjectDeletion(
       fileCount: counts.files,
       directoryCount: counts.directories,
       rootName: root.name,
-      deleteTarget: nativePath ?? root.name,
+      deleteTarget: nativePath ? formatNativePathForDisplay(nativePath) : root.name,
       entries: canDelete
         ? [
             "删除本地项目文件夹及其中所有文件",
@@ -175,7 +177,7 @@ export async function deleteCurrentProjectSource(
     return {
       diskFilesDeleted: true,
       rootFolderDeleted: true,
-      deletedEntries: [result.deletedPath],
+      deletedEntries: [formatNativePathForDisplay(result.deletedPath)],
       failedEntries: [],
       message: `已删除本地项目文件夹，并清除当前项目会话。删除范围：${result.fileCount} 个文件、${result.directoryCount} 个目录。`,
     };

@@ -22,16 +22,27 @@ const backupConfirmed = ref(false);
 const projectNameInput = ref("");
 const deletePhraseInput = ref("");
 const isDiskDelete = computed(() => props.mode === "native_project_folder");
+const eyebrowText = computed(() =>
+  isDiskDelete.value ? "危险操作" : "项目操作",
+);
 const requiredPhrase = computed(() =>
   isDiskDelete.value ? "删除项目文件夹" : "移除项目",
 );
-const canSubmit = computed(
-  () =>
-    Boolean(props.scan?.canDelete) &&
+const canSubmit = computed(() => {
+  if (!props.scan?.canDelete) {
+    return false;
+  }
+
+  if (!isDiskDelete.value) {
+    return true;
+  }
+
+  return (
     backupConfirmed.value &&
     projectNameInput.value === props.projectName &&
-    deletePhraseInput.value === requiredPhrase.value,
-);
+    deletePhraseInput.value === requiredPhrase.value
+  );
+});
 const dialogTitle = computed(() =>
   isDiskDelete.value ? "删除本地项目文件夹" : "从启动页移除当前项目",
 );
@@ -69,7 +80,7 @@ const confirmButtonText = computed(() =>
       aria-labelledby="delete-project-title"
     >
       <header>
-        <p class="eyebrow">危险操作</p>
+        <p class="eyebrow" :class="{ danger: isDiskDelete }">{{ eyebrowText }}</p>
         <h2 id="delete-project-title">{{ dialogTitle }}</h2>
         <p v-if="!isDiskDelete">
           此操作只会从最近项目移除、清除当前项目会话并返回项目启动页。磁盘文件不会被删除。
@@ -84,7 +95,7 @@ const confirmButtonText = computed(() =>
 
       <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
 
-      <section v-if="scan" class="danger-summary">
+      <section v-if="isDiskDelete && scan" class="danger-summary">
         <strong>{{ summaryTitle }}</strong>
         <dl>
           <div>
@@ -110,17 +121,22 @@ const confirmButtonText = computed(() =>
         </p>
       </section>
 
-      <section v-else class="danger-summary">
+      <section v-else-if="isDiskDelete" class="danger-summary">
         <strong>正在检查项目目录...</strong>
         <p>检查通过后才能执行删除。</p>
       </section>
 
-      <label class="confirm-check">
+      <section v-else-if="!scan" class="pending-summary">
+        <strong>正在检查项目记录...</strong>
+        <p>检查通过后即可移除。</p>
+      </section>
+
+      <label v-if="isDiskDelete" class="confirm-check">
         <input v-model="backupConfirmed" type="checkbox" :disabled="busy || !scan?.canDelete" />
         <span>{{ confirmText }}</span>
       </label>
 
-      <label class="confirm-field">
+      <label v-if="isDiskDelete" class="confirm-field">
         <span>请输入项目名称「{{ projectName }}」以确认。</span>
         <input
           v-model="projectNameInput"
@@ -130,7 +146,7 @@ const confirmButtonText = computed(() =>
         />
       </label>
 
-      <label class="confirm-field">
+      <label v-if="isDiskDelete" class="confirm-field">
         <span>请输入「{{ requiredPhrase }}」。</span>
         <input
           v-model="deletePhraseInput"
@@ -150,7 +166,7 @@ const confirmButtonText = computed(() =>
           取消
         </button>
         <button
-          class="danger-button"
+          :class="isDiskDelete ? 'danger-button' : 'remove-button'"
           type="button"
           :disabled="busy || !canSubmit"
           @click="emit('confirm')"
@@ -202,9 +218,13 @@ dd {
 }
 
 .eyebrow {
-  color: #b42318;
+  color: #6b7280;
   font-size: 13px;
   font-weight: 700;
+}
+
+.eyebrow.danger {
+  color: #b42318;
 }
 
 h2 {
@@ -214,6 +234,7 @@ h2 {
 
 header p,
 .danger-summary p,
+.pending-summary p,
 .confirm-field span,
 .confirm-check span,
 dt {
@@ -229,6 +250,19 @@ dt {
 }
 
 .danger-summary strong {
+  color: #111827;
+}
+
+.pending-summary {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.pending-summary strong {
   color: #111827;
 }
 
@@ -316,7 +350,8 @@ footer {
 }
 
 .secondary-button,
-.danger-button {
+.danger-button,
+.remove-button {
   min-height: 38px;
   padding: 0 14px;
   border-radius: 6px;
@@ -335,6 +370,12 @@ footer {
 .danger-button {
   border: 1px solid #b42318;
   background: #b42318;
+  color: #ffffff;
+}
+
+.remove-button {
+  border: 1px solid #c2410c;
+  background: #c2410c;
   color: #ffffff;
 }
 

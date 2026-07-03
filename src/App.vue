@@ -78,6 +78,7 @@ import {
   rememberProjectFilePosition,
   removeProjectWorkspacePositions,
 } from "./services/workspacePosition";
+import { formatNativePathForDisplay } from "./utils/nativePath";
 import { isTauriRuntime } from "./utils/tauriRuntime";
 
 type ProjectSection =
@@ -280,7 +281,7 @@ function looksLikeAbsoluteNativePath(path: string): boolean {
 
 function getProjectDisplayPath(project: OpenedProject): string {
   if (project.root.nativePath) {
-    return project.root.nativePath;
+    return formatNativePathForDisplay(project.root.nativePath);
   }
 
   if (project.storageKind === "packed") {
