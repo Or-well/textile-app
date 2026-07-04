@@ -21,6 +21,7 @@ import { setChangesProjectStorage } from "./services/changes";
 import { setCommentsProjectStorage } from "./services/comments";
 import { setEntriesProjectStorage } from "./services/entries";
 import { setEntryBatchProjectStorage } from "./services/entryBatch";
+import { setEntryReplaceProjectStorage } from "./services/entryReplace";
 import { setExporterProjectStorage } from "./services/exporter";
 import { setHistoryProjectStorage } from "./services/history";
 import { loginMember } from "./services/auth";
@@ -263,6 +264,7 @@ function configureProjectServices(project: OpenedProject) {
   clearLoadedSigningPrivateKeys();
   setEntriesProjectStorage(project.storage);
   setEntryBatchProjectStorage(project.storage);
+  setEntryReplaceProjectStorage(project.storage);
   setTermsProjectStorage(project.storage);
   setTasksProjectStorage(project.storage);
   setCommentsProjectStorage(project.storage);

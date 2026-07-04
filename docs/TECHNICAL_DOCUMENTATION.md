@@ -122,6 +122,7 @@ src/
     entryAccess.ts
     entryBatch.ts
     entryExchange.ts
+    entryReplace.ts
     exporter.ts
     fileBatch.ts
     exporters/
@@ -456,6 +457,7 @@ const route = computed(() => parseRoute(routePath.value));
 
 - `setEntriesProjectRoot`
 - `setEntryBatchProjectRoot`
+- `setEntryReplaceProjectRoot`
 - `setTermsProjectRoot`
 - `setTasksProjectRoot`
 - `setCommentsProjectRoot`
@@ -839,6 +841,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 - `entry.updated`：手工保存、批量译文导入或修改包合并导致译文、状态或工作流审计变化。
 - `entry.restored`：恢复某个历史译文版本。
+- `entry.target_replaced`：词条管理页文本替换导致译文变化，保留工作流状态和校对/审核审计字段。
 - `detail.operation` 区分 `translation_edit`、`proofread`、`review`、流程回退、`translation_import`、`package_merge` 和 `restore`。
 - `detail` 保存译文、状态、译者、校对成员、校对次数和审核成员的完整前后快照。
 - 修改包合并生成本地权威版本事件，并通过 `source_event_id`、`package_id` 关联来源；普通包的源词条版本事件不直接复制为本地版本。
@@ -1209,6 +1212,32 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 5. 计划成功后才更新 entries 缓存。
 
 该写入计划提供进程内补偿回滚，但不宣称具备断电事务能力。
+
+### `entryReplace.ts`
+
+`entryReplace.ts` 负责词条管理页的文本替换业务规则。该模块只处理译文 `target` 的普通文本查找和替换，不修改原文 `source`，不执行 AI 翻译，不做术语、格式或风险判断，也不改变工作流主状态。
+
+公开入口：
+
+- `previewEntryReplace()`：先校验磁盘 `project.json` 的项目 ID，再重新读取全部词条和任务，按请求范围返回命中词条、跳过原因和匹配总数。
+- `executeEntryReplace()`：不信任旧预览，重新执行同一套预检后生成写入计划。
+
+权限和范围：
+
+- 当前成员必须拥有 `entry.edit` 或 `entry.translate` 之一。
+- 文件或词条锁定、隐藏时跳过。
+- 任务启用时，普通成员只允许替换分配给自己且状态为 `assigned` 或 `in_progress` 的任务范围；拥有 `task.manage` 的成员可以跨任务替换。
+- 查找文本不能为空；查找按普通文本处理，不支持正则表达式。
+
+写入语义：
+
+1. 只更新命中词条的 `target`、`updated_at` 和 `updated_by`。
+2. 保留 `status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by` 和 `disputed`。
+3. 为每个成功替换的词条追加 `entry.target_replaced` 事件，记录 `find_text`、`replace_text`、替换前后译文、替换前后状态、匹配数量、大小写选项和 `preserve_workflow: true`。
+4. 按受影响文件生成 entries chunk 写入，并与 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交。
+5. 计划成功后同步更新 entries 缓存。
+
+词条管理页的浮动替换栏只负责编排用户输入、查找定位和调用该 service。页面侧的匹配高亮、上一处/下一处和自动翻页滚动是展示行为，不作为写入依据。
 
 ## 23. `terms.ts`
 
@@ -2250,6 +2279,10 @@ Vite 构建会把该文件输出为 `dist/THIRD_PARTY_NOTICES.txt`；`src-tauri/
 - 右侧术语、批注、上下文和历史面板与左侧列表共享同一桌面高度约束。
 
 词条管理页使用独立的全宽紧凑表格：筛选和批量工具栏保持在表格外，表头在表格滚动区内固定，分页区保持可见。桌面端默认每页 50 条，可切换 20、100、200、500 或 800 条；窄屏保留横向表格滚动，不把批量操作塞进原有三栏编辑侧栏。
+
+词条管理页的“文本替换”入口位于批量选择摘要旁。选择全部筛选结果、清空选择和批量操作控件在右侧工具组中排列，避免挤压左侧选中数量。文本替换栏是表格区域内的浮动控件，不新增一整行布局；它提供查找译文、替换为、显式“查找”、上一处/下一处、替换当前、全部替换、大小写开关和当前范围提示。查找范围为已选词条；没有选择时为当前筛选结果。
+
+替换定位遵循文本编辑器式行为：目标词条已在当前可见区域内时只更新高亮，不移动滚动条；目标在当前页但不可见时滚动到表头下方第二行附近；目标不在当前页时先切换到对应页，再执行同样定位。定位逻辑需要同时避开 sticky 表头和浮动替换栏，但不应让浮层高度把目标行额外推下一整行。
 
 ## 47. PWA 与更新机制
 

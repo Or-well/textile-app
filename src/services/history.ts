@@ -337,6 +337,7 @@ function getFileHistoryLabel(type: string): string {
     "file.deleted": "删除文件",
     "entry.updated": "更新词条",
     "entry.restored": "恢复历史译文",
+    "entry.target_replaced": "替换译文",
     "entry.mark_disputed": "标记争议",
     "entry.resolve_dispute": "解决争议",
     "comment.added": "新增批注",

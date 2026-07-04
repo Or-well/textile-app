@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import BatchSelectionBar from "../components/BatchSelectionBar.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import {
@@ -25,6 +25,12 @@ import {
   type EntryBatchOperation,
   type EntryBatchPreview,
 } from "../services/entryBatch";
+import {
+  executeEntryReplace,
+  previewEntryReplace,
+  type EntryReplaceItem,
+  type EntryReplacePreview,
+} from "../services/entryReplace";
 import { loadAllEntries } from "../services/entries";
 import { can } from "../services/permissions";
 import { isEntryInTask, loadTasks } from "../services/tasks";
@@ -33,6 +39,11 @@ import { formatDateTime } from "../utils/time";
 type StatusFilter = EntryStatus | "all";
 type DisputeFilter = "all" | "disputed" | "clear";
 type SortMode = "file-index" | "updated-desc" | "status";
+
+interface HighlightPart {
+  text: string;
+  match: boolean;
+}
 
 const pageSizeOptions = [20, 50, 100, 200, 500, 800];
 
@@ -104,9 +115,20 @@ const currentPage = ref(1);
 const selectedOperation = ref<EntryBatchOperation>("set_reviewed");
 const batchNote = ref("");
 const batchPreview = ref<EntryBatchPreview | null>(null);
+const isReplaceBarOpen = ref(false);
+const replacePanel = ref<HTMLElement | null>(null);
+const tableScroll = ref<HTMLElement | null>(null);
+const replaceFindInput = ref<HTMLInputElement | null>(null);
+const replaceFindText = ref("");
+const replaceText = ref("");
+const replaceCaseSensitive = ref(false);
+const replacePreview = ref<EntryReplacePreview | null>(null);
+const currentReplaceEntryId = ref("");
 const isLoading = ref(false);
 const isPreviewing = ref(false);
 const isExecuting = ref(false);
+const isReplacePreviewing = ref(false);
+const isReplacing = ref(false);
 const errorMessage = ref("");
 const noticeMessage = ref("");
 
@@ -125,6 +147,11 @@ const availableBatchActions = computed(() =>
       can(props.currentUser, permission, props.project),
     ),
   ),
+);
+const canReplaceEntries = computed(
+  () =>
+    can(props.currentUser, PERMISSION_ACTIONS.ENTRY_EDIT, props.project) ||
+    can(props.currentUser, PERMISSION_ACTIONS.ENTRY_TRANSLATE, props.project),
 );
 const selectedTask = computed(() =>
   tasks.value.find((task) => task.id === taskFilter.value),
@@ -233,6 +260,88 @@ const batchNeedsNote = computed(
     selectedOperation.value === "set_disputed" ||
     selectedOperation.value === "clear_disputed",
 );
+const replacePreviewByEntryId = computed(
+  () =>
+    new Map(
+      (replacePreview.value?.replacements ?? []).map((item) => [
+        item.entryId,
+        item,
+      ]),
+    ),
+);
+const replaceSkippedByEntryId = computed(
+  () =>
+    new Map(
+      (replacePreview.value?.skipped ?? []).map((item) => [
+        item.entryId,
+        item.reason,
+      ]),
+    ),
+);
+const replaceItems = computed(() => replacePreview.value?.replacements ?? []);
+const currentReplaceIndex = computed(() =>
+  replaceItems.value.findIndex(
+    (item) => item.entryId === currentReplaceEntryId.value,
+  ),
+);
+const currentReplaceItem = computed<EntryReplaceItem | null>(() =>
+  currentReplaceIndex.value >= 0
+    ? replaceItems.value[currentReplaceIndex.value]
+    : null,
+);
+const replaceBusy = computed(
+  () => isReplacePreviewing.value || isReplacing.value,
+);
+const replaceScopeEntries = computed(() => {
+  if (selectedEntryIds.value.size > 0) {
+    return entries.value.filter((entry) => selectedEntryIds.value.has(entry.id));
+  }
+
+  return filteredEntries.value;
+});
+const replaceScopeEntryIds = computed(() =>
+  replaceScopeEntries.value.map((entry) => entry.id),
+);
+const replaceScopeLabel = computed(() =>
+  selectedEntryIds.value.size > 0
+    ? `范围：已选 ${replaceScopeEntryIds.value.length}`
+    : `范围：当前筛选 ${replaceScopeEntryIds.value.length}`,
+);
+const replaceCounterText = computed(() => {
+  if (!replaceFindText.value) {
+    return "0 / 0";
+  }
+
+  if (!replacePreview.value) {
+    return "未查找";
+  }
+
+  if (replaceItems.value.length === 0) {
+    return "0 / 0";
+  }
+
+  const index = currentReplaceIndex.value >= 0 ? currentReplaceIndex.value : 0;
+
+  return `${index + 1} / ${replaceItems.value.length}`;
+});
+const replaceSearchDisabled = computed(
+  () =>
+    !props.currentUser ||
+    !canReplaceEntries.value ||
+    !replaceFindText.value ||
+    replaceScopeEntryIds.value.length === 0 ||
+    replaceBusy.value,
+);
+const replaceAllDisabled = computed(
+  () =>
+    !props.currentUser ||
+    !canReplaceEntries.value ||
+    !replaceFindText.value ||
+    replaceScopeEntryIds.value.length === 0 ||
+    !replacePreview.value ||
+    replaceItems.value.length === 0 ||
+    replaceBusy.value,
+);
 
 function getMemberName(memberId: string): string {
   return getMemberDisplayName(props.members, memberId);
@@ -254,6 +363,202 @@ function getTargetLabel(entry: Entry): string {
   }
 
   return hasWorkflowTarget(entry) ? "空白译文" : "未填写";
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function clearReplacePreview() {
+  replacePreview.value = null;
+  currentReplaceEntryId.value = "";
+}
+
+async function openReplaceBar() {
+  if (!canReplaceEntries.value) {
+    errorMessage.value = "当前成员没有替换译文的权限。";
+    return;
+  }
+
+  isReplaceBarOpen.value = true;
+  errorMessage.value = "";
+  noticeMessage.value = "";
+
+  await nextTick();
+  replaceFindInput.value?.focus();
+  replaceFindInput.value?.select();
+}
+
+function closeReplaceBar() {
+  isReplaceBarOpen.value = false;
+  clearReplacePreview();
+}
+
+function getReplaceItem(entry: Entry): EntryReplaceItem | undefined {
+  return replacePreviewByEntryId.value.get(entry.id);
+}
+
+function getBlockingReplaceSkipReason(entry: Entry): string {
+  const reason = replaceSkippedByEntryId.value.get(entry.id) ?? "";
+
+  return reason && reason !== "未命中查找内容" ? reason : "";
+}
+
+function getReplacedTargetPreview(beforeTarget: string): string {
+  if (!replaceFindText.value) {
+    return beforeTarget;
+  }
+
+  const pattern = new RegExp(
+    escapeRegExp(replaceFindText.value),
+    replaceCaseSensitive.value ? "g" : "gi",
+  );
+
+  return beforeTarget.replace(pattern, () => replaceText.value);
+}
+
+function getTargetTitle(entry: Entry): string {
+  const item = getReplaceItem(entry);
+
+  return item
+    ? `替换后：${getReplacedTargetPreview(item.beforeTarget)}`
+    : entry.target;
+}
+
+function getTargetParts(entry: Entry): HighlightPart[] {
+  const item = getReplaceItem(entry);
+  const text = item ? item.beforeTarget : getTargetLabel(entry);
+  const findText = replaceFindText.value;
+
+  if (!item || !findText) {
+    return [{ text, match: false }];
+  }
+
+  const pattern = new RegExp(
+    escapeRegExp(findText),
+    replaceCaseSensitive.value ? "g" : "gi",
+  );
+  const parts: HighlightPart[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, match.index), match: false });
+    }
+
+    parts.push({ text: match[0], match: true });
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), match: false });
+  }
+
+  return parts.length > 0 ? parts : [{ text, match: false }];
+}
+
+function getReplaceTargetRow(entryId: string): HTMLElement | null {
+  const rows = tableScroll.value?.querySelectorAll<HTMLElement>(
+    "tbody tr[data-entry-id]",
+  );
+
+  return (
+    Array.from(rows ?? []).find((row) => row.dataset.entryId === entryId) ??
+    null
+  );
+}
+
+function getReplaceHeaderBottom(container: HTMLElement): number {
+  const containerRect = container.getBoundingClientRect();
+  const headerRect = container
+    .querySelector<HTMLElement>("thead th")
+    ?.getBoundingClientRect();
+
+  if (
+    headerRect &&
+    headerRect.bottom > containerRect.top &&
+    headerRect.top < containerRect.bottom
+  ) {
+    return Math.max(containerRect.top, headerRect.bottom);
+  }
+
+  return containerRect.top;
+}
+
+function getReplaceOverlayBottom(container: HTMLElement): number {
+  const containerRect = container.getBoundingClientRect();
+  const panelRect = replacePanel.value?.getBoundingClientRect();
+
+  if (
+    panelRect &&
+    panelRect.bottom > containerRect.top &&
+    panelRect.top < containerRect.bottom
+  ) {
+    return panelRect.bottom + 4;
+  }
+
+  return containerRect.top;
+}
+
+function getReplaceVisibleTop(container: HTMLElement): number {
+  const containerRect = container.getBoundingClientRect();
+  const visibleTop = Math.max(
+    getReplaceHeaderBottom(container),
+    getReplaceOverlayBottom(container),
+  );
+
+  return Math.min(containerRect.bottom, visibleTop);
+}
+
+function getReplaceTargetTop(container: HTMLElement, rowHeight: number): number {
+  const containerRect = container.getBoundingClientRect();
+  const targetTop = Math.max(
+    getReplaceHeaderBottom(container) + rowHeight,
+    getReplaceOverlayBottom(container),
+  );
+
+  return Math.min(containerRect.bottom, targetTop);
+}
+
+function scrollReplaceEntryIntoView(entryId: string, force: boolean) {
+  const container = tableScroll.value;
+  const row = getReplaceTargetRow(entryId);
+
+  if (!container || !row) {
+    return;
+  }
+
+  const containerRect = container.getBoundingClientRect();
+  const visibleTop = getReplaceVisibleTop(container);
+  const rowRect = row.getBoundingClientRect();
+  const isVisible =
+    rowRect.top >= visibleTop && rowRect.bottom <= containerRect.bottom;
+
+  if (!force && isVisible) {
+    return;
+  }
+
+  const rowHeight = rowRect.height || 46;
+  const targetTop = getReplaceTargetTop(container, rowHeight);
+  const nextScrollTop = container.scrollTop + rowRect.top - targetTop;
+
+  container.scrollTop = Math.max(0, nextScrollTop);
+}
+
+async function focusReplaceEntry(entryId: string) {
+  const index = filteredEntries.value.findIndex((entry) => entry.id === entryId);
+
+  currentReplaceEntryId.value = entryId;
+
+  if (index >= 0) {
+    const targetPage = Math.floor(index / pageSize.value) + 1;
+    const pageChanged = currentPage.value !== targetPage;
+
+    currentPage.value = targetPage;
+    await nextTick();
+    scrollReplaceEntryIntoView(entryId, pageChanged);
+  }
 }
 
 async function loadPageData() {
@@ -398,6 +703,172 @@ async function handleExecuteBatch() {
   }
 }
 
+async function handlePreviewReplace() {
+  if (!props.currentUser || !replaceFindText.value) {
+    return;
+  }
+
+  if (!canReplaceEntries.value) {
+    errorMessage.value = "当前成员没有替换译文的权限。";
+    return;
+  }
+
+  if (replaceScopeEntryIds.value.length === 0) {
+    errorMessage.value = "当前范围没有可替换的词条。";
+    return;
+  }
+
+  isReplacePreviewing.value = true;
+  errorMessage.value = "";
+  noticeMessage.value = "";
+
+  try {
+    replacePreview.value = await previewEntryReplace({
+      entryIds: replaceScopeEntryIds.value,
+      findText: replaceFindText.value,
+      replaceText: replaceText.value,
+      actor: props.currentUser,
+      project: props.project,
+      caseSensitive: replaceCaseSensitive.value,
+    });
+
+    if (replacePreview.value.replacements.length > 0) {
+      await focusReplaceEntry(replacePreview.value.replacements[0].entryId);
+    } else {
+      currentReplaceEntryId.value = "";
+    }
+  } catch (error) {
+    replacePreview.value = null;
+    currentReplaceEntryId.value = "";
+    errorMessage.value =
+      error instanceof Error ? error.message : "替换预检失败。";
+  } finally {
+    isReplacePreviewing.value = false;
+  }
+}
+
+async function handleExecuteReplaceAll() {
+  if (!props.currentUser || !replaceFindText.value) {
+    return;
+  }
+
+  isReplacing.value = true;
+  errorMessage.value = "";
+  noticeMessage.value = "";
+
+  try {
+    const result = await executeEntryReplace({
+      entryIds: replaceScopeEntryIds.value,
+      findText: replaceFindText.value,
+      replaceText: replaceText.value,
+      actor: props.currentUser,
+      project: props.project,
+      caseSensitive: replaceCaseSensitive.value,
+    });
+
+    noticeMessage.value =
+      `替换完成：更新 ${result.updatedEntries.length} 条，替换 ${result.totalMatches} 处` +
+      (result.skipped.length > 0 ? `，跳过 ${result.skipped.length} 条。` : "。");
+    clearReplacePreview();
+    await loadPageData();
+    emit("entriesChanged");
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "全部替换执行失败。";
+  } finally {
+    isReplacing.value = false;
+  }
+}
+
+async function handleExecuteCurrentReplace() {
+  if (!currentReplaceItem.value || !props.currentUser) {
+    return;
+  }
+
+  isReplacing.value = true;
+  errorMessage.value = "";
+  noticeMessage.value = "";
+
+  try {
+    const result = await executeEntryReplace({
+      entryIds: [currentReplaceItem.value.entryId],
+      findText: replaceFindText.value,
+      replaceText: replaceText.value,
+      actor: props.currentUser,
+      project: props.project,
+      caseSensitive: replaceCaseSensitive.value,
+    });
+
+    const message =
+      result.updatedEntries.length > 0
+        ? `已替换当前词条：${result.totalMatches} 处。`
+        : "当前词条没有可替换内容。";
+    await loadPageData();
+    await handlePreviewReplace();
+    noticeMessage.value = message;
+    emit("entriesChanged");
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "替换当前词条失败。";
+  } finally {
+    isReplacing.value = false;
+  }
+}
+
+async function moveReplaceMatch(offset: -1 | 1) {
+  if (!replacePreview.value) {
+    await handlePreviewReplace();
+    return;
+  }
+
+  if (replaceItems.value.length === 0) {
+    return;
+  }
+
+  const index =
+    currentReplaceIndex.value >= 0
+      ? currentReplaceIndex.value
+      : offset > 0
+        ? -1
+        : 0;
+  const nextIndex =
+    (index + offset + replaceItems.value.length) % replaceItems.value.length;
+
+  await focusReplaceEntry(replaceItems.value[nextIndex].entryId);
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+
+  if ((event.ctrlKey || event.metaKey) && key === "h") {
+    event.preventDefault();
+    void openReplaceBar();
+    return;
+  }
+
+  if (!isReplaceBarOpen.value) {
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeReplaceBar();
+    return;
+  }
+
+  if (event.key === "Enter") {
+    if (
+      !(event.target instanceof HTMLInputElement) ||
+      (replacePanel.value && !replacePanel.value.contains(event.target))
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    void moveReplaceMatch(event.shiftKey ? -1 : 1);
+  }
+}
+
 watch(
   [
     searchText,
@@ -411,7 +882,17 @@ watch(
   ],
   () => {
     currentPage.value = 1;
+    clearReplacePreview();
   },
+);
+
+watch(
+  [
+    selectedEntryIds,
+    replaceFindText,
+    replaceCaseSensitive,
+  ],
+  clearReplacePreview,
 );
 
 watch(totalPages, (value) => {
@@ -434,7 +915,14 @@ watch(availableBatchActions, (actions) => {
   }
 }, { immediate: true });
 
-onMounted(loadPageData);
+onMounted(() => {
+  void loadPageData();
+  window.addEventListener("keydown", handleGlobalKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleGlobalKeydown);
+});
 </script>
 
 <template>
@@ -545,7 +1033,7 @@ onMounted(loadPageData);
       :filtered-count="filteredEntries.length"
       item-unit="条"
       :busy="isPreviewing"
-      submit-label="预检并执行"
+      submit-label="预检批量修改"
       :permission-message="
         availableBatchActions.length === 0
           ? '当前成员没有可用的批量操作权限。'
@@ -555,6 +1043,23 @@ onMounted(loadPageData);
       @clear="clearSelection"
       @submit="handlePreviewBatch"
     >
+      <template #summary-actions>
+        <button
+          type="button"
+          class="selection-replace-button"
+          :class="{ active: isReplaceBarOpen }"
+          :disabled="!canReplaceEntries"
+          :title="
+            canReplaceEntries
+              ? '文本替换 (Ctrl+H)'
+              : '当前成员没有替换译文的权限'
+          "
+          @click="isReplaceBarOpen ? closeReplaceBar() : openReplaceBar()"
+        >
+          文本替换
+        </button>
+      </template>
+
       <select
         v-model="selectedOperation"
         class="batch-operation-select"
@@ -581,7 +1086,92 @@ onMounted(loadPageData);
     <p v-if="isLoading" class="empty-state">正在加载项目词条...</p>
 
     <section v-else class="table-frame">
-      <div class="table-scroll">
+      <section
+        v-if="isReplaceBarOpen"
+        ref="replacePanel"
+        class="replace-popover"
+        aria-label="查找和文本替换"
+      >
+        <input
+          ref="replaceFindInput"
+          v-model="replaceFindText"
+          class="replace-popover-input"
+          type="text"
+          maxlength="200"
+          placeholder="查找译文"
+        />
+        <button
+          type="button"
+          class="secondary-button compact-button"
+          title="查找匹配译文"
+          :disabled="replaceSearchDisabled"
+          @click="handlePreviewReplace"
+        >
+          查找
+        </button>
+        <input
+          v-model="replaceText"
+          class="replace-popover-input"
+          type="text"
+          maxlength="500"
+          placeholder="替换为"
+        />
+        <span class="replace-counter">{{ replaceCounterText }}</span>
+        <button
+          type="button"
+          class="icon-button"
+          title="上一个 (Shift+Enter)"
+          :disabled="replaceItems.length === 0 || replaceBusy"
+          @click="moveReplaceMatch(-1)"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          class="icon-button"
+          title="下一个 (Enter)"
+          :disabled="replaceItems.length === 0 || replaceBusy"
+          @click="moveReplaceMatch(1)"
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          class="secondary-button compact-button"
+          :disabled="!currentReplaceItem || replaceBusy"
+          @click="handleExecuteCurrentReplace"
+        >
+          替换
+        </button>
+        <button
+          type="button"
+          class="primary-button compact-button"
+          :disabled="replaceAllDisabled"
+          @click="handleExecuteReplaceAll"
+        >
+          全部
+        </button>
+        <button
+          type="button"
+          class="option-chip"
+          :class="{ active: replaceCaseSensitive }"
+          :aria-pressed="replaceCaseSensitive"
+          title="区分大小写"
+          @click="replaceCaseSensitive = !replaceCaseSensitive"
+        >
+          Aa
+        </button>
+        <span class="replace-scope">{{ replaceScopeLabel }}</span>
+        <button
+          type="button"
+          class="replace-close-button"
+          title="关闭 (Esc)"
+          @click="closeReplaceBar"
+        >
+          ×
+        </button>
+      </section>
+      <div ref="tableScroll" class="table-scroll">
         <table>
           <colgroup>
             <col class="check-column" />
@@ -618,7 +1208,13 @@ onMounted(loadPageData);
             <tr
               v-for="entry in pagedEntries"
               :key="entry.id"
-              :class="{ selected: selectedEntryIds.has(entry.id) }"
+              :data-entry-id="entry.id"
+              :class="{
+                selected: selectedEntryIds.has(entry.id),
+                'replace-hit': Boolean(getReplaceItem(entry)),
+                'replace-current': currentReplaceEntryId === entry.id,
+                'replace-skipped': Boolean(getBlockingReplaceSkipReason(entry)),
+              }"
             >
               <td>
                 <input
@@ -646,9 +1242,15 @@ onMounted(loadPageData);
               <td
                 class="truncate-cell target-cell"
                 :class="{ empty: !hasWorkflowTarget(entry) }"
-                :title="entry.target"
+                :title="getTargetTitle(entry)"
               >
-                {{ getTargetLabel(entry) }}
+                <span
+                  v-for="(part, index) in getTargetParts(entry)"
+                  :key="`${entry.id}-${index}`"
+                  :class="{ 'replace-match': part.match }"
+                >
+                  {{ part.text }}
+                </span>
               </td>
               <td class="truncate-cell" :title="getMemberName(entry.assignee)">
                 {{ getMemberName(entry.assignee) }}
@@ -656,6 +1258,18 @@ onMounted(loadPageData);
               <td>
                 <span class="status-badge" :class="entry.status">
                   {{ getEntryWorkflowLabel(entry, project.settings.workflow) }}
+                </span>
+                <span
+                  v-if="getReplaceItem(entry)"
+                  class="replace-count-badge"
+                >
+                  {{ getReplaceItem(entry)?.matchCount }} 处
+                </span>
+                <span
+                  v-else-if="getBlockingReplaceSkipReason(entry)"
+                  class="replace-skip-badge"
+                >
+                  {{ getBlockingReplaceSkipReason(entry) }}
                 </span>
               </td>
               <td>
@@ -901,6 +1515,118 @@ input[type="checkbox"] {
   max-width: 360px;
 }
 
+.compact-button {
+  padding: 0 var(--space-3);
+}
+
+.selection-replace-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid #bdd4d6;
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: #285f63;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.selection-replace-button.active {
+  border-color: #2f7f86;
+  background: #e5f4f2;
+  color: #123d40;
+  font-weight: 700;
+}
+
+.replace-popover {
+  position: absolute;
+  top: var(--space-2);
+  right: calc(var(--space-3) + 18px);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: min(900px, calc(100% - 24px));
+  min-height: 44px;
+  padding: 6px;
+  overflow: visible;
+  border: 1px solid #bdd4d6;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 18%);
+}
+
+.replace-popover-input {
+  flex: 1 1 150px;
+  max-width: 210px;
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  font-size: 12px;
+}
+
+.replace-counter,
+.replace-scope {
+  flex: 0 0 auto;
+  color: #4b5563;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.replace-counter {
+  min-width: 48px;
+  text-align: center;
+}
+
+.replace-scope {
+  max-width: 150px;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f3f6f8;
+  text-overflow: ellipsis;
+}
+
+.icon-button,
+.option-chip,
+.replace-close-button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.icon-button,
+.replace-close-button {
+  width: 32px;
+  padding: 0;
+  border: 1px solid #bdd4d6;
+  background: #ffffff;
+  color: #285f63;
+}
+
+.option-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border: 1px solid #bdd4d6;
+  background: #ffffff;
+  color: #285f63;
+}
+
+.option-chip.active {
+  border-color: #2f7f86;
+  background: #e5f4f2;
+  color: #123d40;
+  font-weight: 700;
+}
+
 .primary-button,
 .secondary-button,
 .close-button,
@@ -928,6 +1654,13 @@ input[type="checkbox"] {
   color: #285f63;
 }
 
+.primary-button.compact-button,
+.secondary-button.compact-button {
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  font-size: 12px;
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -951,6 +1684,7 @@ button:disabled {
 }
 
 .table-frame {
+  position: relative;
   flex: 1 1 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
@@ -1033,6 +1767,18 @@ tbody tr.selected {
   background: #f0f8f6;
 }
 
+tbody tr.replace-hit {
+  background: #f7fbf2;
+}
+
+tbody tr.replace-current {
+  box-shadow: inset 4px 0 0 #2f7f86;
+}
+
+tbody tr.replace-skipped {
+  background: #fff8ed;
+}
+
 .entry-link {
   display: grid;
   align-content: center;
@@ -1065,8 +1811,16 @@ tbody tr.selected {
   color: #9ca3af;
 }
 
+.replace-match {
+  border-radius: 3px;
+  background: #ffe08a;
+  color: #172033;
+}
+
 .status-badge,
-.dispute-badge {
+.dispute-badge,
+.replace-count-badge,
+.replace-skip-badge {
   display: inline-block;
   max-width: 100%;
   padding: 3px 7px;
@@ -1095,6 +1849,21 @@ tbody tr.selected {
 .dispute-badge {
   background: #fff4e5;
   color: #92400e;
+}
+
+.replace-count-badge,
+.replace-skip-badge {
+  margin-left: 4px;
+}
+
+.replace-count-badge {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.replace-skip-badge {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .time-cell {
@@ -1267,6 +2036,12 @@ tbody tr.selected {
   .batch-note-input {
     width: 100%;
     max-width: none;
+  }
+
+  .replace-popover {
+    left: var(--space-3);
+    right: var(--space-3);
+    width: auto;
   }
 
   .table-frame {

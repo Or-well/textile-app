@@ -20,50 +20,55 @@ const emit = defineEmits<{
 <template>
   <section class="batch-selection-bar" aria-label="批量操作">
     <div class="selection-summary">
-      <strong>已选 {{ selectedCount }} {{ itemUnit ?? "项" }}</strong>
+      <div class="selection-line">
+        <strong>已选 {{ selectedCount }} {{ itemUnit ?? "项" }}</strong>
+        <slot name="summary-actions" />
+      </div>
       <span v-if="hiddenSelectedCount">
         其中 {{ hiddenSelectedCount }} {{ itemUnit ?? "项" }}不在当前筛选结果中
       </span>
     </div>
 
-    <div class="selection-actions">
-      <button
-        type="button"
-        class="secondary-button"
-        :disabled="filteredCount === 0 || busy"
-        @click="emit('selectAll')"
-      >
-        选择全部筛选结果
-      </button>
-      <button
-        type="button"
-        class="secondary-button"
-        :disabled="selectedCount === 0 || busy"
-        @click="emit('clear')"
-      >
-        清空选择
-      </button>
-    </div>
+    <div class="selection-toolbox">
+      <div class="selection-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="filteredCount === 0 || busy"
+          @click="emit('selectAll')"
+        >
+          选择全部筛选结果
+        </button>
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="selectedCount === 0 || busy"
+          @click="emit('clear')"
+        >
+          清空选择
+        </button>
+      </div>
 
-    <div v-if="!permissionMessage" class="batch-controls">
-      <slot />
-      <button
-        type="button"
-        class="primary-button"
-        :disabled="selectedCount === 0 || submitDisabled || busy"
-        @click="emit('submit')"
-      >
-        {{ busy ? "正在预检..." : submitLabel }}
-      </button>
+      <div v-if="!permissionMessage" class="batch-controls">
+        <slot />
+        <button
+          type="button"
+          class="primary-button"
+          :disabled="selectedCount === 0 || submitDisabled || busy"
+          @click="emit('submit')"
+        >
+          {{ busy ? "正在预检..." : submitLabel }}
+        </button>
+      </div>
+      <p v-else class="permission-message">{{ permissionMessage }}</p>
     </div>
-    <p v-else class="permission-message">{{ permissionMessage }}</p>
   </section>
 </template>
 
 <style scoped>
 .batch-selection-bar {
   display: grid;
-  grid-template-columns: minmax(160px, auto) auto minmax(260px, 1fr);
+  grid-template-columns: minmax(160px, auto) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: center;
   padding: var(--panel-padding-compact);
@@ -75,6 +80,13 @@ const emit = defineEmits<{
 .selection-summary {
   display: grid;
   gap: 3px;
+  min-width: 0;
+}
+
+.selection-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -92,6 +104,7 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
+.selection-toolbox,
 .selection-actions,
 .batch-controls {
   display: flex;
@@ -100,8 +113,12 @@ const emit = defineEmits<{
   align-items: center;
 }
 
-.batch-controls {
+.selection-toolbox {
   justify-content: flex-end;
+  min-width: 0;
+}
+
+.batch-controls {
   min-width: 0;
 }
 
@@ -142,6 +159,7 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .selection-toolbox,
   .batch-controls,
   .permission-message {
     justify-content: flex-start;
