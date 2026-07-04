@@ -109,25 +109,25 @@ function toggleItem(itemId: CacheCleanupItemId, checked: boolean): void {
   z-index: 60;
   display: grid;
   place-items: center;
-  padding: 18px;
+  padding: var(--space-6);
   background: rgba(15, 23, 42, 0.42);
 }
 
 .dialog-panel {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
   width: min(100%, 620px);
   max-height: min(92vh, 720px);
   overflow: auto;
-  padding: 22px;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
 }
 
 header {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 h2,
@@ -136,31 +136,32 @@ p {
 }
 
 h2 {
-  color: #111827;
-  font-size: 20px;
+  color: var(--color-heading);
+  font-size: 18px;
+  line-height: 1.3;
 }
 
 header p,
 .forbidden-panel p,
 small {
   color: #5b6472;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .option-list {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .cleanup-option {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--space-3);
   align-items: start;
-  padding: 12px;
-  border: 1px solid #e3e8ef;
-  border-radius: 8px;
-  background: #fbfcfe;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 input {
@@ -171,54 +172,54 @@ input {
 
 .cleanup-option span {
   display: grid;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .cleanup-option strong,
 .forbidden-panel strong {
-  color: #111827;
+  color: var(--color-heading);
 }
 
 small {
-  font-size: 13px;
+  font-size: var(--font-sm);
 }
 
 .forbidden-panel {
   display: grid;
-  gap: 5px;
-  padding: 12px;
+  gap: var(--space-1);
+  padding: var(--space-3);
   border: 1px solid #f0c6bd;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: #fffafa;
 }
 
 footer {
   display: flex;
   justify-content: flex-end;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
   color: #ffffff;
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 button:disabled {

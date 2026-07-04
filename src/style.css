@@ -1,11 +1,42 @@
 :root {
+  --color-text: #1f2937;
+  --color-heading: #111827;
+  --color-muted: #5b6472;
+  --color-border: #d7dde5;
+  --color-border-strong: #c8d0dc;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafb;
+  --color-shell: #eef2f5;
+  --color-brand: #2f6f73;
+  --color-brand-strong: #174346;
+  --color-brand-soft: #e6f0ef;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 18px;
+  --page-gap: 12px;
+  --panel-padding: 14px;
+  --panel-padding-compact: 12px;
+  --control-sm: 30px;
+  --control-md: 34px;
+  --control-lg: 36px;
+  --font-xs: 12px;
+  --font-sm: 14px;
+  --font-md: 15px;
+
   font-family:
     system-ui,
     "Segoe UI",
     "Microsoft YaHei",
     sans-serif;
-  color: #1f2937;
-  background: #eef2f5;
+  color: var(--color-text);
+  background: var(--color-shell);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -46,17 +77,17 @@ select:focus-visible {
 }
 
 .placeholder-page {
-  padding: 24px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #4b5563;
 }
 
 .placeholder-page h1 {
   margin: 0;
-  color: #111827;
-  font-size: 28px;
+  color: var(--color-heading);
+  font-size: 24px;
   line-height: 1.2;
 }
 
@@ -67,24 +98,24 @@ select:focus-visible {
 
 .placeholder-page .eyebrow {
   margin: 0;
-  color: #5b6472;
-  font-size: 14px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .primary-button {
   justify-self: start;
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: var(--control-lg);
+  padding: 0 var(--space-6);
   border: 0;
-  border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-surface);
   cursor: pointer;
 }
 
 .not-found-page {
   min-height: 100vh;
   place-items: center;
-  padding: 28px;
-  background: #eef2f5;
+  padding: 24px;
+  background: var(--color-shell);
 }

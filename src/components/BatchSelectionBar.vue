@@ -64,12 +64,12 @@ const emit = defineEmits<{
 .batch-selection-bar {
   display: grid;
   grid-template-columns: minmax(160px, auto) auto minmax(260px, 1fr);
-  gap: 12px;
+  gap: var(--space-4);
   align-items: center;
-  padding: 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding-compact);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .selection-summary {
@@ -80,8 +80,8 @@ const emit = defineEmits<{
 
 .selection-summary span,
 .permission-message {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .selection-summary strong,
@@ -96,7 +96,7 @@ const emit = defineEmits<{
 .batch-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
   align-items: center;
 }
 
@@ -112,23 +112,24 @@ const emit = defineEmits<{
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
 .primary-button {
   border: 0;
-  background: #2f6f73;
-  color: #ffffff;
+  background: var(--color-brand);
+  color: var(--color-surface);
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 button:disabled {

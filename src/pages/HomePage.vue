@@ -16,19 +16,19 @@
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: #eef2f5;
-  color: #1f2937;
+  padding: var(--space-8);
+  background: var(--color-shell);
+  color: var(--color-text);
 }
 
 .home-panel {
   width: min(100%, 520px);
   display: grid;
-  gap: 14px;
-  padding: 28px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .eyebrow,
@@ -38,20 +38,20 @@ p {
 }
 
 .eyebrow {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
 h1 {
-  color: #111827;
-  font-size: 28px;
+  color: var(--color-heading);
+  font-size: 24px;
   line-height: 1.2;
 }
 
 p {
-  color: #5b6472;
-  line-height: 1.7;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 .primary-link {
@@ -59,11 +59,11 @@ p {
   align-items: center;
   justify-content: center;
   justify-self: start;
-  min-height: 40px;
-  padding: 0 15px;
-  border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-surface);
   font-weight: 700;
   text-decoration: none;
 }

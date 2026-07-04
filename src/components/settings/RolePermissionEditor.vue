@@ -225,52 +225,52 @@ watch(
 <style scoped>
 .role-permission-editor {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .role-editor-layout {
   display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
 }
 
 .role-list {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .role-button {
   display: grid;
-  gap: 3px;
+  gap: var(--space-2);
   width: 100%;
   min-height: 52px;
-  padding: 9px 11px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #1f2937;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
 }
 
 .role-button.active {
-  border-color: #2f6f73;
-  background: #e8f3f1;
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
 }
 
 .role-button strong {
-  font-size: 14px;
+  font-size: var(--font-md);
 }
 
 .role-button span {
-  color: #5b6472;
+  color: var(--color-muted);
   font-size: 12px;
 }
 
 .permission-panel {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
@@ -278,7 +278,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 h3,
@@ -287,57 +287,57 @@ p {
 }
 
 h3 {
-  color: #111827;
-  font-size: 18px;
+  color: var(--color-heading);
+  font-size: 16px;
 }
 
 .permission-header p,
 .notice-text {
-  color: #5b6472;
-  line-height: 1.6;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 .permission-count {
-  padding: 4px 9px;
+  padding: var(--space-1) var(--space-3);
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
   font-size: 12px;
   font-weight: 700;
 }
 
 .permission-groups {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .editor-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
   color: #ffffff;
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 button:disabled {
@@ -348,9 +348,9 @@ button:disabled {
 .error-message,
 .message {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 6px;
-  line-height: 1.6;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
 }
 
 .error-message {

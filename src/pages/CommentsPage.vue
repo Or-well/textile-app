@@ -312,7 +312,7 @@ watch(
 <style scoped>
 .comments-page {
   display: grid;
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 p {
@@ -320,21 +320,21 @@ p {
 }
 
 .comment-count {
-  padding: 5px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
-  font-size: 13px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
 .comment-toolbar {
   display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  gap: var(--space-4);
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .filter-tabs,
@@ -342,48 +342,48 @@ p {
   display: flex;
   align-items: end;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .filter-tab {
-  min-height: 34px;
-  padding: 0 11px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: #4b5563;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
 .filter-tab.active {
-  border-color: #2f6f73;
-  background: #e6f0ef;
-  color: #174346;
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
   font-weight: 700;
 }
 
 label {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1);
 }
 
 label span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 select,
 input {
-  min-height: 36px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
 }
 
 .search-field {
@@ -393,19 +393,19 @@ input {
 
 .comment-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .empty-state {
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #4b5563;
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .error-message {

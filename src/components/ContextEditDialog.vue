@@ -69,18 +69,18 @@ watch(
   z-index: 80;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: var(--space-7);
   background: rgba(15, 23, 42, 0.38);
 }
 
 .context-dialog {
   width: min(560px, 100%);
   display: grid;
-  gap: 14px;
-  padding: 20px;
-  border: 1px solid #d7dde5;
-  border-radius: 10px;
-  background: #ffffff;
+  gap: var(--space-4);
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 18px 44px rgba(15, 23, 42, 0.22);
 }
 
@@ -92,74 +92,75 @@ watch(
 
 .dialog-header {
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 h2 {
   margin: 0;
-  color: #111827;
-  font-size: 20px;
+  color: var(--color-heading);
+  font-size: 18px;
+  line-height: 1.3;
 }
 
 textarea {
   width: 100%;
-  min-height: 180px;
-  padding: 12px;
-  border: 1px solid #c8d0dc;
-  border-radius: 8px;
-  color: #1f2937;
+  min-height: 160px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
   font: inherit;
-  line-height: 1.7;
+  line-height: 1.55;
   resize: vertical;
 }
 
 textarea:focus {
   outline: none;
-  border-color: #2f6f73;
+  border-color: var(--color-brand);
   box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.14);
 }
 
 textarea:disabled {
-  background: #f3f4f6;
-  color: #6b7280;
+  background: var(--color-surface-muted);
+  color: var(--color-muted);
 }
 
 .dialog-actions {
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .primary-button,
 .secondary-button,
 .icon-button {
-  min-height: 36px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  border-radius: var(--radius-sm);
   font: inherit;
   cursor: pointer;
 }
 
 .primary-button,
 .secondary-button {
-  padding: 0 13px;
+  padding: 0 var(--space-4);
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
   color: #ffffff;
 }
 
 .secondary-button,
 .icon-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .icon-button {
-  width: 34px;
+  width: var(--control-md);
   padding: 0;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
 }
 

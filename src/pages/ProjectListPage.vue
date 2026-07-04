@@ -380,23 +380,23 @@ watch(
 <style scoped>
 .project-start-page {
   min-height: 100vh;
-  padding: 26px;
-  background: #f1f4f6;
-  color: #1f2937;
+  padding: var(--space-8);
+  background: var(--color-shell);
+  color: var(--color-text);
 }
 
 .start-shell {
   width: min(100%, 1180px);
   margin: 0 auto;
   display: grid;
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 .start-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 18px;
+  gap: var(--space-7);
   min-height: 0;
 }
 
@@ -411,20 +411,20 @@ dd {
 }
 
 .eyebrow {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
 h1 {
-  color: #111827;
-  font-size: 28px;
+  color: var(--color-heading);
+  font-size: 24px;
   line-height: 1.2;
 }
 
 h2 {
-  color: #111827;
-  font-size: 20px;
+  color: var(--color-heading);
+  font-size: 18px;
   line-height: 1.25;
 }
 
@@ -435,10 +435,10 @@ h3 {
 }
 
 .summary {
-  margin-top: 7px;
+  margin-top: var(--space-2);
   max-width: 680px;
-  color: #5b6472;
-  line-height: 1.6;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 .restore-badge {
@@ -452,34 +452,34 @@ h3 {
 }
 
 .error-message {
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid #f0b8aa;
-  border-radius: 6px;
-  background: #ffffff;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: #b42318;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .start-layout {
   display: grid;
   grid-template-columns: 326px minmax(0, 1fr);
   align-items: start;
-  gap: 18px;
+  gap: var(--space-7);
 }
 
 .action-panel,
 .recent-panel {
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .action-panel {
   display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 16px;
+  gap: var(--space-4);
+  padding: var(--panel-padding);
 }
 
 .panel-heading {
@@ -492,41 +492,41 @@ h3 {
 .recent-panel {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: var(--space-4);
   min-height: 500px;
-  padding: 16px;
+  padding: var(--panel-padding);
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid #eef1f5;
 }
 
 .current-project {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   margin-top: 4px;
-  padding: 12px;
+  padding: var(--space-4);
   border: 1px solid #cfe0dc;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #f8fcfb;
 }
 
 .current-project p,
 .recent-main p,
 .empty-recent p {
-  color: #5b6472;
-  line-height: 1.55;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 dl {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 dt {
@@ -550,11 +550,11 @@ dl div {
 
 .project-file-preview {
   display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #f8fafb;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
 }
 
 .preview-heading {
@@ -684,15 +684,15 @@ dl div {
 
 .recent-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .small-primary-button,
 .small-secondary-button {
-  min-height: 36px;
-  padding: 0 12px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font: inherit;
   font-size: 13px;
   font-weight: 700;
@@ -714,13 +714,13 @@ dl div {
 
 .empty-recent {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   min-height: 220px;
   align-content: center;
-  padding: 24px;
+  padding: var(--panel-padding);
   border: 1px dashed #c8d0dc;
-  border-radius: 8px;
-  background: #f8fafb;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
   text-align: center;
 }
 

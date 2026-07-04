@@ -25,7 +25,7 @@ defineProps<{
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 18px;
+  gap: var(--space-7);
   min-width: 0;
 }
 
@@ -40,29 +40,29 @@ h1,
 }
 
 .eyebrow {
-  margin-bottom: 5px;
-  color: #5b6472;
-  font-size: 13px;
+  margin-bottom: var(--space-1);
+  color: var(--color-muted);
+  font-size: var(--font-xs);
 }
 
 h1 {
-  color: #111827;
-  font-size: 28px;
+  color: var(--color-heading);
+  font-size: 24px;
   line-height: 1.2;
 }
 
 .summary {
-  margin-top: 8px;
-  color: #5b6472;
-  font-size: 13px;
-  line-height: 1.6;
+  margin-top: var(--space-2);
+  color: var(--color-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 .header-actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 @media (max-width: 840px) {

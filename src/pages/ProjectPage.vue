@@ -154,7 +154,7 @@ const canImportPackage = computed(
 <style scoped>
 .project-overview {
   display: grid;
-  gap: 18px;
+  gap: var(--page-gap);
 }
 
 h2,
@@ -165,45 +165,45 @@ dd {
 }
 
 h2 {
-  color: #111827;
-  font-size: 18px;
+  color: var(--color-heading);
+  font-size: 16px;
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
 .primary-button {
   border: 0;
-  background: #2f6f73;
-  color: #ffffff;
+  background: var(--color-brand);
+  color: var(--color-surface);
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .overview-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 .overview-panel {
   display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  gap: var(--space-4);
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .progress-panel {
@@ -213,7 +213,7 @@ h2 {
 .progress-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 22px;
+  gap: var(--space-5) var(--space-7);
 }
 
 .stats-panel {
@@ -227,24 +227,24 @@ h2 {
 dl {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 dl div {
-  padding: 12px;
-  border-radius: 6px;
-  background: #f8fafb;
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 dt {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 dd {
-  margin-top: 6px;
-  color: #111827;
-  font-size: 20px;
+  margin-top: var(--space-1);
+  color: var(--color-heading);
+  font-size: 18px;
   font-weight: 700;
 }
 

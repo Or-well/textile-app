@@ -1014,54 +1014,54 @@ async function handleResaveLatestTransition() {
 <style scoped>
 .key-panel {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .own-key-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .own-key-summary > div,
 .member-key-row {
-  padding: 12px;
-  border: 1px solid #e3e8ef;
-  border-radius: 8px;
-  background: #f8fafb;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 .own-key-summary span,
 .member-key-row span,
 .member-key-row small,
 .notice-text {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .own-key-summary strong,
 .member-key-row strong {
   display: block;
-  margin-top: 4px;
-  color: #111827;
+  margin-top: var(--space-1);
+  color: var(--color-heading);
   overflow-wrap: anywhere;
 }
 
 .key-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 9px;
+  gap: var(--space-2);
 }
 
 .key-note {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-3);
   border: 1px solid #d7e9e6;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: #f5fbfa;
   color: #376164;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 .primary-button,
@@ -1071,26 +1071,26 @@ async function handleResaveLatestTransition() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
   color: #ffffff;
 }
 
 .secondary-button,
 .file-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .danger-button {
@@ -1111,39 +1111,39 @@ button:disabled,
 
 .member-key-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .member-key-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 h3 {
   margin: 0;
-  color: #111827;
+  color: var(--color-heading);
   font-size: 15px;
 }
 
 .member-key-header p {
-  margin: 4px 0 0;
-  color: #5b6472;
-  font-size: 13px;
-  line-height: 1.6;
+  margin: var(--space-1) 0 0;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 .member-key-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .member-key-row div {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -1156,7 +1156,7 @@ code {
 .success-text,
 .notice-text {
   margin: 0;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .error-text {

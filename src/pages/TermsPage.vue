@@ -700,7 +700,7 @@ onMounted(loadTermRows);
 <style scoped>
 .terms-page {
   display: grid;
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 .field-label,
@@ -716,17 +716,17 @@ dd {
 }
 
 .readonly-note {
-  margin-top: 8px;
-  line-height: 1.7;
+  margin-top: var(--space-3);
+  line-height: 1.5;
 }
 
 .count-badge {
   flex: 0 0 auto;
-  padding: 5px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
-  font-size: 13px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
@@ -734,17 +734,17 @@ dd {
 .term-card,
 .empty-state,
 .readonly-note {
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .toolbar {
   display: grid;
   grid-template-columns: 150px 150px minmax(220px, 1fr) auto;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: center;
-  padding: 12px;
+  padding: var(--panel-padding-compact);
 }
 
 .batch-operation-select,
@@ -757,7 +757,7 @@ dd {
 .card-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .toolbar-actions {
@@ -767,14 +767,14 @@ dd {
 select,
 input {
   width: 100%;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
 }
 
 select:focus,
@@ -787,17 +787,18 @@ input:focus {
 .primary-button,
 .secondary-button,
 .danger-button {
-  min-height: 38px;
-  padding: 0 12px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
-  color: #ffffff;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
+  color: var(--color-surface);
 }
 
 .secondary-button {
@@ -820,7 +821,7 @@ button:disabled {
 .error-message,
 .message,
 .empty-state {
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .error-message {
@@ -833,13 +834,13 @@ button:disabled {
 
 .empty-state,
 .readonly-note {
-  padding: 16px;
+  padding: var(--panel-padding);
   color: #4b5563;
 }
 
 .empty-state {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .empty-state button {
@@ -848,14 +849,14 @@ button:disabled {
 
 .term-list {
   display: grid;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .term-card {
   position: relative;
   display: grid;
-  gap: 12px;
-  padding: 16px 16px 16px 50px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-4) var(--space-4) 44px;
 }
 
 .term-card.selected {
@@ -865,8 +866,8 @@ button:disabled {
 
 .term-selector {
   position: absolute;
-  top: 18px;
-  left: 16px;
+  top: var(--space-4);
+  left: var(--space-4);
 }
 
 .term-selector input {
@@ -879,13 +880,13 @@ button:disabled {
 .term-main {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  gap: var(--space-5);
 }
 
 .term-main div,
 .term-meta div {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -907,7 +908,7 @@ dd {
 .term-meta {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 dd {
@@ -916,13 +917,13 @@ dd {
 
 .term-note {
   color: #4b5563;
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .variant-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .variant-list span {

@@ -526,8 +526,8 @@ watch(visibleTasks, (nextTasks) => {
 .tasks-page {
   display: grid;
   align-content: start;
-  gap: 16px;
-  min-height: calc(100vh - 108px);
+  gap: var(--page-gap);
+  min-height: calc(100vh - 90px);
 }
 
 h2,
@@ -546,7 +546,7 @@ h2 {
 .tasks-layout {
   display: grid;
   grid-template-columns: 220px minmax(320px, 1fr) minmax(400px, 430px);
-  gap: 16px;
+  gap: var(--page-gap);
   min-height: 0;
 }
 
@@ -554,25 +554,25 @@ h2 {
 .task-list-column {
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
-  padding: 16px;
+  padding: var(--panel-padding);
   border: 1px solid #d8dee8;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .filter-stack {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .filter-button {
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
   border: 1px solid #d8dee8;
-  border-radius: 6px;
-  background: #ffffff;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: #172033;
   text-align: left;
   cursor: pointer;
@@ -587,22 +587,23 @@ h2 {
 
 label {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 label span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 select {
-  min-height: 38px;
+  min-height: var(--control-md);
   min-width: 0;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: #172033;
+  font-size: var(--font-sm);
 }
 
 .list-header {
@@ -620,20 +621,20 @@ select {
 .task-list {
   display: grid;
   align-content: start;
-  gap: 10px;
-  max-height: calc(100vh - 210px);
+  gap: var(--space-3);
+  max-height: calc(100vh - 186px);
   overflow: auto;
   padding-right: 2px;
 }
 
 .primary-button {
-  min-height: 40px;
-  padding: 0 14px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
   border: 0;
-  border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
-  font-size: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-surface);
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
@@ -645,7 +646,7 @@ select {
 .error-message,
 .saved-message,
 .empty-state {
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .error-message {
@@ -657,15 +658,15 @@ select {
 }
 
 .empty-state {
-  padding: 16px;
+  padding: var(--panel-padding);
   border: 1px solid #d8dee8;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #526071;
 }
 
 .empty-state.compact {
-  padding: 12px;
+  padding: var(--space-4);
 }
 
 @media (max-width: 1180px) {
@@ -684,19 +685,19 @@ select {
   z-index: 60;
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: var(--space-7);
   background: rgba(17, 24, 39, 0.42);
 }
 
 .target-dialog {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
   width: min(520px, 100%);
   max-height: min(640px, calc(100vh - 32px));
-  padding: 16px;
+  padding: var(--panel-padding);
   overflow: hidden;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
 }
 
@@ -731,7 +732,7 @@ select {
   border-radius: 6px;
   background: #ffffff;
   color: #344054;
-  font-size: 22px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
 }
@@ -746,13 +747,13 @@ select {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  min-height: 48px;
-  padding: 8px 12px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #172033;
+  gap: var(--space-3);
+  min-height: 42px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
 }
@@ -781,13 +782,13 @@ select {
 }
 
 .cancel-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: #172033;
-  font-size: 14px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 

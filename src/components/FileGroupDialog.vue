@@ -128,15 +128,15 @@ function submit() {
   z-index: 40;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: var(--space-7);
   background: rgba(15, 23, 42, 0.46);
 }
 
 .group-dialog {
   width: min(520px, 100%);
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 20px 50px rgba(15, 23, 42, 0.24);
 }
 
@@ -144,8 +144,8 @@ header,
 footer {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 16px 18px;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--panel-padding);
 }
 
 header {
@@ -163,23 +163,23 @@ p {
 }
 
 h2 {
-  font-size: 22px;
+  font-size: 18px;
 }
 
 .eyebrow {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .dialog-body {
   display: grid;
-  gap: 10px;
-  padding: 18px;
+  gap: var(--space-3);
+  padding: var(--panel-padding);
 }
 
 .dialog-body p {
-  color: #5b6472;
-  line-height: 1.65;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 label {
@@ -190,12 +190,12 @@ label {
 
 input {
   width: 100%;
-  min-height: 42px;
+  min-height: var(--control-lg);
   box-sizing: border-box;
-  padding: 0 11px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  color: #1f2937;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
   font: inherit;
 }
 
@@ -204,36 +204,37 @@ input {
 }
 
 .close-button {
-  width: 36px;
-  min-height: 36px;
+  width: var(--control-md);
+  min-height: var(--control-md);
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: 24px;
+  font-size: 20px;
   cursor: pointer;
 }
 
 .primary-button,
 .secondary-button,
 .clear-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
 .primary-button {
   border: 0;
-  background: #2f6f73;
-  color: #ffffff;
+  background: var(--color-brand);
+  color: var(--color-surface);
 }
 
 .secondary-button,
 .clear-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .clear-button {

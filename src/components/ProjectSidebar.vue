@@ -72,33 +72,39 @@ function isVisible(item: (typeof navItems)[number]): boolean {
 
 <style scoped>
 .project-sidebar {
+  position: sticky;
+  top: 68px;
+  align-self: start;
   display: grid;
   align-content: start;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 180px;
-  padding: 16px 12px;
+  max-height: calc(100vh - 84px);
+  padding: var(--space-7) var(--space-5);
+  overflow-y: auto;
   border-right: 1px solid #dfe4ea;
-  background: #ffffff;
+  background: var(--color-surface);
+  scrollbar-gutter: stable;
 }
 
 .sidebar-title {
-  margin: 0 0 8px;
-  padding: 0 10px;
+  margin: 0 0 var(--space-3);
+  padding: 0 var(--space-4);
   color: #6b7280;
-  font-size: 12px;
+  font-size: var(--font-xs);
   font-weight: 700;
   letter-spacing: 0;
 }
 
 .nav-item {
-  min-height: 40px;
-  padding: 0 10px;
+  min-height: 42px;
+  padding: 0 var(--space-4);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #374151;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-md);
   text-align: left;
   cursor: pointer;
 }
@@ -115,17 +121,21 @@ function isVisible(item: (typeof navItems)[number]): boolean {
 }
 
 .help-item {
-  margin-top: 10px;
+  margin-top: var(--space-5);
   border-top: 1px solid #eef1f5;
 }
 
 @media (max-width: 840px) {
   .project-sidebar {
+    position: static;
     display: flex;
     min-width: 0;
+    max-height: none;
+    overflow-y: visible;
     overflow-x: auto;
     border-right: 0;
     border-bottom: 1px solid #dfe4ea;
+    scrollbar-gutter: auto;
   }
 
   .sidebar-title {

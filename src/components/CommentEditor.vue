@@ -42,28 +42,28 @@ const emit = defineEmits<{
 <style scoped>
 .comment-editor {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 label {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 label span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 textarea {
   width: 100%;
   resize: vertical;
-  padding: 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  color: #1f2937;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
   font: inherit;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 textarea:focus {
@@ -74,14 +74,14 @@ textarea:focus {
 
 button {
   justify-self: start;
-  min-height: 36px;
-  padding: 0 13px;
-  border: 1px solid #2f6f73;
-  border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-surface);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 

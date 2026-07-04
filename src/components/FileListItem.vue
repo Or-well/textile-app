@@ -157,13 +157,13 @@ const emit = defineEmits<{
 .file-row {
   display: grid;
   grid-template-columns: 24px minmax(220px, 1.2fr) minmax(126px, 0.6fr) minmax(126px, 0.6fr) minmax(126px, 0.6fr) minmax(78px, 0.32fr) minmax(132px, 0.48fr) minmax(230px, 0.7fr);
-  gap: 12px;
+  gap: var(--space-4);
   align-items: center;
-  min-height: 78px;
-  padding: 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  min-height: 68px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .file-row.hidden {
@@ -181,7 +181,7 @@ const emit = defineEmits<{
 
 .file-main {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
   border: 0;
   background: transparent;
@@ -214,17 +214,17 @@ const emit = defineEmits<{
   flex: 0 0 auto;
   padding: 2px 7px;
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
-  font-size: 12px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+  font-size: var(--font-xs);
   font-weight: 700;
 }
 
 .file-main small,
 .updated-at,
 .dispute-count {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .metric {
@@ -235,20 +235,20 @@ const emit = defineEmits<{
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .text-button,
 .more-menu summary,
 .menu-panel button {
-  min-height: 32px;
-  padding: 0 9px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
@@ -268,15 +268,15 @@ const emit = defineEmits<{
 
 .menu-panel {
   position: absolute;
-  top: 38px;
+  top: 36px;
   right: 0;
   z-index: 3;
   display: grid;
   min-width: 130px;
   padding: 6px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
 }
 

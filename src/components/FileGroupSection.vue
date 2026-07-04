@@ -48,13 +48,13 @@ const emit = defineEmits<{
 <style scoped>
 .file-group {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .group-header {
   display: flex;
   align-items: center;
-  min-height: 44px;
+  min-height: 38px;
   border-bottom: 1px solid #cfd7e2;
 }
 
@@ -62,10 +62,10 @@ const emit = defineEmits<{
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-3);
   min-width: 0;
-  min-height: 44px;
-  padding: 0 8px;
+  min-height: 38px;
+  padding: 0 var(--space-3);
   border: 0;
   background: transparent;
   color: #111827;
@@ -75,27 +75,27 @@ const emit = defineEmits<{
 
 .group-toggle strong {
   overflow: hidden;
-  font-size: 17px;
+  font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .group-toggle span:last-child {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .toggle-icon {
   width: 18px;
-  color: #2f6f73;
-  font-size: 24px;
+  color: var(--color-brand);
+  font-size: 20px;
   line-height: 1;
   text-align: center;
 }
 
 .group-files {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .group-menu {
@@ -106,13 +106,13 @@ const emit = defineEmits<{
 .group-menu summary {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
-  padding: 0 9px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
-  font-size: 13px;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-sm);
   cursor: pointer;
   list-style: none;
 }
@@ -123,25 +123,25 @@ const emit = defineEmits<{
 
 .menu-panel {
   position: absolute;
-  top: 38px;
+  top: 36px;
   right: 0;
   z-index: 4;
   display: grid;
   min-width: 150px;
   padding: 6px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
 }
 
 .menu-panel button {
-  min-height: 34px;
-  padding: 0 10px;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-4);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #1f2937;
+  color: var(--color-text);
   font: inherit;
   text-align: left;
   cursor: pointer;

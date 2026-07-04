@@ -98,8 +98,8 @@ const sectionLabels: Record<ProjectSection, string> = {
 <style scoped>
 .project-layout {
   min-height: 100vh;
-  background: #f1f4f6;
-  color: #1f2937;
+  background: var(--color-shell);
+  color: var(--color-text);
 }
 
 .workspace-header {
@@ -109,46 +109,46 @@ const sectionLabels: Record<ProjectSection, string> = {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  min-height: 56px;
-  padding: 0 26px;
-  border-bottom: 1px solid #d7dde5;
-  background: #ffffff;
+  gap: var(--space-7);
+  min-height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
 }
 
 .breadcrumb {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  color: #5b6472;
-  font-size: 14px;
+  gap: var(--space-3);
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .breadcrumb button {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #2f6f73;
+  color: var(--color-brand);
   font: inherit;
   cursor: pointer;
 }
 
 .breadcrumb button:disabled {
-  color: #5b6472;
+  color: var(--color-muted);
   cursor: default;
 }
 
 .breadcrumb strong {
-  color: #111827;
+  color: var(--color-heading);
 }
 
 .user-area {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
   color: #4b5563;
-  font-size: 14px;
+  font-size: var(--font-sm);
   white-space: nowrap;
 }
 
@@ -159,30 +159,30 @@ const sectionLabels: Record<ProjectSection, string> = {
 }
 
 .user-area button {
-  min-height: 34px;
-  padding: 0 11px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
   cursor: pointer;
 }
 
 .workspace-body {
   display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
-  min-height: calc(100vh - 57px);
+  grid-template-columns: 204px minmax(0, 1fr);
+  min-height: calc(100vh - 53px);
 }
 
 .workspace-content {
   min-width: 0;
-  padding: 22px 24px 28px;
+  padding: 16px 18px 22px;
 }
 
 @media (max-width: 840px) {
   .workspace-header {
-    padding: 0 16px;
+    padding: 0 var(--space-7);
   }
 
   .workspace-body {
@@ -190,7 +190,7 @@ const sectionLabels: Record<ProjectSection, string> = {
   }
 
   .workspace-content {
-    padding: 16px;
+    padding: var(--space-7);
   }
 }
 </style>

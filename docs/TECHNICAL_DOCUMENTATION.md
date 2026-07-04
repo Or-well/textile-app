@@ -378,6 +378,8 @@ const route = computed(() => parseRoute(routePath.value));
 - `panel=import`：从项目概览定位到修改包导入区域，并在有权限时聚焦文件选择控件。
 - 两个目标区域使用 `scroll-margin-top` 为工作台粘性顶栏预留空间，路由进入时使用即时滚动，避免标题被遮挡或定位动画被聚焦打断。
 
+导入导出页展示层采用单一主卡片布局，备份、修改包导出、修改包导入和成品导出在同一纵向页面中分段显示。当前登录成员由工作台顶部和权限服务负责表达，修改包导出表单不再单独渲染只读“当前用户”字段，避免重复信息占据操作区。
+
 当前没有持久化的待合并修改包队列，因此概览不提供“查看待合并修改”入口。
 
 未知顶层路径进入 not-found。未知项目 section 会显示通用占位页。
@@ -1721,6 +1723,8 @@ manifest 示例：
 9. 生成 ZIP Blob。
 10. 页面调用 `saveGeneratedFile()` 保存 ZIP。
 11. 只有保存明确成功后，member_changes 才记录本次导出内容哈希，project_update 才推进主项目 revision。
+
+导出页 UI 不把当前 actor 作为独立只读字段展示；actor 仍来自当前会话、props 或 `getCurrentUser()`，导出时继续由 service 层校验 actor、权限和导出模式。
 
 普通修改包：
 

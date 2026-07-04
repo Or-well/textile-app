@@ -100,12 +100,12 @@ const emit = defineEmits<{
 .file-toolbar {
   display: grid;
   grid-template-columns: minmax(130px, auto) minmax(120px, auto) minmax(130px, auto) minmax(150px, auto) minmax(200px, 1fr) minmax(140px, auto);
-  gap: 10px;
+  gap: var(--space-3);
   align-items: center;
-  padding: 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding-compact);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .toolbar-menu {
@@ -115,12 +115,13 @@ const emit = defineEmits<{
 .toolbar-menu summary {
   display: inline-flex;
   align-items: center;
-  min-height: 38px;
-  padding: 0 12px;
-  border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-surface);
   font-weight: 700;
+  font-size: var(--font-sm);
   cursor: pointer;
   list-style: none;
 }
@@ -142,23 +143,23 @@ const emit = defineEmits<{
 
 .menu-panel {
   position: absolute;
-  top: 44px;
+  top: 40px;
   left: 0;
   z-index: 4;
   display: grid;
   min-width: 180px;
   padding: 6px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
 }
 
 .menu-panel button {
-  min-height: 34px;
+  min-height: var(--control-sm);
   padding: 0 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #1f2937;
   text-align: left;
@@ -172,23 +173,24 @@ const emit = defineEmits<{
 .secondary-button,
 input,
 select {
-  min-height: 38px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
+  font-size: var(--font-sm);
 }
 
 .secondary-button {
-  padding: 0 12px;
+  padding: 0 var(--space-5);
   cursor: pointer;
 }
 
 input,
 select {
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 var(--space-4);
 }
 
 button:disabled {

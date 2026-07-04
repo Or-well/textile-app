@@ -40,7 +40,7 @@ const displayValue = computed(() => props.valueText || `${safePercent.value}%`);
   --progress-color: #2563eb;
 
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .progress-bar--translation {
@@ -58,9 +58,9 @@ const displayValue = computed(() => props.valueText || `${safePercent.value}%`);
 .progress-header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-5);
   color: #4b5563;
-  font-size: 14px;
+  font-size: var(--font-sm);
 }
 
 .progress-header strong {
@@ -68,7 +68,7 @@ const displayValue = computed(() => props.valueText || `${safePercent.value}%`);
 }
 
 .progress-track {
-  height: 10px;
+  height: 8px;
   overflow: hidden;
   border-radius: 999px;
   background: #e5e7eb;

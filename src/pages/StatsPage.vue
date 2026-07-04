@@ -150,7 +150,7 @@ watch(
 <style scoped>
 .stats-page {
   display: grid;
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 .weight-note,
@@ -178,21 +178,22 @@ h2 {
 .empty-state,
 .progress-panel,
 .distribution-panel {
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .empty-state {
   color: #4b5563;
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .progress-panel,
 .distribution-panel {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
+  padding: var(--panel-padding);
 }
 
 .progress-grid {
@@ -201,13 +202,13 @@ h2 {
 
 .disabled-progress {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   align-content: center;
-  min-height: 74px;
-  padding: 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #f8fafb;
+  min-height: 58px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
 }
 
 .disabled-progress span {
@@ -221,11 +222,11 @@ h2 {
 }
 
 .weight-note {
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .workflow-note {
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid #f0b96a;
   border-radius: 6px;
   background: #fffaf0;
@@ -235,16 +236,16 @@ h2 {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .stats-grid div {
   display: grid;
-  gap: 6px;
-  padding: 14px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .stats-grid span,
@@ -254,24 +255,24 @@ h2 {
 
 .stats-grid strong {
   color: #111827;
-  font-size: 26px;
+  font-size: 24px;
   line-height: 1.1;
 }
 
 .distribution-list {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 42px;
-  padding: 0 12px;
-  border-radius: 6px;
-  background: #f8fafb;
+  gap: var(--space-4);
+  min-height: 34px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 .status-row strong {

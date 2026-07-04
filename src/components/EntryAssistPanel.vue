@@ -569,9 +569,9 @@ watch(
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   overflow: hidden;
 }
 
@@ -582,10 +582,10 @@ watch(
 }
 
 .tab-button {
-  min-height: 42px;
+  min-height: var(--control-lg);
   border: 0;
   border-right: 1px solid #e5e7eb;
-  background: #f8fafb;
+  background: var(--color-surface-muted);
   color: #4b5563;
   font: inherit;
   cursor: pointer;
@@ -596,8 +596,8 @@ watch(
 }
 
 .tab-button.active {
-  background: #ffffff;
-  color: #174346;
+  background: var(--color-surface);
+  color: var(--color-brand-strong);
   font-weight: 700;
 }
 
@@ -605,20 +605,20 @@ watch(
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 14px;
+  padding: var(--panel-padding);
   scrollbar-gutter: stable;
 }
 
 .term-panel {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .term-toolbar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px;
+  gap: var(--space-3);
   align-items: center;
 }
 
@@ -628,13 +628,13 @@ watch(
 
 .term-toolbar input {
   width: 100%;
-  min-height: 36px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
 }
 
 .term-toolbar input:focus {
@@ -644,12 +644,12 @@ watch(
 }
 
 .add-term-button {
-  width: 36px;
-  min-height: 36px;
-  border: 1px solid #2f6f73;
-  border-radius: 6px;
-  background: #2f6f73;
-  color: #ffffff;
+  width: var(--control-md);
+  min-height: var(--control-md);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
+  color: var(--color-surface);
   font: inherit;
   font-size: 20px;
   font-weight: 700;
@@ -661,11 +661,11 @@ watch(
 .term-action-message,
 .error-message {
   margin: 0;
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .empty-text {
-  color: #5b6472;
+  color: var(--color-muted);
 }
 
 .error-message {
@@ -673,12 +673,12 @@ watch(
 }
 
 .term-action-message {
-  color: #2f6f73;
+  color: var(--color-brand);
 }
 
 .history-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -686,45 +686,45 @@ watch(
 
 .history-list li {
   display: grid;
-  gap: 5px;
-  padding: 10px;
+  gap: var(--space-1);
+  padding: var(--space-3);
   border: 1px solid #eef1f5;
-  border-radius: 6px;
-  background: #f8fafb;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 .history-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .current-version {
-  color: #2f6f73;
+  color: var(--color-brand);
   font-weight: 700;
 }
 
 .history-target {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  padding: 8px;
-  border-left: 3px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
-  line-height: 1.55;
+  padding: var(--space-3);
+  border-left: 3px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  line-height: 1.5;
 }
 
 .restore-button {
   justify-self: start;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid #2f6f73;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #2f6f73;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-brand);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
@@ -735,13 +735,13 @@ watch(
 }
 
 .history-list strong {
-  color: #111827;
-  font-size: 14px;
+  color: var(--color-heading);
+  font-size: var(--font-sm);
 }
 
 .history-list span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 @media (max-width: 1180px) {

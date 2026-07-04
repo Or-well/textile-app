@@ -1251,11 +1251,6 @@ watch(
           成员把自己的译文、批注、术语或任务修改导出为修改包，可按项目设置签名。
         </p>
 
-        <div class="current-user-field">
-          <span>当前用户</span>
-          <strong>{{ currentUser?.name || "未登录" }}</strong>
-        </div>
-
         <fieldset class="export-mode-field">
           <legend>导出范围</legend>
           <label>
@@ -1379,7 +1374,7 @@ watch(
           负责人合并普通修改包；成员可接收项目更新包，也可在确认来源后导入项目维护修改。
         </p>
         <label v-if="canSelectImportFile" class="file-field">
-          <span>选择修改包</span>
+          <span>选择修改包文件</span>
           <input
             ref="changePackageInput"
             type="file"
@@ -1387,6 +1382,7 @@ watch(
             :disabled="isReadingPackage || isApplyingPackage"
             @change="handleSelectChangePackage"
           />
+          <small class="field-help">支持 Textile 修改包 .zip 文件。选择后会先预览和校验，不会立即导入。</small>
         </label>
         <p v-else class="section-note">当前成员没有导入修改包的权限。</p>
 
@@ -1428,7 +1424,7 @@ watch(
           {{ applyDisabledReason }}
         </p>
 
-        <section class="conflict-section">
+        <section v-if="conflicts.length > 0" class="conflict-section">
           <h2>冲突处理</h2>
           <p class="section-note">
             如果修改包和当前项目同时改过同一词条或批注状态，请先选择处理方式。
@@ -1631,6 +1627,12 @@ button:disabled {
   border-top: 1px solid #e5e7eb;
 }
 
+.signature-option,
+.credential-option {
+  display: grid;
+  gap: 6px;
+}
+
 .section-note {
   color: #4b5563;
   line-height: 1.7;
@@ -1696,32 +1698,9 @@ label {
   gap: 10px;
 }
 
-.signature-option,
-.credential-option {
-  display: grid;
-  gap: 6px;
-}
-
-label span,
-.current-user-field span {
+label span {
   color: #5b6472;
   font-size: 14px;
-}
-
-.current-user-field {
-  display: grid;
-  gap: 8px;
-}
-
-.current-user-field strong {
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  padding: 0 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 6px;
-  background: #f8fafb;
-  color: #111827;
 }
 
 select,

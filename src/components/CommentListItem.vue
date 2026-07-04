@@ -138,11 +138,11 @@ const emit = defineEmits<{
 <style scoped>
 .comment-item {
   display: grid;
-  gap: 9px;
-  padding: 12px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid #e3e8ef;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .comment-item.highlighted {
@@ -161,7 +161,7 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .comment-header,
@@ -171,7 +171,7 @@ const emit = defineEmits<{
 
 .comment-title {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 strong,
@@ -180,20 +180,20 @@ p {
 }
 
 strong {
-  color: #111827;
-  font-size: 14px;
+  color: var(--color-heading);
+  font-size: var(--font-sm);
 }
 
 .comment-title span,
 .comment-footer,
 .reply-context {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .comment-body {
-  color: #1f2937;
-  line-height: 1.6;
+  color: var(--color-text);
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
@@ -210,9 +210,9 @@ strong {
 .dispute-badge {
   padding: 2px 7px;
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
-  font-size: 12px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+  font-size: var(--font-xs);
   font-weight: 700;
 }
 
@@ -222,14 +222,14 @@ strong {
 }
 
 button {
-  min-height: 30px;
-  padding: 0 9px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #2f6f73;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-brand);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 

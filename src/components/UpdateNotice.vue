@@ -191,24 +191,24 @@ onBeforeUnmount(() => {
 <style scoped>
 .update-notice {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  right: var(--space-6);
+  bottom: var(--space-6);
   z-index: 30;
   display: grid;
-  gap: 12px;
-  width: min(360px, calc(100vw - 32px));
-  padding: 16px;
-  border: 1px solid #c8d0dc;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #1f2937;
+  gap: var(--space-3);
+  width: min(340px, calc(100vw - 32px));
+  padding: var(--panel-padding-compact);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
   box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
 }
 
 .notice-content,
 .release-notes {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .notice-title,
@@ -220,8 +220,8 @@ onBeforeUnmount(() => {
 }
 
 .notice-title {
-  color: #111827;
-  font-size: 16px;
+  color: var(--color-heading);
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.35;
 }
@@ -229,23 +229,23 @@ onBeforeUnmount(() => {
 .notice-text,
 .notice-source,
 .release-notes {
-  color: #4b5563;
-  font-size: 13px;
-  line-height: 1.55;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 .notice-source {
-  color: #6b7280;
+  color: var(--color-muted);
 }
 
 .release-notes ul {
-  padding-left: 18px;
+  padding-left: var(--space-5);
 }
 
 .notice-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .download-progress {
@@ -267,34 +267,34 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: 6px;
+  min-height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
   color: #ffffff;
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .primary-button:hover {
-  background: #255f62;
+  background: var(--color-brand-strong);
 }
 
 .secondary-button:hover {
   border-color: #9aa8b8;
-  background: #f8fafb;
+  background: var(--color-surface-muted);
 }
 
 @media (max-width: 680px) {

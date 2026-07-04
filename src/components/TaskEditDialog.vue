@@ -543,8 +543,8 @@ h2 {
 
 h2 {
   margin-top: 3px;
-  font-size: 20px;
-  line-height: 1.25;
+  font-size: 18px;
+  line-height: 1.3;
 }
 
 .icon-button {
@@ -554,7 +554,7 @@ h2 {
   border-radius: 6px;
   background: #ffffff;
   color: #344054;
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
 }

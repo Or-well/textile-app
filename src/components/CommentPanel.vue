@@ -378,7 +378,7 @@ async function handleDeleteComment(comment: Comment) {
 <style scoped>
 .comment-panel {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 p {
@@ -387,58 +387,58 @@ p {
 
 .reply-box {
   display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #f8fafb;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
 }
 
 .comment-toolbar {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .comment-toolbar > span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 .comment-toolbar label {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .comment-toolbar label span,
 .empty-text {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 select {
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
 }
 
 button {
   justify-self: start;
-  min-height: 36px;
-  padding: 0 13px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
@@ -453,7 +453,7 @@ button:disabled {
 
 .comment-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
   margin: 0;
   padding: 0;
   list-style: none;

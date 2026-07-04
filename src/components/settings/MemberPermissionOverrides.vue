@@ -218,37 +218,37 @@ watch(
 <style scoped>
 .member-permission-overrides {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .override-layout {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: var(--space-5);
   align-items: start;
 }
 
 .member-list {
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .member-button {
   display: grid;
-  gap: 3px;
-  min-height: 54px;
-  padding: 9px 11px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #1f2937;
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
 }
 
 .member-button.active {
-  border-color: #2f6f73;
-  background: #e8f3f1;
+  border-color: var(--color-brand);
+  background: var(--color-brand-soft);
 }
 
 .member-button.disabled {
@@ -256,13 +256,17 @@ watch(
 }
 
 .member-button span {
-  color: #5b6472;
+  color: var(--color-muted);
   font-size: 12px;
+}
+
+.member-button strong {
+  font-size: var(--font-md);
 }
 
 .override-panel {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
@@ -270,7 +274,7 @@ watch(
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 h3,
@@ -280,31 +284,31 @@ p {
 }
 
 h3 {
-  color: #111827;
-  font-size: 18px;
+  color: var(--color-heading);
+  font-size: 16px;
 }
 
 h4 {
-  color: #111827;
-  font-size: 15px;
+  color: var(--color-heading);
+  font-size: 14px;
 }
 
 .override-header p,
 .notice-text,
 .column-note {
-  color: #5b6472;
-  line-height: 1.6;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 .column-note {
-  font-size: 13px;
+  font-size: var(--font-sm);
 }
 
 .permission-count {
-  padding: 4px 9px;
+  padding: var(--space-1) var(--space-3);
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -313,30 +317,30 @@ h4 {
 .override-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .override-column {
   display: grid;
   align-content: start;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
 }
 
 .override-actions {
   display: flex;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .primary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border: 1px solid #2f6f73;
-  border-radius: 6px;
-  background: #2f6f73;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  background: var(--color-brand);
   color: #ffffff;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
@@ -349,9 +353,9 @@ button:disabled {
 .error-message,
 .message {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 6px;
-  line-height: 1.6;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
 }
 
 .error-message {

@@ -75,13 +75,13 @@ function getTaskFileText(task: Task): string {
 <style scoped>
 .task-item {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
   width: 100%;
-  min-height: 96px;
-  padding: 12px;
+  min-height: 82px;
+  padding: var(--space-4);
   border: 1px solid #d8dee8;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #172033;
   text-align: left;
   cursor: pointer;
@@ -95,7 +95,7 @@ function getTaskFileText(task: Task): string {
 
 .task-title {
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--font-md);
   font-weight: 700;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -105,7 +105,7 @@ function getTaskFileText(task: Task): string {
 .task-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .task-meta span {
@@ -113,18 +113,18 @@ function getTaskFileText(task: Task): string {
   border-radius: 999px;
   background: #eef2f5;
   color: #526071;
-  font-size: 12px;
+  font-size: var(--font-xs);
 }
 
 .task-target {
   color: #526071;
-  font-size: 13px;
+  font-size: var(--font-sm);
   line-height: 1.4;
 }
 
 .progress-track {
   display: block;
-  height: 6px;
+  height: 5px;
   border-radius: 999px;
   background: #e7ecef;
   overflow: hidden;

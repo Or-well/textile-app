@@ -187,7 +187,8 @@ dd {
 .history-dialog-header h2 {
   margin-top: 4px;
   color: #111827;
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
@@ -199,7 +200,7 @@ dd {
   border-radius: 6px;
   background: #ffffff;
   color: #344054;
-  font-size: 22px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
 }

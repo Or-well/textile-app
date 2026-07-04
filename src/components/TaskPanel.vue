@@ -349,15 +349,15 @@ watch(
 <style scoped>
 .task-work-order {
   --task-action-width: 76px;
-  --task-gap: 10px;
+  --task-gap: var(--space-3);
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: var(--space-4);
   min-width: 0;
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 .work-order-header {
@@ -390,22 +390,22 @@ dd {
 
 .section-label {
   color: #4f5f74;
-  font-size: 14px;
+  font-size: var(--font-sm);
   line-height: 1.4;
 }
 
 h2 {
-  margin-top: 6px;
-  color: #111827;
-  font-size: 22px;
+  margin-top: var(--space-1);
+  color: var(--color-heading);
+  font-size: 18px;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .task-summary {
-  margin-top: 4px;
+  margin-top: var(--space-1);
   color: #4f5f74;
-  font-size: 15px;
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
@@ -422,23 +422,23 @@ dt {
 
 .range-card,
 .note-card {
-  padding: 12px;
+  padding: var(--space-4);
   border: 1px solid #ccd4df;
-  border-radius: 8px;
-  background: #ffffff;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 16px;
+  gap: var(--space-3) var(--space-6);
 }
 
 dd {
-  margin-top: 6px;
-  color: #1f2937;
-  font-size: 15px;
+  margin-top: var(--space-1);
+  color: var(--color-text);
+  font-size: var(--font-md);
   font-weight: 700;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -446,14 +446,14 @@ dd {
 
 .note-card {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .note-card p,
 .empty-text {
   color: #4f5f74;
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: var(--font-md);
+  line-height: 1.55;
 }
 
 .open-entry-button {
@@ -463,8 +463,8 @@ dd {
 
 .progress-card {
   display: grid;
-  gap: 9px;
-  padding: 12px;
+  gap: var(--space-3);
+  padding: var(--space-4);
 }
 
 .progress-heading {
@@ -473,16 +473,16 @@ dd {
   justify-content: space-between;
   gap: var(--task-gap);
   color: #4f5f74;
-  font-size: 15px;
+  font-size: var(--font-sm);
 }
 
 .progress-heading strong {
-  color: #111827;
-  font-size: 17px;
+  color: var(--color-heading);
+  font-size: 15px;
 }
 
 .progress-track {
-  height: 8px;
+  height: 6px;
   border-radius: 999px;
   background: #e7ecef;
   overflow: hidden;
@@ -512,7 +512,7 @@ dd {
 
 .action-area {
   display: grid;
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .assign-row {
@@ -531,11 +531,11 @@ select,
 .primary-button,
 .secondary-button,
 .danger-button {
-  min-height: 40px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
@@ -573,7 +573,7 @@ select {
 }
 
 .edit-button {
-  min-height: 38px;
+  min-height: var(--control-md);
   width: var(--task-action-width);
   padding: 0;
 }

@@ -185,19 +185,19 @@ const confirmButtonText = computed(() =>
   z-index: 60;
   display: grid;
   place-items: center;
-  padding: 18px;
+  padding: var(--space-6);
   background: rgba(15, 23, 42, 0.42);
 }
 
 .dialog-panel {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
   width: min(100%, 680px);
   max-height: min(92vh, 760px);
   overflow: auto;
-  padding: 22px;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.26);
 }
 
@@ -205,7 +205,7 @@ header,
 .confirm-field,
 .danger-summary {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .eyebrow,
@@ -219,7 +219,7 @@ dd {
 
 .eyebrow {
   color: #6b7280;
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
@@ -228,8 +228,9 @@ dd {
 }
 
 h2 {
-  color: #111827;
-  font-size: 20px;
+  color: var(--color-heading);
+  font-size: 18px;
+  line-height: 1.3;
 }
 
 header p,
@@ -239,43 +240,43 @@ header p,
 .confirm-check span,
 dt {
   color: #5b6472;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .danger-summary {
-  padding: 12px;
+  padding: var(--space-3);
   border: 1px solid #f0c6bd;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: #fffafa;
 }
 
 .danger-summary strong {
-  color: #111827;
+  color: var(--color-heading);
 }
 
 .pending-summary {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid #d7dee8;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: #f8fafc;
 }
 
 .pending-summary strong {
-  color: #111827;
+  color: var(--color-heading);
 }
 
 dl {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 dl div {
-  padding: 9px;
-  border-radius: 6px;
-  background: #ffffff;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
 }
 
 dt {
@@ -283,8 +284,8 @@ dt {
 }
 
 dd {
-  color: #111827;
-  font-size: 14px;
+  color: var(--color-heading);
+  font-size: var(--font-sm);
   font-weight: 700;
   overflow-wrap: anywhere;
 }
@@ -294,11 +295,11 @@ dd {
   gap: 4px;
   max-height: 150px;
   overflow: auto;
-  padding: 10px 10px 10px 26px;
-  border-radius: 6px;
-  background: #ffffff;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-7);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   color: #374151;
-  font-size: 13px;
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
@@ -309,7 +310,7 @@ dd {
 .confirm-check {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .confirm-check input {
@@ -320,11 +321,11 @@ dd {
 
 .confirm-field input {
   width: 100%;
-  min-height: 40px;
-  padding: 0 11px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-3);
   border: 1px solid #c3ccd8;
-  border-radius: 6px;
-  color: #111827;
+  border-radius: var(--radius-sm);
+  color: var(--color-heading);
   font: inherit;
 }
 
@@ -336,35 +337,35 @@ dd {
 
 .error-message {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-3);
   border: 1px solid #f0b8aa;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: #b42318;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 footer {
   display: flex;
   justify-content: flex-end;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .secondary-button,
 .danger-button,
 .remove-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .danger-button {

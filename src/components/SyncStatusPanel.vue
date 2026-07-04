@@ -50,11 +50,11 @@ const emit = defineEmits<{
 <style scoped>
 .collaboration-panel {
   display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  gap: var(--space-4);
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
 
 h2,
@@ -65,20 +65,20 @@ dd {
 }
 
 h2 {
-  color: #111827;
-  font-size: 18px;
+  color: var(--color-heading);
+  font-size: 16px;
 }
 
 .collaboration-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 12px;
+  gap: var(--space-4);
 }
 
 .collaboration-summary div {
-  padding: 12px;
-  border-radius: 6px;
-  background: #f8fafb;
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 .collaboration-summary dt {
@@ -87,31 +87,31 @@ h2 {
 }
 
 .collaboration-summary dd {
-  margin-top: 6px;
-  color: #111827;
-  font-size: 20px;
+  margin-top: var(--space-1);
+  color: var(--color-heading);
+  font-size: 18px;
   font-weight: 700;
 }
 
 .collaboration-note {
-  color: #5b6472;
-  font-size: 14px;
-  line-height: 1.6;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 .collaboration-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
 }

@@ -81,26 +81,26 @@ function handleSubmit() {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: #eef2f5;
-  color: #1f2937;
+  padding: var(--space-8);
+  background: var(--color-shell);
+  color: var(--color-text);
 }
 
 .login-panel {
   width: min(100%, 440px);
   display: grid;
-  gap: 22px;
-  padding: 28px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  gap: var(--space-7);
+  padding: var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
 }
 
 .login-header,
 .login-form {
   display: grid;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .eyebrow,
@@ -110,25 +110,25 @@ p {
 }
 
 .eyebrow {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
 h1 {
-  color: #111827;
-  font-size: 28px;
+  color: var(--color-heading);
+  font-size: 24px;
   line-height: 1.2;
 }
 
 .login-header p {
-  color: #5b6472;
-  line-height: 1.6;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 label {
   display: grid;
-  gap: 7px;
+  gap: var(--space-2);
 }
 
 label span {
@@ -138,12 +138,12 @@ label span {
 }
 
 input {
-  min-height: 42px;
-  padding: 0 12px;
+  min-height: var(--control-lg);
+  padding: 0 var(--space-4);
   border: 1px solid #c3ccd8;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
 }
 
@@ -154,40 +154,40 @@ input:focus {
 }
 
 .error-message {
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid #f0b8aa;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: #fffafa;
   color: #b42318;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .login-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 40px;
-  padding: 0 15px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
 
 .primary-button {
-  border: 1px solid #2f6f73;
-  background: #2f6f73;
-  color: #ffffff;
+  border: 1px solid var(--color-brand);
+  background: var(--color-brand);
+  color: var(--color-surface);
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 button:disabled,

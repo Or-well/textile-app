@@ -228,38 +228,39 @@ watch(
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   overflow: hidden;
 }
 
 .list-tools {
   display: grid;
-  gap: 9px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid #e5e7eb;
 }
 
 label {
   display: grid;
-  gap: 5px;
+  gap: var(--space-1);
 }
 
 label span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 input,
 select {
   width: 100%;
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-sm);
 }
 
 .entry-list {
@@ -276,23 +277,23 @@ select {
 
 .entry-row {
   display: grid;
-  gap: 4px;
+  gap: var(--space-1);
   width: 100%;
-  min-height: 58px;
-  padding: 8px 10px;
+  min-height: 50px;
+  padding: var(--space-2) var(--space-4);
   border: 0;
   border-bottom: 1px solid #e5e7eb;
   border-left: 3px solid transparent;
   border-radius: 0;
-  background: #ffffff;
-  color: #1f2937;
+  background: var(--color-surface);
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
 }
 
 .entry-row:hover,
 .entry-row.selected {
-  border-left-color: #2f6f73;
+  border-left-color: var(--color-brand);
   background: #f0f8f6;
 }
 
@@ -301,7 +302,7 @@ select {
 }
 
 .entry-row.selected.disputed {
-  border-left-color: #2f6f73;
+  border-left-color: var(--color-brand);
 }
 
 .entry-source {
@@ -309,47 +310,47 @@ select {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
-  color: #111827;
-  font-size: 13px;
+  color: var(--color-heading);
+  font-size: var(--font-sm);
   line-height: 1.35;
 }
 
 .entry-row-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: var(--space-1);
 }
 
 .entry-row-meta span {
   padding: 1px 6px;
   border-radius: 999px;
   background: #f3f5f7;
-  color: #5b6472;
-  font-size: 12px;
+  color: var(--color-muted);
+  font-size: var(--font-xs);
 }
 
 .entry-pagination {
   display: grid;
-  gap: 6px;
-  padding: 8px;
+  gap: var(--space-2);
+  padding: var(--space-3);
   border-top: 1px solid #e5e7eb;
-  background: #ffffff;
+  background: var(--color-surface);
 }
 
 .pagination-summary {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-3);
   margin: 0;
-  color: #5b6472;
-  font-size: 12px;
+  color: var(--color-muted);
+  font-size: var(--font-xs);
   line-height: 1.35;
 }
 
 .pagination-controls {
   display: grid;
-  grid-template-columns: 30px 30px minmax(54px, 1fr) 30px 30px 56px;
-  gap: 5px;
+  grid-template-columns: 28px 28px minmax(54px, 1fr) 28px 28px 54px;
+  gap: var(--space-1);
   align-items: center;
   min-width: 0;
 }
@@ -359,11 +360,11 @@ select {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  min-height: 32px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-sm);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 .pagination-controls button {
@@ -386,18 +387,18 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 32px;
+  min-height: var(--control-sm);
   min-width: 0;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  color: #111827;
-  font-size: 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-heading);
+  font-size: var(--font-xs);
   font-weight: 700;
 }
 
 .page-size-select {
   padding: 0 4px;
-  font-size: 13px;
+  font-size: var(--font-sm);
 }
 
 @media (max-width: 1180px) {

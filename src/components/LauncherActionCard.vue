@@ -39,15 +39,15 @@ function handleClick() {
 .launcher-action-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 12px;
+  gap: var(--space-1) var(--space-4);
   align-items: center;
   width: 100%;
-  min-height: 64px;
-  padding: 12px 14px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: 58px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -59,22 +59,22 @@ function handleClick() {
 }
 
 .launcher-action-card:hover:not(:disabled) {
-  border-color: #2f6f73;
+  border-color: var(--color-brand);
   background: #f8fcfb;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .launcher-action-card strong {
   grid-column: 1 / -1;
-  color: #111827;
-  font-size: 15px;
+  color: var(--color-heading);
+  font-size: var(--font-md);
   line-height: 1.25;
 }
 
 .launcher-action-card span {
   grid-column: 1 / -1;
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
   line-height: 1.45;
 }
 
@@ -97,9 +97,9 @@ function handleClick() {
 }
 
 .launcher-action-card.primary {
-  border-color: #2f6f73;
+  border-color: var(--color-brand);
   background: #f8fcfb;
-  box-shadow: inset 4px 0 0 #2f6f73;
+  box-shadow: inset 4px 0 0 var(--color-brand);
 }
 
 .launcher-action-card.primary strong {

@@ -1355,13 +1355,13 @@ onMounted(loadFileSummaries);
 <style scoped>
 .files-page {
   display: grid;
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 .title-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 h2,
@@ -1370,22 +1370,22 @@ p {
 }
 
 h2 {
-  color: #111827;
-  font-size: 22px;
+  color: var(--color-heading);
+  font-size: 18px;
 }
 
 .file-count {
-  padding: 5px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
-  font-size: 13px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
 .error-message,
 .notice-message {
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .error-message {
@@ -1399,16 +1399,16 @@ h2 {
 .batch-result,
 .empty-state,
 .empty-project-state {
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #4b5563;
 }
 
 .batch-result {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
   border-color: #f0b96a;
   background: #fffaf0;
 }
@@ -1421,30 +1421,31 @@ h2 {
 
 .empty-project-state {
   display: grid;
-  gap: 12px;
+  gap: var(--space-4);
   justify-items: start;
 }
 
 .empty-project-state div {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .file-groups {
   display: grid;
-  gap: 18px;
+  gap: var(--page-gap);
 }
 
 .batch-operation-select,
 .batch-folder-input {
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
+  font-size: var(--font-sm);
 }
 
 .batch-operation-select {
@@ -1457,23 +1458,24 @@ h2 {
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-sm);
   font: inherit;
+  font-size: var(--font-sm);
   cursor: pointer;
 }
 
 .primary-button {
   border: 0;
-  background: #2f6f73;
-  color: #ffffff;
+  background: var(--color-brand);
+  color: var(--color-surface);
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 button:disabled {

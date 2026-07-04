@@ -1834,10 +1834,10 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 1180px;
   margin: 0 auto;
-  padding: 2px 8px 28px;
+  padding: 0 0 22px;
   display: grid;
-  gap: 16px;
-  color: #1f2937;
+  gap: var(--page-gap);
+  color: var(--color-text);
 }
 
 .card-header p,
@@ -1861,8 +1861,8 @@ p {
 }
 
 h2 {
-  color: #111827;
-  font-size: 20px;
+  color: var(--color-heading);
+  font-size: 18px;
   line-height: 1.25;
 }
 
@@ -1914,10 +1914,10 @@ h3 {
 }
 
 .empty-state {
-  padding: 16px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #4b5563;
 }
 
@@ -1925,45 +1925,47 @@ h3 {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   align-items: start;
-  gap: 22px;
+  gap: var(--space-7);
 }
 
 .settings-nav,
 .settings-card {
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .settings-nav {
   position: sticky;
-  top: 76px;
+  top: 68px;
   display: grid;
   align-content: start;
-  gap: 3px;
-  padding: 12px;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-5);
 }
 
 .nav-title {
-  padding: 4px 10px 8px;
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-3);
   color: #6b7280;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-sm);
+  font-weight: 500;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 42px;
-  padding: 0 12px;
+  min-height: 44px;
+  padding: 0 var(--space-4);
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #374151;
   font: inherit;
-  font-size: 14px;
+  font-size: 16px;
+  line-height: 1.35;
   text-align: left;
   cursor: pointer;
 }
@@ -1985,21 +1987,21 @@ h3 {
 
 .settings-card {
   display: grid;
-  gap: 18px;
-  padding: 24px;
+  gap: var(--space-7);
+  padding: var(--space-7);
 }
 
 .card-header {
   display: grid;
-  gap: 5px;
-  padding-bottom: 14px;
+  gap: var(--space-1);
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid #eef1f5;
 }
 
 .settings-subsection {
   display: grid;
-  gap: 14px;
-  padding-top: 18px;
+  gap: var(--space-4);
+  padding-top: var(--space-7);
   border-top: 1px solid #eef1f5;
 }
 
@@ -2020,9 +2022,9 @@ h3 {
 .form-row {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
-  gap: 24px;
+  gap: var(--space-8);
   align-items: start;
-  padding: 16px 0;
+  padding: var(--space-5) 0;
   border-bottom: 1px solid #eef1f5;
 }
 
@@ -2064,20 +2066,20 @@ textarea {
   appearance: none;
   width: 100%;
   min-height: 40px;
-  padding: 0 11px;
+  padding: 0 var(--space-4);
   border: 1px solid #c3ccd8;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2937;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-md);
   box-shadow: inset 0 1px 1px rgba(15, 23, 42, 0.03);
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 textarea {
-  min-height: 116px;
-  padding: 10px 11px;
+  min-height: 84px;
+  padding: var(--space-3) var(--space-4);
   resize: vertical;
   line-height: 1.55;
 }
@@ -2121,8 +2123,8 @@ textarea:disabled {
 .checkbox-control {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-height: 38px;
+  gap: var(--space-3);
+  min-height: var(--control-md);
   color: #374151;
 }
 
@@ -2156,7 +2158,7 @@ textarea:disabled {
 
 .workflow-options {
   display: grid;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
 .workflow-options .checkbox-control {
@@ -2168,7 +2170,7 @@ textarea:disabled {
 .form-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 9px;
+  gap: var(--space-3);
 }
 
 .form-actions {
@@ -2181,13 +2183,13 @@ textarea:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 38px;
-  padding: 0 14px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: #ffffff;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
@@ -2231,10 +2233,10 @@ button:disabled {
 .placeholder-note,
 .sync-status,
 .collaboration-status {
-  padding: 12px;
+  padding: var(--space-4);
   border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #f8fafb;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
 }
 
 .member-table {
@@ -2250,7 +2252,7 @@ button:disabled {
   gap: 12px;
   align-items: center;
   min-height: 44px;
-  padding: 9px 12px;
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid #eef1f5;
   background: #ffffff;
 }
@@ -2260,7 +2262,7 @@ button:disabled {
 }
 
 .table-head {
-  min-height: 36px;
+  min-height: 40px;
   background: #f8fafb;
   color: #5b6472;
   font-size: 13px;
@@ -2274,14 +2276,14 @@ button:disabled {
 
 .role-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .role-card {
   position: relative;
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #ffffff;
@@ -2348,8 +2350,8 @@ code {
 
 .update-notes {
   display: grid;
-  gap: 6px;
-  padding: 12px;
+  gap: var(--space-2);
+  padding: var(--space-4);
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #f8fafb;
@@ -2366,7 +2368,7 @@ code {
   z-index: 80;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: var(--space-7);
   background: rgb(15 23 42 / 0.46);
 }
 
@@ -2386,14 +2388,15 @@ code {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  padding: 16px 18px;
+  gap: var(--space-7);
+  padding: var(--space-4) var(--panel-padding);
   border-bottom: 1px solid #e5e7eb;
 }
 
 .license-dialog-header h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.3;
 }
 
 .license-dialog-header p {
@@ -2404,7 +2407,7 @@ code {
 .license-text {
   min-height: 0;
   margin: 0;
-  padding: 16px 18px;
+  padding: var(--space-4) var(--panel-padding);
   overflow: auto;
   background: #f8fafb;
   color: #1f2937;
@@ -2420,17 +2423,17 @@ code {
 
 .danger-list {
   display: grid;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .danger-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
+  gap: var(--space-7);
   align-items: center;
-  padding: 14px;
+  padding: var(--space-4);
   border: 1px solid #ead7d2;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: #fffafa;
 }
 

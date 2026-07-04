@@ -633,7 +633,7 @@ onMounted(loadFileEntries);
 <style scoped>
 .entry-page {
   display: grid;
-  gap: 16px;
+  gap: var(--page-gap);
 }
 
 p {
@@ -641,18 +641,18 @@ p {
 }
 
 .entry-count {
-  padding: 5px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
-  background: #e6f0ef;
-  color: #174346;
-  font-size: 13px;
+  background: var(--color-brand-soft);
+  color: var(--color-brand-strong);
+  font-size: var(--font-sm);
   font-weight: 700;
 }
 
 .error-message,
 .saved-message,
 .empty-state {
-  line-height: 1.7;
+  line-height: 1.5;
 }
 
 .error-message {
@@ -664,17 +664,17 @@ p {
 }
 
 .empty-state {
-  padding: 18px;
-  border: 1px solid #d7dde5;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: #4b5563;
 }
 
 .entry-page-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
   min-height: 0;
 }
@@ -685,9 +685,9 @@ p {
     minmax(300px, 0.82fr)
     minmax(340px, 1.34fr)
     minmax(250px, 0.84fr);
-  gap: 14px;
+  gap: var(--space-4);
   min-width: 0;
-  height: calc(100vh - 196px);
+  height: calc(100vh - 172px);
   min-height: 0;
   overflow-x: clip;
   overflow-y: hidden;

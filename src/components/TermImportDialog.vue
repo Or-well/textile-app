@@ -140,19 +140,19 @@ function handleSubmit() {
   z-index: 30;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: var(--space-7);
   background: rgba(15, 23, 42, 0.38);
 }
 
 .dialog {
   display: grid;
-  gap: 16px;
+  gap: var(--space-4);
   width: min(760px, 100%);
   max-height: calc(100vh - 40px);
   overflow: auto;
-  padding: 20px;
-  border-radius: 8px;
-  background: #ffffff;
+  padding: var(--panel-padding);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
 }
 
@@ -162,65 +162,66 @@ p {
 }
 
 h2 {
-  color: #111827;
-  font-size: 22px;
+  color: var(--color-heading);
+  font-size: 18px;
+  line-height: 1.3;
 }
 
 p {
-  color: #4b5563;
-  line-height: 1.6;
+  color: var(--color-muted);
+  line-height: 1.5;
 }
 
 .file-input {
   display: grid;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .file-input span {
-  color: #5b6472;
-  font-size: 13px;
+  color: var(--color-muted);
+  font-size: var(--font-sm);
 }
 
 input[type="file"] {
-  min-height: 42px;
-  padding: 8px;
-  border: 1px solid #c8d0dc;
-  border-radius: 6px;
+  min-height: var(--control-lg);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
 }
 
 .selected-file {
-  padding: 10px;
-  border: 1px solid #d7dde5;
-  border-radius: 6px;
-  background: #f8fafb;
-  font-size: 13px;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-size: var(--font-sm);
 }
 
 footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .primary-button,
 .secondary-button {
-  min-height: 38px;
-  padding: 0 14px;
-  border-radius: 6px;
+  min-height: var(--control-md);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-sm);
   font: inherit;
   cursor: pointer;
 }
 
 .primary-button {
   border: 0;
-  background: #2f6f73;
+  background: var(--color-brand);
   color: #ffffff;
 }
 
 .secondary-button {
-  border: 1px solid #c8d0dc;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
 }
 
 button:disabled {
