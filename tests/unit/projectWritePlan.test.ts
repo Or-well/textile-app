@@ -132,4 +132,30 @@ describe("ProjectWritePlan", () => {
       "同一写入计划不能重复操作路径",
     );
   });
+
+  it("does not snapshot parent directories for an existing file write", async () => {
+    const baseStorage = await createStorage({
+      "data/existing.txt": "old",
+    });
+    const checkedPaths: string[] = [];
+    const storage = new Proxy(baseStorage, {
+      get(target, property) {
+        if (property === "fileExists") {
+          return async (path: string) => {
+            checkedPaths.push(path);
+            return target.fileExists(path);
+          };
+        }
+
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const plan = createProjectWritePlan(storage);
+
+    plan.writeText("data/existing.txt", "new");
+    await plan.execute();
+
+    expect(checkedPaths).toEqual(["data/existing.txt"]);
+  });
 });

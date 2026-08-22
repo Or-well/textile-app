@@ -1,4 +1,5 @@
 import { stringifyJsonl } from "../utils/jsonl";
+import { mapWithConcurrency } from "../utils/async";
 import type { ProjectStorage } from "./projectStorage";
 
 type WritePlanOperation =
@@ -56,6 +57,7 @@ export class ProjectWritePlanError extends Error {
 }
 
 const textEncoder = new TextEncoder();
+const SNAPSHOT_CONCURRENCY = 8;
 
 function normalizePath(path: string): string {
   const parts = path
@@ -221,32 +223,63 @@ export class ProjectWritePlan {
     directorySnapshots: Map<string, DirectorySnapshot>,
     implicitParentSnapshots: Map<string, DirectorySnapshot>,
   ): Promise<void> {
-    for (const operation of this.operations) {
-      if (
-        operation.kind === "write" ||
-        operation.kind === "delete_file"
-      ) {
-        const existed = await this.storage.fileExists(operation.path);
+    const snapshots = await mapWithConcurrency(
+      this.operations,
+      SNAPSHOT_CONCURRENCY,
+      async (operation) => {
+        if (
+          operation.kind === "write" ||
+          operation.kind === "delete_file"
+        ) {
+          const existed = await this.storage.fileExists(operation.path);
 
+          return {
+            operation,
+            existed,
+            content: existed
+              ? await this.storage.readBinary(operation.path)
+              : undefined,
+          };
+        }
+
+        return {
+          operation,
+          existed: await this.storage.fileExists(operation.path),
+        };
+      },
+    );
+    const parentPaths = new Set<string>();
+
+    for (const snapshot of snapshots) {
+      const { operation, existed } = snapshot;
+
+      if (operation.kind === "write" || operation.kind === "delete_file") {
         fileSnapshots.set(operation.path, {
           existed,
-          content: existed
-            ? await this.storage.readBinary(operation.path)
-            : undefined,
+          content: snapshot.content,
         });
 
-        for (const parentPath of getParentPaths(operation.path)) {
-          if (!implicitParentSnapshots.has(parentPath)) {
-            implicitParentSnapshots.set(parentPath, {
-              existed: await this.storage.fileExists(parentPath),
-            });
-          }
+        if (operation.kind === "write" && !existed) {
+          getParentPaths(operation.path).forEach((path) => parentPaths.add(path));
         }
       } else {
-        directorySnapshots.set(operation.path, {
-          existed: await this.storage.fileExists(operation.path),
-        });
+        directorySnapshots.set(operation.path, { existed });
       }
+    }
+
+    const parentSnapshots = await mapWithConcurrency(
+      Array.from(parentPaths),
+      SNAPSHOT_CONCURRENCY,
+      async (path) => ({
+        path,
+        existed: await this.storage.fileExists(path),
+      }),
+    );
+
+    for (const snapshot of parentSnapshots) {
+      implicitParentSnapshots.set(snapshot.path, {
+        existed: snapshot.existed,
+      });
     }
   }
 

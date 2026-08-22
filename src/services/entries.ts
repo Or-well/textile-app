@@ -40,7 +40,9 @@ import { createProjectWritePlan } from "./projectWritePlan";
 import { assertEntryContentWritable } from "./entryAccess";
 import {
   findProjectEventFromNewest,
+  loadProjectEventLogTail,
   planAppendProjectEvents,
+  type ProjectEventLogTail,
 } from "./eventLog";
 import {
   assertCan,
@@ -807,13 +809,14 @@ async function commitEntryAndVersionEvent(
   chunkPath: string,
   entries: Entry[],
   event?: ProjectEvent,
+  eventLogTail?: ProjectEventLogTail,
 ): Promise<void> {
   const writePlan = createProjectWritePlan(storage);
 
   writePlan.writeJsonl(chunkPath, entries);
 
   if (event) {
-    await planAppendProjectEvents(writePlan, storage, [event]);
+    await planAppendProjectEvents(writePlan, storage, [event], eventLogTail);
   }
 
   await writePlan.execute();
@@ -1056,14 +1059,16 @@ export async function saveSourceText(path: string, text: string): Promise<void> 
   await getProjectStorage().writeText(path, text);
 }
 
-export async function loadAllEntries(): Promise<Entry[]> {
+export async function loadAllEntries(
+  options: { concurrency?: number } = {},
+): Promise<Entry[]> {
   const storage = getProjectStorage();
 
   try {
     const fileIds = await storage.listFiles("entries");
     const entryGroups = await mapWithConcurrency(
       fileIds,
-      8,
+      options.concurrency ?? 8,
       (fileId) => loadEntries(fileId),
     );
     return normalizeEntries(entryGroups.flat())
@@ -1146,12 +1151,14 @@ export async function saveEntry(
     const { chunkPath, entries, entryIndex } = storedChunk;
 
     const storedEntry = normalizeEntry(entries[entryIndex]);
+    const eventLogTail = await loadProjectEventLogTail(storage);
     const auditEvent = await findProjectEventFromNewest(
       storage,
       (event) =>
         isEntryVersionEvent(event) &&
         event.entry_id === storedEntry.id &&
         event.created_at === storedEntry.updated_at,
+      eventLogTail,
     );
     const historyAudit = deriveEntryWorkflowAudit(
       storedEntry,
@@ -1210,6 +1217,7 @@ export async function saveEntry(
       chunkPath,
       entries,
       versionEvent,
+      eventLogTail,
     );
 
     cacheEntry(savedEntry);
@@ -1246,9 +1254,11 @@ export async function restoreEntryVersion(
   const storage = getProjectStorage();
   const actor = resolveActor(options.actor);
   const fileId = getFileIdFromEntryId(entryId);
+  const eventLogTail = await loadProjectEventLogTail(storage);
   const versionEvent = await findProjectEventFromNewest(
     storage,
     (event) => event.id === versionEventId,
+    eventLogTail,
   );
 
   if (
@@ -1315,6 +1325,7 @@ export async function restoreEntryVersion(
       chunkPath,
       entries,
       restoreEvent,
+      eventLogTail,
     );
     cacheEntry(restoredEntry);
 

@@ -171,12 +171,8 @@ describe("project deletion", () => {
           };
         }
 
-        if (command === "read_project_binary_file") {
-          return Array.from(
-            new TextEncoder().encode(
-              JSON.stringify({ project_id: project.project_id }),
-            ),
-          );
+        if (command === "read_project_text_file") {
+          return JSON.stringify({ project_id: project.project_id });
         }
 
         if (command === "delete_project_directory_path") {

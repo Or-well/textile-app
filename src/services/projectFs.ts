@@ -488,6 +488,68 @@ class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
     return joinNativeDirectoryPath(this.rootPath, this.path);
   }
 
+  private resolvePath(path: string): string {
+    return joinProjectPath(this.path, assertSafePath(path).join("/"));
+  }
+
+  readText(path: string): Promise<string> {
+    return invokeTauriCommand<string>("read_project_text_file", {
+      rootPath: this.rootPath,
+      relativePath: this.resolvePath(path),
+    });
+  }
+
+  async readBinary(path: string): Promise<Uint8Array> {
+    return toUint8Array(
+      await invokeTauriCommand<Uint8Array | number[]>("read_project_binary_file", {
+        rootPath: this.rootPath,
+        relativePath: this.resolvePath(path),
+      }),
+    );
+  }
+
+  writeText(path: string, content: string): Promise<void> {
+    return invokeTauriCommand<void>("write_project_text_file", {
+      rootPath: this.rootPath,
+      relativePath: this.resolvePath(path),
+      content,
+    });
+  }
+
+  writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+    return invokeTauriCommand<void>("write_project_binary_file", {
+      rootPath: this.rootPath,
+      relativePath: this.resolvePath(path),
+      bytes,
+    });
+  }
+
+  entryStatus(path: string): Promise<NativeProjectEntryStatus> {
+    return getNativeProjectEntryStatus(this.rootPath, this.resolvePath(path));
+  }
+
+  ensureDirectory(path: string): Promise<void> {
+    return invokeTauriCommand<void>("ensure_project_directory", {
+      rootPath: this.rootPath,
+      relativePath: this.resolvePath(path),
+    });
+  }
+
+  listFiles(path: string): Promise<string[]> {
+    return invokeTauriCommand<string[]>("list_project_directory", {
+      rootPath: this.rootPath,
+      relativePath: this.resolvePath(path),
+    });
+  }
+
+  deleteEntry(path: string, recursive = false): Promise<void> {
+    return invokeTauriCommand<void>("delete_project_entry", {
+      rootPath: this.rootPath,
+      relativePath: this.resolvePath(path),
+      recursive,
+    });
+  }
+
   async queryPermission(): Promise<PermissionState> {
     return "granted";
   }
@@ -705,6 +767,10 @@ export async function readTextFile(
   root: ProjectDirectoryHandle,
   path: string,
 ): Promise<string> {
+  if (root instanceof NativeProjectDirectoryHandle) {
+    return root.readText(path);
+  }
+
   const fileHandle = await getFileByPath(root, path);
   const file = await fileHandle.getFile();
 
@@ -715,6 +781,10 @@ export async function readBinaryFile(
   root: ProjectDirectoryHandle,
   path: string,
 ): Promise<Uint8Array> {
+  if (root instanceof NativeProjectDirectoryHandle) {
+    return root.readBinary(path);
+  }
+
   const fileHandle = await getFileByPath(root, path);
   const file = await fileHandle.getFile();
 
@@ -727,6 +797,11 @@ export async function writeTextFile(
   content: string,
 ): Promise<void> {
   await withAppOperation("项目写入", async () => {
+    if (root instanceof NativeProjectDirectoryHandle) {
+      await root.writeText(path, content);
+      return;
+    }
+
     const fileHandle = await getFileByPath(root, path, true);
     const writable = await fileHandle.createWritable();
 
@@ -741,6 +816,11 @@ export async function writeBinaryFile(
   content: Uint8Array,
 ): Promise<void> {
   await withAppOperation("项目写入", async () => {
+    if (root instanceof NativeProjectDirectoryHandle) {
+      await root.writeBinary(path, content);
+      return;
+    }
+
     const fileHandle = await getFileByPath(root, path, true);
     const writable = await fileHandle.createWritable();
 
@@ -795,6 +875,10 @@ export async function listFiles(
   root: ProjectDirectoryHandle,
   path: string,
 ): Promise<string[]> {
+  if (root instanceof NativeProjectDirectoryHandle) {
+    return (await root.listFiles(path)).sort((a, b) => a.localeCompare(b));
+  }
+
   const directory = await getDirectoryByPath(root, path);
   const names: string[] = [];
 
@@ -809,6 +893,11 @@ export async function ensureDirectory(
   root: ProjectDirectoryHandle,
   path: string,
 ): Promise<void> {
+  if (root instanceof NativeProjectDirectoryHandle) {
+    await root.ensureDirectory(path);
+    return;
+  }
+
   await getDirectoryByPath(root, path, true);
 }
 
@@ -816,6 +905,10 @@ export async function fileExists(
   root: ProjectDirectoryHandle,
   path: string,
 ): Promise<boolean> {
+  if (root instanceof NativeProjectDirectoryHandle) {
+    return (await root.entryStatus(path)).exists;
+  }
+
   const parts = assertSafePath(path);
   const name = parts.pop();
 
@@ -844,6 +937,11 @@ export async function deleteEntry(
   options: { recursive?: boolean } = {},
 ): Promise<void> {
   await withAppOperation("项目删除", async () => {
+    if (root instanceof NativeProjectDirectoryHandle) {
+      await root.deleteEntry(path, options.recursive ?? false);
+      return;
+    }
+
     const parts = assertSafePath(path);
     const name = parts.pop();
 

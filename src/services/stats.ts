@@ -198,6 +198,11 @@ export async function getProjectStats(
   entries?: Entry[],
   weights?: ProgressWeightInput,
   workflow?: WorkflowInput,
+  options: { concurrency?: number } = {},
 ): Promise<BasicProjectStats> {
-  return calculateEntryProgress(entries ?? (await loadAllEntries()), weights, workflow);
+  return calculateEntryProgress(
+    entries ?? (await loadAllEntries(options)),
+    weights,
+    workflow,
+  );
 }

@@ -148,6 +148,7 @@ const packedProjectNotice = ref("");
 const projectFilePreview = ref<ProjectPackagePreview | null>(null);
 const previewedProjectFile = ref<File | null>(null);
 let projectSummaryRequestId = 0;
+let projectSummaryTimer: number | undefined;
 
 const route = computed(() => parseRoute(routePath.value));
 const currentProjectSummary = computed<ProjectSummary | null>(() => {
@@ -395,7 +396,6 @@ async function enterOpenedProject(
   configureProjectServices(project);
   currentStats.value = null;
   taskCount.value = 0;
-  void refreshProjectSummary();
 
   const loginMember = options.loginAs ?? restoreUserFromSession(project);
 
@@ -437,6 +437,8 @@ async function enterOpenedProject(
         : "");
     navigate(`/projects/${encodeURIComponent(project.config.project_id)}`);
   }
+
+  scheduleProjectSummary();
 }
 
 function buildProjectSectionPath(
@@ -524,6 +526,7 @@ async function refreshProjectSummary() {
       undefined,
       project.config.settings.progress_weights,
       project.config.settings.workflow,
+      { concurrency: 2 },
     );
 
     if (
@@ -552,6 +555,17 @@ async function refreshProjectSummary() {
       taskCount.value = 0;
     }
   }
+}
+
+function scheduleProjectSummary(delay = 500): void {
+  if (projectSummaryTimer !== undefined) {
+    window.clearTimeout(projectSummaryTimer);
+  }
+
+  projectSummaryTimer = window.setTimeout(() => {
+    projectSummaryTimer = undefined;
+    void refreshProjectSummary();
+  }, delay);
 }
 
 async function handleOpenLocalProject() {
@@ -1131,6 +1145,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (projectSummaryTimer !== undefined) {
+    window.clearTimeout(projectSummaryTimer);
+  }
+
   disposeAppUpdate();
   window.removeEventListener("popstate", handlePopState);
   window.removeEventListener("hproj-project-dirty", handlePackedProjectDirty);

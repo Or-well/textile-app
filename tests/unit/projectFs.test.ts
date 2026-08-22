@@ -3,6 +3,7 @@ import {
   createNativeProjectDirectory,
   deleteEntry,
   ensureDirectory,
+  fileExists,
   listFiles,
   readTextFile,
   writeTextFile,
@@ -34,12 +35,8 @@ describe("native project directory adapter", () => {
           return undefined;
         }
 
-        if (command === "native_project_entry_status") {
-          return { exists: true, kind: "file" };
-        }
-
-        if (command === "read_project_binary_file") {
-          return Array.from(new TextEncoder().encode("project"));
+        if (command === "read_project_text_file") {
+          return "project";
         }
 
         throw new Error(`Unexpected command: ${command}`);
@@ -59,7 +56,7 @@ describe("native project directory adapter", () => {
       rootPath: "C:\\Imports",
       relativePath: "Demo-project1",
     });
-    expect(invokeMock).toHaveBeenCalledWith("read_project_binary_file", {
+    expect(invokeMock).toHaveBeenCalledWith("read_project_text_file", {
       rootPath: "C:\\Imports",
       relativePath: "Demo-project1/project.json",
     });
@@ -68,15 +65,8 @@ describe("native project directory adapter", () => {
   it("reads project files through Tauri using relative project paths", async () => {
     invokeMock.mockImplementation(
       async (command: string, args: { relativePath?: string }) => {
-        if (command === "native_project_entry_status") {
-          return {
-            exists: true,
-            kind: args.relativePath === "entries" ? "directory" : "file",
-          };
-        }
-
-        if (command === "read_project_binary_file") {
-          return Array.from(new TextEncoder().encode("hello"));
+        if (command === "read_project_text_file") {
+          return "hello";
         }
 
         throw new Error(`Unexpected command: ${command}`);
@@ -87,11 +77,8 @@ describe("native project directory adapter", () => {
     const text = await readTextFile(root, "entries/000001.jsonl");
 
     expect(text).toBe("hello");
-    expect(invokeMock).toHaveBeenCalledWith("native_project_entry_status", {
-      rootPath: "C:\\Projects\\Demo",
-      relativePath: "entries/000001.jsonl",
-    });
-    expect(invokeMock).toHaveBeenCalledWith("read_project_binary_file", {
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("read_project_text_file", {
       rootPath: "C:\\Projects\\Demo",
       relativePath: "entries/000001.jsonl",
     });
@@ -103,10 +90,7 @@ describe("native project directory adapter", () => {
 
     await writeTextFile(root, "entries/000001.jsonl", "updated");
 
-    expect(invokeMock).toHaveBeenCalledWith("ensure_project_directory", {
-      rootPath: "C:\\Projects\\Demo",
-      relativePath: "entries",
-    });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock).toHaveBeenCalledWith("write_project_text_file", {
       rootPath: "C:\\Projects\\Demo",
       relativePath: "entries/000001.jsonl",
@@ -116,10 +100,6 @@ describe("native project directory adapter", () => {
 
   it("lists native project directories through Tauri", async () => {
     invokeMock.mockImplementation(async (command: string) => {
-      if (command === "native_project_entry_status") {
-        return { exists: true, kind: "directory" };
-      }
-
       if (command === "list_project_directory") {
         return ["000002.jsonl", "000001.jsonl"];
       }
@@ -136,6 +116,7 @@ describe("native project directory adapter", () => {
       rootPath: "C:\\Projects\\Demo",
       relativePath: "entries",
     });
+    expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
   it("creates and deletes native project entries through Tauri", async () => {
@@ -153,16 +134,25 @@ describe("native project directory adapter", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("ensure_project_directory", {
       rootPath: "C:\\Projects\\Demo",
-      relativePath: "exports",
-    });
-    expect(invokeMock).toHaveBeenCalledWith("ensure_project_directory", {
-      rootPath: "C:\\Projects\\Demo",
       relativePath: "exports/review",
     });
     expect(invokeMock).toHaveBeenCalledWith("delete_project_entry", {
       rootPath: "C:\\Projects\\Demo",
       relativePath: "entries/old.jsonl",
       recursive: true,
+    });
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks a nested native path with one status request", async () => {
+    invokeMock.mockResolvedValue({ exists: true, kind: "file" });
+    const root = createNativeProjectDirectory("C:\\Projects\\Demo", "Demo");
+
+    await expect(fileExists(root, "entries/000001.jsonl")).resolves.toBe(true);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("native_project_entry_status", {
+      rootPath: "C:\\Projects\\Demo",
+      relativePath: "entries/000001.jsonl",
     });
   });
 });

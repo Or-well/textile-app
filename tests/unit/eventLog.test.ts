@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ProjectEvent } from "../../src/model/types";
 import {
+  EVENT_LOG_CHUNK_BYTES,
   EVENT_LOG_CHUNK_SIZE,
   findProjectEventFromNewest,
+  loadProjectEventLogTail,
   loadProjectEventsFromStorage,
+  planAppendProjectEvents,
   planReplaceProjectEvents,
 } from "../../src/services/eventLog";
 import { appendEventToStorage } from "../../src/services/history";
@@ -86,6 +89,51 @@ describe("event log chunking", () => {
         ([path]) => path === "logs/events/chunk_000001.jsonl",
       ),
     ).toBe(false);
+  });
+
+  it("reuses one active-log read for lookup and append", async () => {
+    const storage = createProjectStorage(createMemoryProjectDirectory({}));
+    const active = createEvent(1);
+    await storage.writeJsonl("logs/events.jsonl", [active]);
+    const readJsonl = vi.spyOn(storage, "readJsonl");
+    const tail = await loadProjectEventLogTail(storage);
+
+    await expect(
+      findProjectEventFromNewest(
+        storage,
+        (event) => event.id === active.id,
+        tail,
+      ),
+    ).resolves.toEqual(active);
+
+    const writePlan = createProjectWritePlan(storage);
+    await planAppendProjectEvents(writePlan, storage, [createEvent(2)], tail);
+    await writePlan.execute();
+
+    expect(
+      readJsonl.mock.calls.filter(([path]) => path === "logs/events.jsonl"),
+    ).toHaveLength(1);
+  });
+
+  it("also archives active logs that exceed the byte limit", async () => {
+    const storage = createProjectStorage(createMemoryProjectDirectory({}));
+    const events = Array.from({ length: 3 }, (_, index) => ({
+      ...createEvent(index),
+      detail: { note: "字".repeat(60_000) },
+    }));
+    const writePlan = createProjectWritePlan(storage);
+
+    await planReplaceProjectEvents(writePlan, storage, events);
+    await writePlan.execute();
+
+    const activeText = await storage.readText("logs/events.jsonl");
+    expect(new TextEncoder().encode(activeText).byteLength).toBeLessThanOrEqual(
+      EVENT_LOG_CHUNK_BYTES,
+    );
+    await expect(loadProjectEventsFromStorage(storage)).resolves.toEqual(events);
+    await expect(
+      storage.fileExists("logs/events/chunk_000001.jsonl"),
+    ).resolves.toBe(true);
   });
 
   it("replaces the complete log and removes surplus archive chunks", async () => {
