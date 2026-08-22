@@ -19,7 +19,11 @@ export async function createZip(files: ZipContent): Promise<Blob> {
     zip.file(path, content);
   }
 
-  return zip.generateAsync({ type: "blob" });
+  return zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
 }
 
 export async function readZip(

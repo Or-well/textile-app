@@ -53,7 +53,9 @@ export interface ReleaseExportSettings {
   only_reviewed?: boolean;
   include_source?: boolean;
   include_key?: boolean;
+  /** @deprecated 旧项目兼容字段，成品包不再生成检查报告。 */
   include_report?: boolean;
+  /** @deprecated 旧项目兼容字段，成品包不再生成项目清单。 */
   include_manifest?: boolean;
 }
 

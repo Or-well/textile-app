@@ -509,7 +509,6 @@ terms/
 tasks/
 comments/
 logs/
-exports/
 changes/
 ```
 
@@ -522,7 +521,7 @@ changes/
 - `tasks/`
 - `project.json` 中每个文件的 `entries_path`
 
-`source/`、`comments/`、`logs/`、`exports/`、`changes/` 当前不是打开项目的强制路径，但缺失会影响相关功能或备份完整性。
+`source/`、`comments/`、`logs/`、`exports/`、`changes/` 当前不是打开项目的强制路径。`source/`、`comments/`、`logs/`、`changes/` 缺失会影响相关功能或备份完整性；`exports/` 是可重新生成的发布空间，不进入 `.hproj`。
 
 ## 9. `.hproj` 项目包
 
@@ -532,11 +531,13 @@ changes/
 
 1. 读取 `project.json`。
 2. 读取可选 `members.json`。
-3. 递归收集已存在的项目目录。
+3. 递归收集已存在的项目权威目录；排除可重新生成的 `exports/`。
 4. 生成 Blob。
 5. 页面通过 `saveGeneratedFile()` 进入可确认结果的保存流程。
 6. Tauri 使用原生保存对话框和后端分块写入；Web/PWA 使用 `showSaveFilePicker()`。不支持可靠保存的环境直接返回失败，不触发浏览器原生下载。
 7. 只有文件确认写入成功后，才调用 `completeProjectPackageExport()` 清除内存项目 dirty 状态。
+
+导出收集使用“能列目录则递归，否则按文件读取”的明确判断。任何项目路径既不能列出也不能读取时，导出会报告具体相对路径并停止，不生成静默缺文件的备份。被收集目录中出现 `.hproj` 时同样停止，避免备份嵌套备份；`changes/transitions/*.zip` 属于协作信任记录，继续正常打包。
 
 导出页和设置页在执行 `.hproj` 备份前会调用 `shouldWarnProjectBackupMissingPublisherKey()` 做软提醒：当项目要求普通修改包签名、当前成员拥有发布项目更新包权限，且当前成员没有有效公钥时，先弹出“建议先登记负责人公钥”。用户可以继续导出备份，不会被强制阻拦；如果选择创建负责人身份密钥，两个页面共用 `useProjectBackupPublisherKey.ts` 编排 `prepareOwnSigningKeyGeneration()`、私钥文件保存和 `commitPreparedOwnSigningKeyGeneration()`。该流程先生成内存候选和 `member-key.json`，确认私钥文件保存成功后才写入 `members.json`。创建成功后不自动继续导出 `.hproj`，要求用户重新发起备份，避免密钥创建和项目分发混成一个不可确认的连续动作。私钥不进入 `.hproj`。
 
@@ -636,9 +637,7 @@ changes/
       "default_format": "json",
       "only_reviewed": false,
       "include_source": true,
-      "include_key": true,
-      "include_report": true,
-      "include_manifest": true
+      "include_key": true
     },
     "collaboration": {
       "require_signed_change_packages": true
@@ -664,6 +663,7 @@ changes/
 - `allow_self_proofread`、`allow_self_review`、`allow_same_user_multi_proofread`：创建项目页可选择并默认勾选允许；旧项目缺失字段时由 `normalizeWorkflowSettings()` 按不允许兼容读取。
 - `role_permissions`：项目可覆盖默认角色权限。
 - `permission_schema_version`：角色权限配置兼容版本。旧项目缺失时按 v1 读取并补充新增的词条管理默认权限；v2 以前补充词条锁定和隐藏默认权限；保存角色权限后写入当前版本，之后严格按当前配置生效。
+- 旧项目中的 `export.include_report` 和 `export.include_manifest` 继续允许读取，但成品包不再生成检查报告或项目清单；下次保存导出设置时不会继续写入这两个兼容字段。
 
 ## 11. `members.json`
 
@@ -764,7 +764,7 @@ terms/terms.jsonl
 - 没有 id 时按 source。
 - 支持 JSON、JSONL、CSV、XLSX 第一工作表。
 - CSV 使用 `utils/csv.ts` 统一解析，支持引号、逗号、转义引号和多行字段。
-- 术语目标匹配和成品导出术语报告都遵守 `case_sensitive`。
+- 术语目标匹配遵守 `case_sensitive`。
 - 不支持旧 `.xls`。
 
 导出当前只生成 JSONL。
@@ -887,7 +887,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 ## 18. `exports/`
 
-新项目创建 `exports/releases/`，`.hproj` 会打包 `exports/`。
+新项目创建 `exports/releases/`。该目录保存可重新生成的发布产物，不进入 `.hproj`，避免历史成品和备份反复嵌套造成体积增长。
 
 当前成品导出、术语导出、词条交换文件、导入示例文件、身份密钥文件、修改包和项目备份都通过 `utils/saveBlob.ts` 的 `saveGeneratedFile()` 统一保存。Tauri 使用原生保存对话框和 Rust 后端写入；Web/PWA 使用 `showSaveFilePicker()`。无法确认保存结果时返回 `unavailable`，不使用浏览器 `<a download>` 兜底。导出结果不会自动写到项目的 `exports/` 目录，因此该目录目前更接近保留的项目内发布空间，而不是所有导出的自动历史。
 
@@ -1297,7 +1297,6 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 
 - `TermsPage`
 - `EntryAssistPanel`
-- `exporter.ts` 的术语报告
 - `changes.ts`
 
 风险点：
@@ -2070,7 +2069,7 @@ const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 
 - 按项目设置收集可发布词条。
 - 调用格式适配器。
-- 生成发布 ZIP、manifest 和报告。
+- 生成只包含转换后成品文件的发布 ZIP。
 - 生成导出前摘要。
 
 格式适配器：
@@ -2084,14 +2083,20 @@ const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 
 - 当前项目根。
 - `ExportProjectOptions`。
-- 当前发布成员 ID。
 
 输出：
 
 - 文件名。
 - ZIP Blob。
-- manifest。
 - summary。
+
+ZIP 内容：
+
+- 成品文件直接位于 ZIP 根目录，不增加 `release/` 外层目录。
+- 原文件主名称保持不变，扩展名替换为所选导出格式。
+- 不生成检查报告或项目清单。
+- 转换后路径按不区分大小写检查重复；出现同名文件时阻止导出，不自动改名或覆盖。
+- 通用 ZIP 生成使用 DEFLATE level 6 压缩。
 
 过滤：
 
@@ -2101,12 +2106,6 @@ const privateKeys = new Map<string, LoadedSigningPrivateKey>();
   - 审核开启：保留 `status === "reviewed"`。
   - 审核关闭且校对开启：保留达到 `proofread_required` 的词条。
   - 审核和校对都关闭：保留有译文的词条。
-
-报告：
-
-- 未翻译。
-- 争议。
-- 术语检查。
 
 风险和限制：
 
@@ -2140,7 +2139,6 @@ const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 - tasks
 - comments
 - logs
-- exports
 - changes
 
 修改时必须保留：
@@ -2148,6 +2146,9 @@ const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 - 路径清理。
 - source 打包。
 - 不存在目录跳过。
+- `exports/` 排除。
+- 嵌套 `.hproj` 阻断。
+- 无法读取路径必须带路径报错，不得静默遗漏。
 - packed dirty 状态清除。
 
 ## 42. `auth.ts`
@@ -2665,7 +2666,7 @@ GitHub Release 应上传：
 3. 在 `exporter.ts` 的 format 分发接入。
 4. 更新设置页和导入导出页选项。
 5. 明确 source、key、speaker、换行和转义规则。
-6. 检查隐藏词条、only reviewed、报告和 manifest。
+6. 检查隐藏词条、only reviewed、输出主名称和转换后同名冲突。
 7. 对样例项目手动导出并解压检查。
 
 ## 53. 如何调试

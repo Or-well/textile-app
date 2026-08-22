@@ -125,7 +125,7 @@ interface NormalizedProjectPackage {
   directories: string[];
 }
 
-const PACKED_PROJECT_DIRECTORIES = [
+const PROJECT_PACKAGE_DIRECTORIES = [
   "source",
   "entries",
   "terms",
@@ -133,6 +133,16 @@ const PACKED_PROJECT_DIRECTORIES = [
   "comments",
   "logs",
   "exports",
+  "changes",
+] as const;
+
+const PROJECT_PACKAGE_EXPORT_DIRECTORIES = [
+  "source",
+  "entries",
+  "terms",
+  "tasks",
+  "comments",
+  "logs",
   "changes",
 ] as const;
 
@@ -424,7 +434,7 @@ function getImportStatus(
 function getIncludedDirectories(
   projectPackage: NormalizedProjectPackage,
 ): string[] {
-  return PACKED_PROJECT_DIRECTORIES.filter((path) =>
+  return PROJECT_PACKAGE_DIRECTORIES.filter((path) =>
     packagePathExists(projectPackage, path),
   );
 }
@@ -516,7 +526,7 @@ function getPackageDirectories(
   projectPackage: NormalizedProjectPackage,
 ): string[] {
   const directories = new Set<string>([
-    ...PACKED_PROJECT_DIRECTORIES,
+    ...PROJECT_PACKAGE_DIRECTORIES,
     ...projectPackage.directories,
   ]);
 
@@ -764,45 +774,42 @@ async function prepareProjectPackageImport(file: File): Promise<{
   return { projectPackage, preview };
 }
 
-async function addFileIfExists(
-  root: ProjectDirectoryHandle,
-  files: ZipContent,
-  path: string,
-): Promise<void> {
-  if (!(await fileExists(root, path))) {
-    return;
-  }
-
-  files[path] = await readBinaryFile(root, path);
-}
-
 async function collectDirectory(
   root: ProjectDirectoryHandle,
   files: ZipContent,
   path: string,
 ): Promise<void> {
-  if (!(await fileExists(root, path))) {
-    return;
+  if (path.toLowerCase().endsWith(".hproj")) {
+    throw new Error(
+      `项目目录中包含嵌套备份“${path}”，已停止导出。请将该文件移出项目目录后重试。`,
+    );
   }
 
   let names: string[];
 
   try {
     names = await listFiles(root, path);
-  } catch {
-    return;
+  } catch (directoryError) {
+    try {
+      files[path] = await readBinaryFile(root, path);
+      return;
+    } catch (fileError) {
+      const reason = fileError instanceof Error
+        ? fileError.message
+        : directoryError instanceof Error
+          ? directoryError.message
+          : "未知读取错误";
+
+      throw new Error(
+        `项目路径“${path}”无法读取，已停止导出。原因：${reason}`,
+      );
+    }
   }
 
   files[`${path}/`] = null;
 
   for (const name of names) {
-    const childPath = `${path}/${name}`;
-
-    try {
-      files[childPath] = await readBinaryFile(root, childPath);
-    } catch {
-      await collectDirectory(root, files, childPath);
-    }
+    await collectDirectory(root, files, `${path}/${name}`);
   }
 }
 
@@ -822,6 +829,15 @@ export async function exportProjectPackage(
   const project =
     overrides.project ?? await readJson<ProjectConfig>(root, "project.json");
   const files: ZipContent = {};
+  let rootNames: Set<string>;
+
+  try {
+    rootNames = new Set(await listFiles(root, ""));
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "未知读取错误";
+
+    throw new Error(`项目根目录无法读取，已停止导出。原因：${reason}`);
+  }
 
   files["project.json"] = new TextEncoder().encode(
     `${JSON.stringify(project, null, 2)}\n`,
@@ -831,12 +847,14 @@ export async function exportProjectPackage(
     files["members.json"] = new TextEncoder().encode(
       `${JSON.stringify({ schema_version: 1, members: overrides.members }, null, 2)}\n`,
     );
-  } else {
-    await addFileIfExists(root, files, "members.json");
+  } else if (rootNames.has("members.json")) {
+    files["members.json"] = await readBinaryFile(root, "members.json");
   }
 
-  for (const directory of PACKED_PROJECT_DIRECTORIES) {
-    await collectDirectory(root, files, directory);
+  for (const directory of PROJECT_PACKAGE_EXPORT_DIRECTORIES) {
+    if (rootNames.has(directory)) {
+      await collectDirectory(root, files, directory);
+    }
   }
 
   const blob = await createZip(files);

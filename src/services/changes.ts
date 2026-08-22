@@ -1229,13 +1229,10 @@ async function loadExportableTasksForUser(
   return tasks.filter((task) => task.assignee === userId);
 }
 
-async function loadTaskEntries(
-  storage: ProjectStorage,
+function getTaskEntriesFromGroups(
+  groups: { path: string; entries: Entry[] }[],
   task: Task,
-): Promise<Entry[]> {
-  const project = await storage.readJson<ProjectConfig>("project.json");
-  const groups = await collectProjectEntryGroups(storage, project);
-
+): Entry[] {
   return groups
     .flatMap((group) => group.entries)
     .filter((entry) => isEntryInTask(entry, task));
@@ -1303,14 +1300,12 @@ async function collectAllEntries(
   return entries;
 }
 
-async function collectTaskChangedEntries(
-  storage: ProjectStorage,
+function collectTaskChangedEntries(
+  groups: { path: string; entries: Entry[] }[],
   task: Task,
   userIds: Set<string>,
-): Promise<Record<string, Entry[]>> {
+): Record<string, Entry[]> {
   const changedEntries: Record<string, Entry[]> = {};
-  const project = await storage.readJson<ProjectConfig>("project.json");
-  const groups = await collectProjectEntryGroups(storage, project);
 
   for (const group of groups) {
     const rows = group.entries.filter(
@@ -1383,19 +1378,19 @@ async function collectTaskScopedChanges(
   userId: string,
   options: { includeAssignees?: boolean } = {},
 ): Promise<Pick<ChangePackagePayload, "entries" | "comments" | "tasks" | "events">> {
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const groups = await collectProjectEntryGroups(storage, project);
   const entries = mergeEntryRecords(
-    await Promise.all(
-      tasks.map((task) =>
-        collectTaskChangedEntries(
-          storage,
-          task,
-          new Set([
-            userId,
-            ...(options.includeAssignees && task.assignee
-              ? [task.assignee]
-              : []),
-          ]),
-        ),
+    tasks.map((task) =>
+      collectTaskChangedEntries(
+        groups,
+        task,
+        new Set([
+          userId,
+          ...(options.includeAssignees && task.assignee
+            ? [task.assignee]
+            : []),
+        ]),
       ),
     ),
   );
@@ -2681,9 +2676,11 @@ async function getTaskScopeEntryIds(
   tasks: Task[],
 ): Promise<Set<string>> {
   const ids = new Set<string>();
+  const project = await storage.readJson<ProjectConfig>("project.json");
+  const groups = await collectProjectEntryGroups(storage, project);
 
   for (const task of tasks) {
-    for (const entry of await loadTaskEntries(storage, task)) {
+    for (const entry of getTaskEntriesFromGroups(groups, task)) {
       ids.add(entry.id);
     }
   }

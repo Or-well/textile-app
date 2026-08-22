@@ -154,8 +154,6 @@ const exportDraft = ref({
   only_reviewed: false,
   include_source: true,
   include_key: true,
-  include_report: true,
-  include_manifest: true,
 });
 const collaborationDraft = ref({
   require_signed_change_packages: false,
@@ -346,8 +344,6 @@ const hasUnsavedSettings = computed(() => {
     exportDraft.value.only_reviewed !== exportSettings.only_reviewed ||
     exportDraft.value.include_source !== exportSettings.include_source ||
     exportDraft.value.include_key !== exportSettings.include_key ||
-    exportDraft.value.include_report !== exportSettings.include_report ||
-    exportDraft.value.include_manifest !== exportSettings.include_manifest ||
     collaborationDraft.value.require_signed_change_packages !==
       collaborationSettings.require_signed_change_packages
   );
@@ -1399,10 +1395,10 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="form-row">
+            <div v-if="exportDraft.default_format !== 'ks'" class="form-row">
               <div class="row-label">
                 <span>包含原文</span>
-                <p>用于生成对照检查报告。</p>
+                <p>在支持的成品格式中保留原文字段。</p>
               </div>
               <div class="row-control checkbox-control">
                 <input
@@ -1431,37 +1427,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <div class="form-row">
-              <div class="row-label">
-                <span>生成报告</span>
-                <p>未翻译、争议和术语检查报告。</p>
-              </div>
-              <div class="row-control checkbox-control">
-                <input
-                  id="generate-report"
-                  v-model="exportDraft.include_report"
-                  type="checkbox"
-                  :disabled="!canManageProject"
-                />
-                <label for="generate-report">导出检查报告</label>
-              </div>
-            </div>
-
-            <div class="form-row">
-              <div class="row-label">
-                <span>生成清单</span>
-                <p>记录项目、导出时间、格式和本次设置。</p>
-              </div>
-              <div class="row-control checkbox-control">
-                <input
-                  id="generate-manifest"
-                  v-model="exportDraft.include_manifest"
-                  type="checkbox"
-                  :disabled="!canManageProject"
-                />
-                <label for="generate-manifest">导出项目清单</label>
-              </div>
-            </div>
           </div>
 
           <footer class="form-actions">

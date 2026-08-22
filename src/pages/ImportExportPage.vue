@@ -114,8 +114,6 @@ const releaseFormat = ref<ReleaseExportFormat>("json");
 const releaseOnlyReviewed = ref(false);
 const releaseIncludeSource = ref(true);
 const releaseIncludeKey = ref(true);
-const releaseIncludeReport = ref(true);
-const releaseIncludeManifest = ref(true);
 const releaseSummary = ref<ReleaseExportSummary>();
 const isLoading = ref(false);
 const isExporting = ref(false);
@@ -350,8 +348,6 @@ const releaseOptionPayload = computed(() => ({
   only_reviewed: releaseOnlyReviewed.value,
   include_source: releaseIncludeSource.value,
   include_key: releaseIncludeKey.value,
-  include_report: releaseIncludeReport.value,
-  include_manifest: releaseIncludeManifest.value,
 }));
 const signingKeySetup = ref<SigningKeySetupRequest | null>(null);
 const isPreparingSigningKey = ref(false);
@@ -365,8 +361,6 @@ function applyReleaseSettings(project: ProjectConfig) {
   releaseOnlyReviewed.value = options.only_reviewed;
   releaseIncludeSource.value = options.include_source;
   releaseIncludeKey.value = options.include_key;
-  releaseIncludeReport.value = options.include_report;
-  releaseIncludeManifest.value = options.include_manifest;
 }
 
 async function refreshReleaseSummary() {
@@ -912,7 +906,6 @@ async function handleExportRelease() {
         async () => {
           result = await exportProject({
             ...releaseOptionPayload.value,
-            exportedBy: currentUser.value?.id ?? "",
             exportedAt,
           });
 
@@ -1216,7 +1209,6 @@ watch(
     releaseOnlyReviewed.value,
     releaseIncludeSource.value,
     releaseIncludeKey.value,
-    releaseIncludeReport.value,
   ],
   () => {
     void refreshReleaseSummary();
@@ -1477,7 +1469,7 @@ watch(
       <section v-if="projectName" class="release-section">
         <h2>导出成品</h2>
         <p class="section-note">
-          按当前设置生成成品包、项目清单和检查报告。
+          按所选格式生成成品包。文件保留原主文件名，仅替换扩展名。
         </p>
         <p class="section-note">
           成品文件用于发布，不用于恢复 Textile 项目，也不会完整保留校对人员、校对次数、批注和项目设置。
@@ -1498,7 +1490,7 @@ watch(
             <span>只导出流程完成词条</span>
           </label>
 
-          <label class="checkbox-line">
+          <label v-if="releaseFormat !== 'ks'" class="checkbox-line">
             <input v-model="releaseIncludeSource" type="checkbox" />
             <span>包含原文</span>
           </label>
@@ -1508,10 +1500,6 @@ watch(
             <span>包含键值</span>
           </label>
 
-          <label class="checkbox-line">
-            <input v-model="releaseIncludeReport" type="checkbox" />
-            <span>生成报告</span>
-          </label>
         </div>
 
         <section class="release-summary" aria-label="导出前统计摘要">

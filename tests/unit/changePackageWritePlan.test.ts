@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   ChangePackageManifest,
   ChangePackageType,
@@ -643,6 +643,60 @@ describe("ordinary change-package write plan", () => {
       "file-1:1",
       "file-1:2",
     ]);
+  });
+
+  it("scans project entries once when resolving multiple selected task scopes", async () => {
+    const fixture = await createExportFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    const entries = await fixture.storage.readJsonl<Entry>(
+      "entries/file-1/chunk_0001.jsonl",
+    );
+    const tasks = await fixture.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    const secondEntry = createEntry({
+      id: "file-1:2",
+      file_id: "file-1",
+      index: 2,
+      target: "Second baseline",
+      status: "translated",
+      translated_by: fixture.contributor.id,
+      updated_by: fixture.contributor.id,
+    });
+    const secondTask: Task = {
+      ...tasks[0]!,
+      id: "task-2",
+      title: "Translate second entry",
+      range_start: 2,
+      range_end: 2,
+    };
+
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      ...entries,
+      secondEntry,
+    ]);
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [
+      ...tasks,
+      secondTask,
+    ]);
+    await ensureWorkspaceBaseline(fixture.storage, project);
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      { ...entries[0]!, target: "First local change" },
+      { ...secondEntry, target: "Second local change" },
+    ]);
+    const readJsonl = vi.spyOn(fixture.storage, "readJsonl");
+    setChangesProjectStorage(fixture.storage);
+
+    await exportChangePackage(fixture.contributor.id, {
+      mode: "task_changes",
+      taskId: "task-1",
+      taskIds: ["task-1", "task-2"],
+      sign: false,
+      actor: fixture.contributor,
+    });
+
+    const entryReads = readJsonl.mock.calls.filter(
+      ([path]) => path === "entries/file-1/chunk_0001.jsonl",
+    );
+    expect(entryReads).toHaveLength(2);
   });
 
   it("exports attributed pre-upgrade work instead of treating it as the baseline", async () => {
