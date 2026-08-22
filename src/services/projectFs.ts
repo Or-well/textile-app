@@ -119,6 +119,19 @@ function joinProjectPath(basePath: string, name: string): string {
   return normalizeProjectPath([basePath, name].filter(Boolean).join("/"));
 }
 
+function joinNativeDirectoryPath(rootPath: string, relativePath: string): string {
+  const parts = assertSafePath(relativePath);
+
+  if (parts.length === 0) {
+    return rootPath;
+  }
+
+  const separator = rootPath.includes("\\") ? "\\" : "/";
+  const normalizedRoot = rootPath.replace(/[\\/]+$/, "");
+
+  return `${normalizedRoot}${separator}${parts.join(separator)}`;
+}
+
 function getParentPath(path: string): string {
   const parts = assertSafePath(path);
 
@@ -457,18 +470,22 @@ class NativeProjectFileHandle implements ProjectFileHandle {
 
 class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
   readonly storageKind = "native-folder" as const;
-  readonly nativePath: string;
+  private readonly rootPath: string;
   private readonly rootName: string;
   private readonly path: string;
 
-  constructor(nativePath: string, rootName: string, path = "") {
-    this.nativePath = nativePath;
+  constructor(rootPath: string, rootName: string, path = "") {
+    this.rootPath = rootPath;
     this.rootName = rootName;
     this.path = path;
   }
 
   get name(): string {
     return this.path ? getFileName(this.path) : this.rootName;
+  }
+
+  get nativePath(): string {
+    return joinNativeDirectoryPath(this.rootPath, this.path);
   }
 
   async queryPermission(): Promise<PermissionState> {
@@ -486,14 +503,14 @@ class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
     const filePath = joinProjectPath(this.path, name);
 
     if (!options.create) {
-      const status = await getNativeProjectEntryStatus(this.nativePath, filePath);
+      const status = await getNativeProjectEntryStatus(this.rootPath, filePath);
 
       if (!status.exists || status.kind !== "file") {
         throw new Error("项目文件不存在。");
       }
     }
 
-    return new NativeProjectFileHandle(this.nativePath, filePath);
+    return new NativeProjectFileHandle(this.rootPath, filePath);
   }
 
   async getDirectoryHandle(
@@ -504,12 +521,12 @@ class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
 
     if (options.create) {
       await invokeTauriCommand<void>("ensure_project_directory", {
-        rootPath: this.nativePath,
+        rootPath: this.rootPath,
         relativePath: directoryPath,
       });
     } else {
       const status = await getNativeProjectEntryStatus(
-        this.nativePath,
+        this.rootPath,
         directoryPath,
       );
 
@@ -519,7 +536,7 @@ class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
     }
 
     return new NativeProjectDirectoryHandle(
-      this.nativePath,
+      this.rootPath,
       this.rootName,
       directoryPath,
     );
@@ -530,7 +547,7 @@ class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
     options: { recursive?: boolean } = {},
   ): Promise<void> {
     await invokeTauriCommand<void>("delete_project_entry", {
-      rootPath: this.nativePath,
+      rootPath: this.rootPath,
       relativePath: joinProjectPath(this.path, name),
       recursive: options.recursive ?? false,
     });
@@ -538,7 +555,7 @@ class NativeProjectDirectoryHandle implements ProjectDirectoryHandle {
 
   async *keys(): AsyncIterableIterator<string> {
     const names = await invokeTauriCommand<string[]>("list_project_directory", {
-      rootPath: this.nativePath,
+      rootPath: this.rootPath,
       relativePath: this.path,
     });
 

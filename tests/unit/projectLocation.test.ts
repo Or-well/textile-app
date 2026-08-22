@@ -54,6 +54,30 @@ describe("project location", () => {
     });
   });
 
+  it("opens an imported child project instead of its selected parent folder", async () => {
+    setTauriRuntime(true);
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "native_project_entry_status") {
+        return { exists: true, kind: "directory" };
+      }
+
+      if (command === "open_project_directory_path") {
+        return undefined;
+      }
+
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    const importRoot = createNativeProjectDirectory("C:\\Imports", "Imports");
+    const projectRoot = await importRoot.getDirectoryHandle("Demo-project1");
+    const project = createOpenedProject(projectRoot, "native-folder");
+
+    await openProjectLocation(project);
+
+    expect(invokeMock).toHaveBeenCalledWith("open_project_directory_path", {
+      rootPath: "C:\\Imports\\Demo-project1",
+    });
+  });
+
   it("rejects packed project files because they have no system folder", async () => {
     const project = createOpenedProject(
       createMemoryProjectDirectory({}, "demo.hproj"),

@@ -38,6 +38,7 @@ import {
   type ProjectPackagePreview,
 } from "./projectPackage";
 import {
+  fileExists,
   openProjectDirectory,
   type ProjectDirectoryHandle,
   type ProjectStorageKind,
@@ -1184,6 +1185,40 @@ async function assertProjectCanBeCreated(
 
 export async function selectProjectCreationDirectory(): Promise<ProjectDirectoryHandle> {
   return openProjectDirectory();
+}
+
+export async function recoverImportedNativeProjectRoot(
+  root: ProjectDirectoryHandle,
+  expectedProjectId: string,
+): Promise<ProjectDirectoryHandle> {
+  if (
+    root.storageKind !== "native-folder" ||
+    (await fileExists(root, "project.json"))
+  ) {
+    return root;
+  }
+
+  const candidates: ProjectDirectoryHandle[] = [];
+
+  for await (const name of root.keys()) {
+    try {
+      const child = await root.getDirectoryHandle(name);
+
+      if (!(await fileExists(child, "project.json"))) {
+        continue;
+      }
+
+      const config = await loadProject(child);
+
+      if (config.project_id === expectedProjectId) {
+        candidates.push(child);
+      }
+    } catch {
+      // Ignore files and unrelated or unreadable child directories.
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0] : root;
 }
 
 export async function openProjectRoot(

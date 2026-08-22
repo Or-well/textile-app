@@ -27,6 +27,44 @@ describe("native project directory adapter", () => {
     expect(root.nativePath).toBe("C:\\Projects\\Demo");
   });
 
+  it("exposes a child handle's full native path while keeping file access relative to the selected root", async () => {
+    invokeMock.mockImplementation(
+      async (command: string, args: { relativePath?: string }) => {
+        if (command === "ensure_project_directory") {
+          return undefined;
+        }
+
+        if (command === "native_project_entry_status") {
+          return { exists: true, kind: "file" };
+        }
+
+        if (command === "read_project_binary_file") {
+          return Array.from(new TextEncoder().encode("project"));
+        }
+
+        throw new Error(`Unexpected command: ${command}`);
+      },
+    );
+    const root = createNativeProjectDirectory("C:\\Imports", "Imports");
+    const projectRoot = await root.getDirectoryHandle("Demo-project1", {
+      create: true,
+    });
+
+    expect(projectRoot.name).toBe("Demo-project1");
+    expect(projectRoot.nativePath).toBe("C:\\Imports\\Demo-project1");
+    await expect(readTextFile(projectRoot, "project.json")).resolves.toBe(
+      "project",
+    );
+    expect(invokeMock).toHaveBeenCalledWith("ensure_project_directory", {
+      rootPath: "C:\\Imports",
+      relativePath: "Demo-project1",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("read_project_binary_file", {
+      rootPath: "C:\\Imports",
+      relativePath: "Demo-project1/project.json",
+    });
+  });
+
   it("reads project files through Tauri using relative project paths", async () => {
     invokeMock.mockImplementation(
       async (command: string, args: { relativePath?: string }) => {

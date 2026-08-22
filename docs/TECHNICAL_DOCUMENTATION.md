@@ -948,7 +948,9 @@ Tauri 桌面版：
 - `openProjectDirectory()` 优先调用 Rust `pick_project_directory`，拿到系统真实目录路径。
 - 前端用 `native-folder` handle 适配现有 `ProjectDirectoryHandle` 接口，业务 service 仍通过 `ProjectStorage` 访问项目文件。
 - Rust 命令提供相对项目路径的文本、二进制、目录、存在性和删除操作，并拒绝绝对路径、`..` 和符号链接越界。
-- `nativePath` 只记录项目根目录路径，不写入项目数据、`.hproj` 或修改包。
+- native handle 内部保留用户选择的访问根路径和当前句柄的相对路径；文件操作继续以访问根路径为安全边界。
+- `nativePath` 对外暴露当前句柄对应的完整系统路径。导入 `.hproj` 后创建的子目录句柄因此会指向实际项目根目录，而不是用户选择的父目录。
+- `nativePath` 不写入项目数据、`.hproj` 或修改包。
 
 Web/PWA：
 
@@ -2233,13 +2235,14 @@ store: projectHandles
 
 最多 12 条。
 
-`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。Web/PWA 普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。Tauri native path 项目不写 IndexedDB 句柄，`displayPath` 保存系统目录路径，恢复时由 `App.vue` 重建 native root adapter。
+`recordId` 用于区分同一 `projectId` 的不同本地打开位置，旧记录没有该字段时按 `projectId` 兼容。Web/PWA 普通文件夹句柄会写 IndexedDB；packed `.hproj` 不写。Tauri native path 项目不写 IndexedDB 句柄，`displayPath` 保存实际项目根目录的系统路径；从 `.hproj` 导入到所选位置的子目录时保存该子目录完整路径。恢复时由 `App.vue` 重建 native root adapter。
 
 权限恢复分两种入口：
 
 - 用户点击最近项目时，`recentProjects.ts` 会在 `queryPermission` 为 `prompt` 时调用 `requestPermission({ mode: "readwrite" })`，授权成功后直接打开项目。
 - 启动时按 URL 自动恢复项目只检查权限状态，不主动弹授权；如果不是 `granted`，回到启动页并提示用户从最近项目点击继续。
 - Tauri native path 项目默认视为已授权；重新打开时仍会读取并校验 `project.json`、`members.json` 和 entries 路径，路径失效或项目 ID 不匹配会阻止进入。
+- 旧版桌面端若曾把 `.hproj` 导入位置的父目录写入最近项目，恢复时只检查该父目录的直接子目录；仅有一个子目录包含匹配 `projectId` 时采用并重写最近记录，零个或多个匹配时保持原记录并由普通校验拒绝，避免猜测项目位置。
 
 ## 45. 页面与 service 调用关系
 
@@ -2695,10 +2698,10 @@ npm run test:unit
 
 Native path 和本地项目文件夹危险操作的单元测试：
 
-- `tests/unit/projectLocation.test.ts` 覆盖“打开项目文件夹”的 native path 调用、Web/PWA、`.hproj` 和旧记录缺少路径时的拒绝分支。
-- `tests/unit/projectDeletion.test.ts` 覆盖 `local_record_only` 与 `native_project_folder` 两种删除模式、native path 可删除条件、项目 ID 不匹配阻断和 native 删除失败透传。
-- `tests/unit/projectFs.test.ts` 覆盖 `createNativeProjectDirectory()` 元数据，以及 native adapter 通过 Tauri command 读、写、列目录和删除相对项目路径。
-- `tests/unit/recentProjects.test.ts` 覆盖 native-folder 和 packed `.hproj` 不写 IndexedDB directory handle，普通 Web/PWA 文件夹仍保存句柄。
+- `tests/unit/projectLocation.test.ts` 覆盖“打开项目文件夹”的 native path 调用、导入子目录的完整路径、Web/PWA、`.hproj` 和旧记录缺少路径时的拒绝分支。
+- `tests/unit/projectDeletion.test.ts` 覆盖 `local_record_only` 与 `native_project_folder` 两种删除模式、导入子目录删除目标、native path 可删除条件、项目 ID 不匹配阻断和 native 删除失败透传。
+- `tests/unit/projectFs.test.ts` 覆盖 `createNativeProjectDirectory()` 元数据、子目录完整 `nativePath`，以及 native adapter 通过 Tauri command 读、写、列目录和删除相对项目路径。
+- `tests/unit/recentProjects.test.ts` 覆盖导入子目录的最近项目路径、native-folder 和 packed `.hproj` 不写 IndexedDB directory handle，以及普通 Web/PWA 文件夹仍保存句柄。
 
 Tauri Rust 侧删除保护使用 `cargo test` 覆盖 `src-tauri/src/lib.rs` 中的 `delete_native_project_directory()`：缺少 `project.json`、`members.json`、`entries/`、项目 ID 不匹配、目标不是目录时都会拒绝删除；项目结构和 ID 匹配时才删除测试临时目录。
 

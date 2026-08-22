@@ -38,6 +38,7 @@ import {
   inspectProjectFile,
   openProject,
   openProjectRoot,
+  recoverImportedNativeProjectRoot,
   type OpenedProject,
 } from "./services/project";
 import {
@@ -307,7 +308,9 @@ async function getRecentProjectRoot(
     : null;
 
   if (storedRoot) {
-    return storedRoot;
+    return record
+      ? recoverImportedNativeProjectRoot(storedRoot, record.projectId)
+      : storedRoot;
   }
 
   if (
@@ -316,10 +319,24 @@ async function getRecentProjectRoot(
     isTauriRuntime() &&
     looksLikeAbsoluteNativePath(record.displayPath)
   ) {
-    return createNativeProjectDirectory(record.displayPath);
+    return recoverImportedNativeProjectRoot(
+      createNativeProjectDirectory(record.displayPath),
+      record.projectId,
+    );
   }
 
   return null;
+}
+
+function wasLegacyRecentProjectPathRecovered(
+  record: RecentProjectRecord | undefined,
+  root: ProjectDirectoryHandle,
+): record is RecentProjectRecord {
+  return Boolean(
+    record &&
+      root.nativePath &&
+      formatNativePathForDisplay(root.nativePath) !== record.displayPath,
+  );
 }
 
 async function rememberOpenedProject(
@@ -643,6 +660,10 @@ async function handleOpenRecentProject(record: RecentProjectRecord) {
     }
 
     await enterOpenedProject(project);
+
+    if (wasLegacyRecentProjectPathRecovered(record, storedRoot)) {
+      recentProjects.value = await removeRecentProject(record.recordId);
+    }
   } catch (error) {
     if (error instanceof Error) {
       appErrorMessage.value = error.message;
@@ -1025,6 +1046,10 @@ async function restoreProjectFromRoute() {
     await enterOpenedProject(project, {
       preferredPath: getExplicitProjectPath(routePath.value),
     });
+
+    if (wasLegacyRecentProjectPathRecovered(recentRecord, root)) {
+      recentProjects.value = await removeRecentProject(recentRecord.recordId);
+    }
   } catch (error) {
     appErrorMessage.value =
       error instanceof Error

@@ -11,6 +11,12 @@ import {
   type ProjectDirectoryHandle,
 } from "../../src/services/projectFs";
 
+const invokeMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: invokeMock,
+}));
+
 interface FakeIdbRequest<T = unknown> {
   result: T;
   onerror: (() => void) | null;
@@ -118,6 +124,7 @@ function setFolderStorageKind(root: ProjectDirectoryHandle): ProjectDirectoryHan
 
 describe("recent projects", () => {
   beforeEach(() => {
+    invokeMock.mockReset();
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: { localStorage: createStorage() },
@@ -152,6 +159,28 @@ describe("recent projects", () => {
     expect(listRecentProjects()[0]).toMatchObject({
       projectId: "project-1",
       displayPath: "C:\\Projects\\Demo",
+      sourceType: "folder",
+    });
+  });
+
+  it("records an imported native child project instead of its parent folder", async () => {
+    invokeMock.mockResolvedValue({ exists: true, kind: "directory" });
+    const importRoot = createNativeProjectDirectory("C:\\Imports", "Imports");
+    const projectRoot = await importRoot.getDirectoryHandle("Demo-project1");
+
+    await rememberRecentProject(
+      {
+        projectId: "project-1",
+        name: "Demo",
+        sourceType: "folder",
+        displayPath: projectRoot.nativePath ?? projectRoot.name,
+      },
+      projectRoot,
+    );
+
+    expect(listRecentProjects()[0]).toMatchObject({
+      projectId: "project-1",
+      displayPath: "C:\\Imports\\Demo-project1",
       sourceType: "folder",
     });
   });

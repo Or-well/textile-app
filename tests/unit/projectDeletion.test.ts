@@ -6,6 +6,7 @@ import {
 } from "../../src/services/projectDeletion";
 import {
   createMemoryProjectDirectory,
+  createNativeProjectDirectory,
   type ProjectDirectoryHandle,
 } from "../../src/services/projectFs";
 
@@ -153,6 +154,56 @@ describe("project deletion", () => {
       failedEntries: [],
     });
     expect(result.message).toContain("4 个文件、2 个目录");
+  });
+
+  it("deletes an imported child project without targeting its parent folder", async () => {
+    setTauriRuntime(true);
+    invokeMock.mockImplementation(
+      async (command: string, args: { relativePath?: string }) => {
+        if (command === "native_project_entry_status") {
+          return {
+            exists: true,
+            kind:
+              args.relativePath === "Demo-project1" ||
+              args.relativePath?.endsWith("/entries")
+                ? "directory"
+                : "file",
+          };
+        }
+
+        if (command === "read_project_binary_file") {
+          return Array.from(
+            new TextEncoder().encode(
+              JSON.stringify({ project_id: project.project_id }),
+            ),
+          );
+        }
+
+        if (command === "delete_project_directory_path") {
+          return {
+            deletedPath: "C:\\Imports\\Demo-project1",
+            fileCount: 3,
+            directoryCount: 1,
+          };
+        }
+
+        throw new Error(`Unexpected command: ${command}`);
+      },
+    );
+    const importRoot = createNativeProjectDirectory("C:\\Imports", "Imports");
+    const projectRoot = await importRoot.getDirectoryHandle("Demo-project1");
+
+    await deleteCurrentProjectSource(
+      projectRoot,
+      project,
+      null,
+      "native_project_folder",
+    );
+
+    expect(invokeMock).toHaveBeenCalledWith("delete_project_directory_path", {
+      rootPath: "C:\\Imports\\Demo-project1",
+      projectId: "project-1",
+    });
   });
 
   it("does not pretend native deletion succeeded when the native command fails", async () => {
