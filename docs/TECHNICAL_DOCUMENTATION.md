@@ -152,6 +152,7 @@ src/
     terms.ts
     updateSafety.ts
     webUpdateAdapter.ts
+    workspaceBaseline.ts
     workspacePosition.ts
   utils/
     appVersion.ts
@@ -889,11 +890,23 @@ comments/<file_id>/<6位entry index>.jsonl
 
 新项目创建 `changes/`，`.hproj` 会打包该目录。
 
-当前普通修改包和项目更新包通过统一可靠保存流程导出、通过文件选择器导入，不会自动归档到 `changes/`。本地“已导出个人修改哈希”保存在浏览器存储，用于接收项目更新前判断未导出修改。
+当前普通修改包和项目更新包通过统一可靠保存流程导出、通过文件选择器导入，不会自动归档到 `changes/`。`changes/workspace/baseline.json` 保存当前本地副本对应 revision 的协作数据基线；普通和任务范围修改包按基线与当前内容的差异收集，不再用 `updated_by` 历史归属或浏览器中的整体导出哈希推断未提交工作。
 
-生成修改包 Blob 不会立即写入“已导出个人修改哈希”或推进项目 revision。页面只有收到 `saveGeneratedFile()` 的明确成功结果后才调用 `completeChangePackageExport()`：普通修改包提交导出哈希，项目更新包提交新 revision。提交前会重新确认当前项目 ID 和 base revision，防止延迟确认覆盖已经变化的项目状态。
+生成修改包 Blob 不会推进项目 revision。页面只有收到 `saveGeneratedFile()` 的明确成功结果后才调用 `completeChangePackageExport()`；普通和任务范围修改包不改变工作区基线，项目更新包会重新确认项目 ID、base revision 和生成时的项目内容快照，再通过同一个写入计划推进 revision 并更新工作区基线。保存期间项目内容发生变化时，已保存文件不会被标记为已发布。
 
 不要假设 `changes/` 中一定有协作历史。
+
+### `workspaceBaseline.ts`
+
+职责：
+
+- 捕获当前 revision 下 entries、comments、terms、任务和事件 ID 的本地协作基线。
+- 比较基线与当前项目，返回按实体 ID 和文件路径组织的新增、修改和删除差异。
+- 为普通修改包、任务范围修改包和项目更新三方合并提供同一差异来源。
+
+输入是 `ProjectStorage` 和当前 `ProjectConfig`；输出是 `WorkspaceSnapshot` 或 `WorkspaceDiff`。它不判断权限、不生成修改包、不决定冲突处理结果，也不直接修改业务数据。基线只在首次进入工作区、负责人确认发布新 revision，以及成员成功接收项目更新时更新。
+
+测试方式：`tests/unit/changePackageWritePlan.test.ts` 覆盖批注-only 导出、任务范围部分导出、普通包基线核验与三方合并、任务状态回退、批注并发删除、项目更新自动 rebase、同字段冲突和发布快照变化阻断。
 
 ## 20. `projectFs.ts`
 
@@ -1285,7 +1298,7 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 - 导入合并会覆盖同 ID 或同 source 的记录，应在大批量导入前备份。
 - 删除是整体 JSONL 重写。
 - 权限兜底依赖当前用户和 service permission helper。
-- 普通修改包收集 `created_by` 或 `updated_by` 为当前成员的术语，并从 `changes/term-deletions.jsonl` 收集当前成员产生的术语删除记录。删除记录会进入修改包哈希和签名；导入端按导出者的术语权限和冲突处理结果应用。
+- 普通修改包从工作区基线差异中收集当前成员新增、编辑或删除的术语；旧项目缺少可用基线时才按 `created_by`、`updated_by` 和 `changes/term-deletions.jsonl` 兼容收集。删除记录和相关修改前快照都会进入修改包哈希与签名；导入端按导出者权限和三方合并结果应用。
 
 ### `termBatch.ts`
 
@@ -1755,7 +1768,7 @@ manifest 示例：
 8. 如果要求签名或导出选项显式要求签名，从内存 key manager 获取私钥。
 9. 生成 ZIP Blob。
 10. 页面调用 `saveGeneratedFile()` 保存 ZIP。
-11. 只有保存明确成功后，member_changes 才记录本次导出内容哈希，project_update 才推进主项目 revision。
+11. 只有保存明确成功后，project_update 才推进主项目 revision；普通和任务范围修改包不改变工作区基线。
 
 导出页 UI 不把当前 actor 作为独立只读字段展示；actor 仍来自当前会话、props 或 `getCurrentUser()`，导出时继续由 service 层校验 actor、权限和导出模式。
 
@@ -1767,7 +1780,9 @@ manifest 示例：
 - `project_update` 已有有效公钥但缺少私钥时只允许导入当前旧私钥，不允许在发布流程中直接生成替代密钥。密钥更换必须走由旧密钥签名的轮换过渡包。
 - 负责人身份密钥轮换复用 `project_update` 格式：包内公开成员信息可携带新公钥，但 `signature.json` 仍由接收端已信任的旧公钥对应私钥签出。导入端不得使用包内新公钥验证该包自身。
 - `member_changes` 和 `task_changes` 可通过 `includeOwnCredentials` 选择性附带当前导出人的账户凭据补丁。补丁写入 `members/members.json`，结构仍是 `{ "schema_version": 1, "members": [...] }`，但 `members[0]` 只允许 `id`、`password_hash`、`password_salt`、`password_updated_at`。该补丁计入 `changed_credentials`，不计入 `changed_members`，默认不导出。
-- 普通修改包继续用 `terms/terms.jsonl` 携带术语新增和编辑后的快照；术语删除写入 `term-changes/deletions.jsonl`。包含术语删除，或包含 `updated_by === manifest.user_id` 且 `created_by !== manifest.user_id` 的术语编辑时，manifest `schema_version` 为 2。没有这些新协议内容的包仍可使用 schema 1。
+- 新版普通修改包在 `base/changes.json` 中只携带本次变化涉及的词条、批注、术语和任务修改前快照，并纳入内容哈希与签名。接收端必须用当前项目同 revision 的 `changes/workspace/baseline.json` 核验这些快照，不能信任修改包自行声明的基线。携带该基线、术语删除或既有术语编辑时，manifest `schema_version` 为 2；旧包继续按 schema 1 兼容。
+- 新版包修改既有记录时必须完整携带对应的共同基线；批注树删除必须包含当时整棵删除范围，术语删除记录必须与术语基线一致。缺失或不一致时停止导入，不退回两方猜测。旧项目第一次建立基线前已经存在的署名修改继续走一次旧版归属收集，避免把历史个人工作误当成干净状态；成功接收项目更新后即进入正常基线模式。
+- 普通修改包继续用 `terms/terms.jsonl` 携带术语新增和编辑后的快照；术语删除写入 `term-changes/deletions.jsonl`。
 
 项目更新包：
 
@@ -1811,7 +1826,7 @@ manifest 示例：
 2. 检查普通或维护导入权限。
 3. 检查维护和 owner 凭据确认。
 4. 检查危险导入权限。
-5. 生成合并判定；词条会先使用包内连续版本事件链做三方判断。当前项目匹配事件链中的修改前快照时安全采用，只有当前项目与事件链真实分叉时才进入冲突处理；上下文、争议、批注和术语缺少可靠基线时继续保守处理。
+5. 核验 `base/changes.json` 与当前项目的工作区基线，然后执行三方判断。词条按“译文与工作流”“争议”“上下文”三个原子组处理，批注解决状态也作为一个原子组；术语字段独立处理，普通包任务只处理状态。旧包没有协作基线时才使用连续版本事件兼容；无法证明安全的内容保持显式冲突。
 6. 要求每个真实冲突都有用户明确选择的 resolution；冲突默认保持未选择，不能用默认值代替用户决定。修改包目标路径中不存在对应词条或出现重复词条 ID 时预检查失败，不得静默跳过。
 7. 在内存中计算 entries、comments、terms、tasks 和 contexts 的最终内容；普通包根据匹配的词条版本事件决定翻译、校对或审核语义，缺少操作记录的旧包才按普通翻译编辑重置流程。
 8. 对负责人最终采用的词条结果生成本地版本事件，记录来源事件和 package ID；普通包的源词条版本事件不直接写成本地权威版本。
@@ -1841,31 +1856,30 @@ manifest 示例：
 - manifest base revision 等于本地 revision。
 - manifest target revision 存在。
 - 包内 project ID 和 target revision 一致。
-- 当前 actor 没有未导出的个人修改。
+- 本地工作区基线可读取；旧项目缺少基线时记录首次登录成员，并在第一次项目更新中按该成员署名保守迁移已有修改。迁移成功后即使用正常精确基线，不再依赖历史署名推断。
 
 写入顺序：
 
-1. entries
-2. comments
-3. terms
-4. contexts
-5. source
-6. tasks
-7. 公开成员与本地密码字段合并
-8. 删除项目更新后不再被引用的旧 source、entries chunk 和批注文件
-9. events 与导入日志
-10. 最后写 `project.json`
+1. 在内存中比较本地基线、当前内容和项目更新内容。
+2. 自动合并未重叠的业务组，并要求用户处理同组冲突。词条译文、状态和译者/校对/审核记录不可拆开拼接；任务按完整记录保留或选择；批注删除按整棵回复树判断。
+3. 写入合并后的 entries、comments、terms、contexts、source 和 tasks。
+4. 合并公开成员与本地密码字段。
+5. 删除项目更新权威目录中不再存在的文件。
+6. 写入项目更新事件、仍需保留的本地事件和导入日志。
+7. 写入新的工作区基线。
+8. 最后写 `project.json`。
 
-上述写入、删除和导入日志通过同一个 `ProjectWritePlan` 提交。把 `project.json` 放在最后，可以让失败时基线 revision 不提前推进，便于重试；断电、浏览器崩溃或回滚再次失败时仍可能留下需要人工检查的残留路径。
+上述写入、删除、日志和工作区基线通过同一个 `ProjectWritePlan` 提交。新基线保存负责人发布的权威内容，合并后仍保留的本地差异继续作为下一次修改包的候选。把 `project.json` 放在最后，可以让失败时基线 revision 不提前推进，便于重试；断电、浏览器崩溃或回滚再次失败时仍可能留下需要人工检查的残留路径。
 
 ## 37. 冲突处理
 
-普通包冲突覆盖词条、批注和术语。词条先利用包内版本事件链比较修改前、当前和修改包最终状态：
+普通包冲突覆盖词条、批注、术语和任务状态。新版包统一比较经过本地核验的修改前快照、当前项目和修改包最终状态：
 
 - 当前项目匹配修改包最终状态时视为已一致。
-- 当前项目匹配连续事件链中的修改前状态时安全采用，不显示为冲突。
-- 当前项目与事件链分叉，或旧包缺少完整审计快照时，才显示冲突。
-- 上下文和争议字段没有可靠修改前快照时继续显式处理。
+- 当前项目匹配修改前状态时安全采用修改包字段。
+- 修改包字段未变化时保留当前项目字段。
+- 双方修改不同业务组时自动组合；同组结果不同时才显示冲突。词条的译文与工作流审计是一个不可拆分组，争议字段是一个组，上下文是一个组；不会把一边的译文与另一边的审核状态拼成新记录。
+- 旧包可由连续事件证明的译文工作流和争议操作安全快进；任务状态倒退、批注删除等无法证明安全的操作保持显式冲突。
 
 可选 resolution：
 
@@ -1878,7 +1892,7 @@ manifest 示例：
 
 词条手动合并可以指定 target 和 context，`updated_by` 使用包 manifest user。手动改变译文时必须通过现有状态函数回到 `translated` 或 `untranslated` 并清空后续校对审核审计；需要保留修改包的完整校对或审核结果时应选择 `use_package`，不能手工拼出不一致的状态和人员字段。
 
-批注冲突比较状态、解决时间和解决人，只支持保留当前项目或使用修改包版本。
+批注冲突把状态、解决时间和解决人作为同一组，并比较完整删除范围，只支持保留当前项目或使用修改包版本。删除时会把导出后新增或变化的回复视为并发冲突，不会递归静默删除；项目更新接收也使用同一棵回复树规则，避免留下孤立回复。
 
 术语冲突比较：
 
@@ -1894,8 +1908,8 @@ manifest 示例：
 
 局限：
 
-- 任务和维护数据没有同等细粒度冲突 UI。
-- 项目更新包没有逐条冲突，使用 revision 和未导出修改保护。
+- 维护数据仍不参与普通成员工作区 rebase，项目设置、成员和源文件修改继续通过维护流程处理。
+- 项目更新对词条业务组、批注、术语和完整任务记录执行本地三方合并；保留下来的本地记录同时保留 `updated_by` / `updated_at`，因此接收更新后仍能继续导出尚未提交的工作。本地新增或删除词条不属于普通成员工作流，会阻止自动接收。
 
 ## 38. 签名与验签
 
@@ -2566,7 +2580,8 @@ GitHub Release 应上传：
 - 修改包预检查失败不写入。
 - 项目更新包最后推进 project revision。
 - 项目更新保留本地密码字段。
-- 接收更新前检查未导出个人修改。
+- 项目更新接收时基于工作区基线保留未提交修改，并在同字段变化时要求冲突处理。
+- 项目更新按 source、entries、comments、terms、tasks 和 contexts 权威文件集合清理旧文件。
 
 仍有风险：
 

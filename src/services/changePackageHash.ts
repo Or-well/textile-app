@@ -19,6 +19,7 @@ export interface ChangePackagePayload {
   projectFiles: Record<string, string>;
   memberFiles: Record<string, string>;
   events: ProjectEvent[];
+  baseFiles?: Record<string, string>;
 }
 
 type HashableRow = {
@@ -79,10 +80,12 @@ export function buildChangePackageHashPayload(payload: ChangePackagePayload) {
     logs: sortRows(payload.events),
   };
   const termDeletions = normalizeRecordRows(payload.termDeletions ?? {});
-
-  return termDeletions.length > 0
+  const base = normalizeTextRecord(payload.baseFiles ?? {});
+  const withTermDeletions = termDeletions.length > 0
     ? { ...hashPayload, termDeletions }
     : hashPayload;
+
+  return base.length > 0 ? { ...withTermDeletions, base } : withTermDeletions;
 }
 
 export async function calculateChangePackageContentHash(

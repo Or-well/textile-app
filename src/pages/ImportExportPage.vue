@@ -129,6 +129,7 @@ const isCreatingProjectBackupPublisherKey = ref(false);
 const projectBackupKeyReminderError = ref("");
 const errorMessage = ref("");
 const message = ref("");
+const changeExportError = ref("");
 const changePackage = ref<ReadChangePackage>();
 const packagePreview = ref<ChangePackagePreview>();
 const conflicts = ref<ChangeConflict[]>([]);
@@ -787,18 +788,20 @@ function handleSignChangePackageToggle(event: Event): void {
 }
 
 async function handleExportChanges() {
+  changeExportError.value = "";
+
   if (!currentUser.value) {
-    errorMessage.value = "请先登录。";
+    changeExportError.value = errorMessage.value = "请先登录。";
     return;
   }
 
   if (exportMode.value === "task_changes" && selectedTaskIds.value.length === 0) {
-    errorMessage.value = "请选择至少一个任务。";
+    changeExportError.value = errorMessage.value = "请选择至少一个任务。";
     return;
   }
 
   if (!canExportSelectedMode.value) {
-    errorMessage.value =
+    changeExportError.value = errorMessage.value =
       exportMode.value === "maintenance_changes"
         ? "当前成员没有导出项目维护修改的权限。"
         : exportMode.value === "project_update"
@@ -808,6 +811,7 @@ async function handleExportChanges() {
   }
 
   if (!(await ensureSigningKeyIfNeeded(shouldSignChangePackage.value))) {
+    changeExportError.value = errorMessage.value;
     return;
   }
 
@@ -874,7 +878,7 @@ async function handleExportChanges() {
         : `已导出未签名普通修改包：${result.fileName}。当前成员未配置签名私钥。`;
     }
   } catch (error) {
-    errorMessage.value =
+    changeExportError.value = errorMessage.value =
       error instanceof Error ? error.message : "导出修改包失败。请稍后再试。";
   } finally {
     isExporting.value = false;
@@ -1374,6 +1378,9 @@ watch(
                 : "当前成员没有导出普通修改包的权限。"
           }}
         </p>
+        <p v-if="changeExportError" class="error-message inline-feedback">
+          {{ changeExportError }}
+        </p>
       </section>
 
       <section
@@ -1440,7 +1447,11 @@ watch(
         <section v-if="conflicts.length > 0" class="conflict-section">
           <h2>冲突处理</h2>
           <p class="section-note">
-            如果修改包和当前项目同时改过同一词条或批注状态，请先选择处理方式。
+            {{
+              packageValidation?.packageType === "project_update"
+                ? "本地工作和项目更新修改了同一内容。请选择保留本地修改，或采用负责人发布的项目更新。"
+                : "如果修改包和当前项目同时改过同一词条或批注状态，请先选择处理方式。"
+            }}
           </p>
 
         <ConflictResolver
@@ -1448,6 +1459,7 @@ watch(
           :is-applying="isApplyingPackage"
           :can-apply="canApplySelectedPackage"
           :disabled-reason="applyDisabledReason"
+          :is-project-update="packageValidation?.packageType === 'project_update'"
           @apply="handleApplyPackage"
         />
         </section>

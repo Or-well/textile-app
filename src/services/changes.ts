@@ -31,10 +31,6 @@ import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { APP_VERSION } from "../utils/appVersion";
-import {
-  readLocalStorageItem,
-  writeLocalStorageItem,
-} from "../utils/browserStorage";
 import type { ZipContent } from "../utils/zip";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import {
@@ -83,6 +79,15 @@ import {
   canUpdateTerm,
   setPermissionProject,
 } from "./permissions";
+import {
+  captureWorkspaceSnapshot,
+  diffWorkspaceSnapshots,
+  groupChangedRows,
+  readWorkspaceBaseline,
+  WORKSPACE_BASELINE_PATH,
+  type WorkspaceRecordChange,
+  type WorkspaceSnapshot,
+} from "./workspaceBaseline";
 
 export type ExportChangePackageMode =
   | "member_changes"
@@ -110,18 +115,12 @@ export interface ExportedChangePackage {
   completion:
     | { kind: "none" }
     | {
-        kind: "member_changes";
-        projectId: string;
-        userId: string;
-        baseRevision: string;
-        contentHash: string;
-      }
-    | {
         kind: "project_update";
         projectId: string;
         baseRevision: string;
         targetRevision: string;
         projectJson: string;
+        sourceSnapshotHash?: string;
       };
 }
 
@@ -139,6 +138,8 @@ export interface ReadChangePackage {
   projectFiles: Record<string, string>;
   memberFiles: Record<string, string>;
   events: ProjectEvent[];
+  base?: OrdinaryChangeBase;
+  baseFiles?: Record<string, string>;
   validation?: ChangePackageValidation;
 }
 
@@ -222,8 +223,8 @@ export interface CommentChangeConflict {
   entryId: string;
   commentId: string;
   path: string;
-  mainComment: Comment;
-  packageComment: Comment;
+  mainComment?: Comment;
+  packageComment?: Comment;
   reasons: CommentConflictReason[];
 }
 
@@ -237,10 +238,20 @@ export interface TermChangeConflict {
   reasons: TermConflictReason[];
 }
 
+export interface TaskChangeConflict {
+  kind: "task";
+  conflictId: string;
+  taskId: string;
+  mainTask: Task;
+  packageTask: Task;
+  reasons: Array<"status" | "details">;
+}
+
 export type ChangeConflict =
   | EntryChangeConflict
   | CommentChangeConflict
-  | TermChangeConflict;
+  | TermChangeConflict
+  | TaskChangeConflict;
 
 export type ConflictResolutionAction =
   | "keep_main"
@@ -251,6 +262,7 @@ export type ConflictResolutionAction =
 export interface ConflictResolution {
   conflictId?: string;
   entryId?: string;
+  taskId?: string;
   action: ConflictResolutionAction;
   target?: string;
   status?: Entry["status"];
@@ -283,6 +295,15 @@ export interface ApplyChangePackageOptions {
 const SUPPORTED_CHANGE_PACKAGE_SCHEMA_VERSION = 2;
 const TERM_DELETION_PACKAGE_PATH = "term-changes/deletions.jsonl";
 const LOCAL_TERM_DELETIONS_PATH = "changes/term-deletions.jsonl";
+const ORDINARY_CHANGE_BASE_PATH = "base/changes.json";
+
+interface OrdinaryChangeBase {
+  schema_version: 1;
+  entries: Record<string, Entry[]>;
+  comments: Record<string, Comment[]>;
+  terms: Record<string, Term[]>;
+  tasks: Record<string, Task[]>;
+}
 type EntryConflictReason =
   | "target"
   | "status"
@@ -296,6 +317,7 @@ type EntryConflictReason =
   | "dispute_resolved_by"
   | "context";
 type CommentConflictReason =
+  | "deleted"
   | "status"
   | "resolved_at"
   | "resolved_by";
@@ -355,13 +377,30 @@ const ENTRY_CONFLICT_FIELDS = [
   "dispute_resolved_by",
   "context",
 ] as const satisfies readonly EntryConflictReason[];
-const ENTRY_VERSION_CONFLICT_FIELDS = new Set<EntryConflictReason>([
+const ENTRY_WORKFLOW_FIELDS = [
   "target",
   "status",
   "translated_by",
   "proofread_by",
   "proofread_count",
   "reviewed_by",
+] as const satisfies readonly EntryConflictReason[];
+const ENTRY_DISPUTE_FIELDS = [
+  "disputed",
+  "dispute_reason",
+  "dispute_resolved_at",
+  "dispute_resolved_by",
+] as const satisfies readonly EntryConflictReason[];
+const ENTRY_CONTEXT_FIELDS = [
+  "context",
+] as const satisfies readonly EntryConflictReason[];
+const ENTRY_MERGE_GROUPS = [
+  ENTRY_WORKFLOW_FIELDS,
+  ENTRY_DISPUTE_FIELDS,
+  ENTRY_CONTEXT_FIELDS,
+] as const;
+const ENTRY_VERSION_CONFLICT_FIELDS = new Set<EntryConflictReason>([
+  ...ENTRY_WORKFLOW_FIELDS,
 ]);
 const ENTRY_PROTECTED_FIELDS = [
   "id",
@@ -393,6 +432,13 @@ const TASK_PROTECTED_FIELDS = [
   "due_at",
   "due_time_zone",
 ] as const satisfies readonly TaskProtectedField[];
+const ORDINARY_TASK_STATUS_ORDER: Task["status"][] = [
+  "unassigned",
+  "assigned",
+  "in_progress",
+  "submitted",
+  "completed",
+];
 const COMMENT_IMMUTABLE_FIELDS = [
   "id",
   "entry_id",
@@ -435,7 +481,6 @@ const EMPTY_SUMMARY: ChangePackageSummary = {
 };
 
 let currentProjectStorage: ProjectStorage | null = null;
-const MEMBER_CHANGE_MARKER_PREFIX = "textile.memberChangeExport";
 
 export function setChangesProjectRoot(root: ProjectDirectoryHandle): void {
   setChangesProjectStorage(createProjectStorage(root));
@@ -459,27 +504,6 @@ function createEmptySummary(): ChangePackageSummary {
 
 function getPackageType(manifest: ChangePackageManifest): ChangePackageType {
   return manifest.package_type ?? "legacy";
-}
-
-function getExportMarkerKey(projectId: string, userId: string, revision: string): string {
-  return `${MEMBER_CHANGE_MARKER_PREFIX}.${projectId}.${userId}.${revision}`;
-}
-
-function readExportedMemberChangeHash(
-  projectId: string,
-  userId: string,
-  revision: string,
-): string | null {
-  return readLocalStorageItem(getExportMarkerKey(projectId, userId, revision));
-}
-
-function storeExportedMemberChangeHash(
-  projectId: string,
-  userId: string,
-  revision: string,
-  contentHash: string,
-): void {
-  writeLocalStorageItem(getExportMarkerKey(projectId, userId, revision), contentHash);
 }
 
 function isMemberChangePackage(packageType: ChangePackageType): boolean {
@@ -590,6 +614,10 @@ function requiresChangePackageSchemaV2(
   payload: ChangePackagePayload,
   userId: string,
 ): boolean {
+  if (countRecordFiles(payload.baseFiles ?? {}) > 0) {
+    return true;
+  }
+
   if (countRecordRows(payload.termDeletions ?? {}) > 0) {
     return true;
   }
@@ -1330,21 +1358,6 @@ async function collectUserTasks(
   return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
 }
 
-async function collectUserCreatedTasks(
-  storage: ProjectStorage,
-  userId: string,
-): Promise<Record<string, Task[]>> {
-  if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
-    return {};
-  }
-
-  const rows = (await storage.readJsonl<Task>("tasks/tasks.jsonl")).filter(
-    (task) => task.created_by === userId,
-  );
-
-  return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
-}
-
 async function collectAllTasks(storage: ProjectStorage): Promise<Record<string, Task[]>> {
   if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
     return {};
@@ -1384,12 +1397,218 @@ async function collectUserEvents(
   );
 }
 
+function isEntryChangeOwnedBy(
+  change: WorkspaceRecordChange<Entry>,
+  userId: string,
+): boolean {
+  return change.after?.updated_by === userId;
+}
+
+function isCommentChangeOwnedBy(
+  change: WorkspaceRecordChange<Comment>,
+  userId: string,
+): boolean {
+  return Boolean(
+    change.after &&
+      (change.after.user_id === userId || change.after.updated_by === userId),
+  );
+}
+
+function isTermChangeOwnedBy(
+  change: WorkspaceRecordChange<Term>,
+  userId: string,
+): boolean {
+  return Boolean(
+    change.after &&
+      (change.after.created_by === userId || change.after.updated_by === userId),
+  );
+}
+
+function groupBeforeRows<T extends { id: string }>(
+  changes: WorkspaceRecordChange<T>[],
+): Record<string, T[]> {
+  const grouped: Record<string, T[]> = {};
+
+  for (const change of changes) {
+    if (change.before) {
+      (grouped[change.path] ??= []).push(change.before);
+    }
+  }
+
+  return grouped;
+}
+
+async function buildWorkspaceMemberChangePayload(
+  storage: ProjectStorage,
+  project: ProjectConfig,
+  userId: string,
+  tasks: Task[] | null,
+  options: { includeTerms: boolean; includeTaskAssignees?: boolean },
+): Promise<ChangePackagePayload | null> {
+  const baseline = await readWorkspaceBaseline(storage, project);
+
+  if (!baseline) {
+    return null;
+  }
+
+  // 旧项目第一次升级时没有历史快照，不能把“当前状态”误当成修改前状态。
+  // 本次导出继续使用原有归属筛选；收到一次项目更新后会建立可信基线。
+  if (baseline.legacy_user_id) {
+    return null;
+  }
+
+  const current = await captureWorkspaceSnapshot(storage, project);
+  const diff = diffWorkspaceSnapshots(baseline, current);
+  const allowedEntryIds = tasks
+    ? await getTaskScopeEntryIds(storage, tasks)
+    : null;
+  const selectedTaskIds = tasks ? new Set(tasks.map((task) => task.id)) : null;
+  const allowedUserIds = new Set([
+    userId,
+    ...(options.includeTaskAssignees && tasks
+      ? tasks.map((task) => task.assignee).filter(Boolean)
+      : []),
+  ]);
+  const entryAllowed = (entryId: string) =>
+    !allowedEntryIds || allowedEntryIds.has(entryId);
+  const baselineEventIds = new Set(baseline.event_ids);
+  const events = (await storage.fileExists("logs/events.jsonl"))
+    ? (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
+        (event) =>
+          !baselineEventIds.has(event.id) &&
+          allowedUserIds.has(event.user_id) &&
+          (event.type !== "comment.deleted" ||
+            (Boolean(findRowById(baseline.comments, getCommentIdFromEvent(event))) &&
+              !findRowById(current.comments, getCommentIdFromEvent(event)))) &&
+          (!allowedEntryIds ||
+            (event.entry_id
+              ? allowedEntryIds.has(event.entry_id)
+              : event.task_id
+                ? selectedTaskIds?.has(event.task_id)
+                : false)),
+      )
+    : [];
+  const deletedCommentIds = new Set(
+    events
+      .filter((event) => event.type === "comment.deleted")
+      .map(getCommentIdFromEvent)
+      .filter(Boolean),
+  );
+  for (const rootId of [...deletedCommentIds]) {
+    const baselineComment = findRowById(baseline.comments, rootId);
+    if (!baselineComment) {
+      continue;
+    }
+    for (const id of getCommentDeletionIds(
+      baseline.comments[baselineComment.path] ?? [],
+      rootId,
+    )) {
+      deletedCommentIds.add(id);
+    }
+  }
+  const selectedEntryChanges = diff.entries.filter(
+    (change) =>
+      Array.from(allowedUserIds).some((allowedUserId) =>
+        isEntryChangeOwnedBy(change, allowedUserId),
+      ) && entryAllowed(change.id),
+  );
+  const selectedCommentChanges = diff.comments.filter(
+    (change) => {
+      const comment = change.after ?? change.before;
+      return Boolean(
+        comment &&
+          entryAllowed(comment.entry_id) &&
+          (Array.from(allowedUserIds).some((allowedUserId) =>
+            isCommentChangeOwnedBy(change, allowedUserId),
+          ) ||
+            (!change.after && deletedCommentIds.has(change.id))),
+      );
+    },
+  );
+  const termDeletionRows = options.includeTerms
+    ? diff.termDeletions
+        .filter(
+          (change) =>
+            change.after?.deleted_by === userId,
+        )
+        .map((change) => change.after!)
+    : [];
+  const selectedTermChanges = options.includeTerms
+    ? diff.terms.filter(
+        (change) =>
+          isTermChangeOwnedBy(change, userId) ||
+          termDeletionRows.some((deletion) => deletion.term_id === change.id),
+      )
+    : [];
+  const selectedTaskChanges = diff.tasks.filter(
+      (change) =>
+        Boolean(change.after) &&
+        (change.after!.assignee === userId || change.after!.created_by === userId) &&
+        (!selectedTaskIds || selectedTaskIds.has(change.id)),
+    );
+  const entries = groupChangedRows(selectedEntryChanges);
+  const comments = groupChangedRows(selectedCommentChanges);
+  const terms = groupChangedRows(selectedTermChanges);
+  const changedTasks = selectedTaskChanges.map((change) => change.after!);
+  const base: OrdinaryChangeBase = {
+    schema_version: 1,
+    entries: groupBeforeRows(selectedEntryChanges),
+    comments: groupBeforeRows(selectedCommentChanges),
+    terms: groupBeforeRows(selectedTermChanges),
+    tasks: groupBeforeRows(selectedTaskChanges),
+  };
+
+  return {
+    entries,
+    comments,
+    terms,
+    termDeletions:
+      termDeletionRows.length > 0
+        ? { [TERM_DELETION_PACKAGE_PATH]: termDeletionRows }
+        : {},
+    contexts: {},
+    sourceFiles: {},
+    tasks:
+      changedTasks.length > 0
+        ? { "tasks/tasks.jsonl": changedTasks }
+        : {},
+    projectFiles: {},
+    memberFiles: {},
+    events,
+    baseFiles: {
+      [ORDINARY_CHANGE_BASE_PATH]: `${JSON.stringify(base, null, 2)}\n`,
+    },
+  };
+}
+
 async function collectAllEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
   if (!(await storage.fileExists("logs/events.jsonl"))) {
     return [];
   }
 
   return storage.readJsonl<ProjectEvent>("logs/events.jsonl");
+}
+
+async function calculateProjectUpdateSourceSnapshotHash(
+  storage: ProjectStorage,
+  project: ProjectConfig,
+): Promise<string> {
+  const payload: ChangePackagePayload = {
+    entries: await collectAllEntries(storage, project),
+    comments: await collectAllComments(storage),
+    terms: await collectAllTerms(storage),
+    termDeletions: {},
+    contexts: await collectTextFiles(storage, "contexts"),
+    sourceFiles: await collectTextFiles(storage, "source"),
+    tasks: await collectAllTasks(storage),
+    projectFiles: {
+      "project/project.json": `${JSON.stringify(project, null, 2)}\n`,
+    },
+    memberFiles: await collectPublicMemberFiles(storage),
+    events: await collectAllEvents(storage),
+  };
+
+  return calculateChangePackageContentHash(payload);
 }
 
 async function collectTextFiles(
@@ -1560,6 +1779,20 @@ function samePackageValue(left: unknown, right: unknown): boolean {
   return stableStringify(left ?? null) === stableStringify(right ?? null);
 }
 
+function normalizeCollaborationEntry(entry: Entry): Entry {
+  const normalized = normalizeEntry(entry);
+  return {
+    ...normalized,
+    context: normalized.context ?? "",
+    translated_by: normalized.translated_by ?? "",
+    reviewed_by: normalized.reviewed_by ?? "",
+    disputed: normalized.disputed === true,
+    dispute_reason: normalized.dispute_reason ?? "",
+    dispute_resolved_at: normalized.dispute_resolved_at ?? "",
+    dispute_resolved_by: normalized.dispute_resolved_by ?? "",
+  };
+}
+
 function normalizePackageComment(comment: Comment): Comment {
   const status = comment.status ?? (comment.resolved ? "resolved" : "open");
 
@@ -1603,11 +1836,42 @@ function assertOrdinaryCommentPackageFields(
 function getCommentConflictReasons(
   mainComment: Comment,
   packageComment: Comment,
+  baseComment?: Comment,
 ): CommentConflictReason[] {
-  assertOrdinaryCommentPackageFields(mainComment, packageComment);
+  assertOrdinaryCommentPackageFields(baseComment ?? mainComment, packageComment);
 
   const normalizedMainComment = normalizePackageComment(mainComment);
   const normalizedPackageComment = normalizePackageComment(packageComment);
+
+  if (baseComment) {
+    const normalizedBaseComment = normalizePackageComment(baseComment);
+    const packageChanged = COMMENT_CONFLICT_FIELDS.some(
+      (field) =>
+        !samePackageValue(
+          normalizedPackageComment[field],
+          normalizedBaseComment[field],
+        ),
+    );
+    const mainChanged = COMMENT_CONFLICT_FIELDS.some(
+      (field) =>
+        !samePackageValue(
+          normalizedMainComment[field],
+          normalizedBaseComment[field],
+        ),
+    );
+
+    if (!packageChanged || !mainChanged) {
+      return [];
+    }
+
+    return COMMENT_CONFLICT_FIELDS.filter(
+      (field) =>
+        !samePackageValue(
+          normalizedMainComment[field],
+          normalizedPackageComment[field],
+        ),
+    );
+  }
 
   return COMMENT_CONFLICT_FIELDS.filter(
     (field) =>
@@ -1631,9 +1895,29 @@ function normalizePackageTerm(term: Term): Term {
 function getTermConflictReasons(
   mainTerm: Term,
   packageTerm: Term,
+  baseTerm?: Term,
 ): TermConflictReason[] {
   const normalizedMainTerm = normalizePackageTerm(mainTerm);
   const normalizedPackageTerm = normalizePackageTerm(packageTerm);
+
+  if (baseTerm) {
+    const normalizedBaseTerm = normalizePackageTerm(baseTerm);
+    return TERM_CONFLICT_FIELDS.filter(
+      (field) =>
+        !samePackageValue(
+          normalizedPackageTerm[field],
+          normalizedBaseTerm[field],
+        ) &&
+        !samePackageValue(
+          normalizedMainTerm[field],
+          normalizedBaseTerm[field],
+        ) &&
+        !samePackageValue(
+          normalizedMainTerm[field],
+          normalizedPackageTerm[field],
+        ),
+    );
+  }
 
   return TERM_CONFLICT_FIELDS.filter(
     (field) =>
@@ -1642,6 +1926,58 @@ function getTermConflictReasons(
         normalizedPackageTerm[field],
       ),
   );
+}
+
+function mergeOrdinaryPackageTerm(
+  mainTerm: Term,
+  packageTerm: Term,
+  baseTerm?: Term,
+  resolution?: ConflictResolution,
+): Term {
+  const normalizedMainTerm = normalizePackageTerm(mainTerm);
+  const normalizedPackageTerm = normalizePackageTerm(packageTerm);
+
+  if (!baseTerm) {
+    return normalizedPackageTerm;
+  }
+
+  const normalizedBaseTerm = normalizePackageTerm(baseTerm);
+  const merged: Term = {
+    ...normalizedMainTerm,
+    variants: [...normalizedMainTerm.variants],
+  };
+  let usedPackage = false;
+
+  for (const field of TERM_CONFLICT_FIELDS) {
+    if (
+      samePackageValue(
+        normalizedPackageTerm[field],
+        normalizedBaseTerm[field],
+      )
+    ) {
+      continue;
+    }
+
+    const isConflict =
+      !samePackageValue(
+        normalizedMainTerm[field],
+        normalizedBaseTerm[field],
+      ) &&
+      !samePackageValue(
+        normalizedMainTerm[field],
+        normalizedPackageTerm[field],
+      );
+    if (!isConflict || resolution?.action === "use_package") {
+      setMergedField(merged, normalizedPackageTerm, field);
+      usedPackage = true;
+    }
+  }
+
+  if (usedPackage) {
+    merged.updated_at = normalizedPackageTerm.updated_at;
+    merged.updated_by = normalizedPackageTerm.updated_by;
+  }
+  return normalizePackageTerm(merged);
 }
 
 function findExistingTermIndex(terms: Term[], packageTerm: Term): number {
@@ -1671,10 +2007,52 @@ function normalizeTermDeletion(deletion: TermDeletion): TermDeletion {
 function mergeOrdinaryPackageComment(
   mainComment: Comment,
   packageComment: Comment,
+  baseComment?: Comment,
+  resolution?: ConflictResolution,
 ): Comment {
-  assertOrdinaryCommentPackageFields(mainComment, packageComment);
+  assertOrdinaryCommentPackageFields(baseComment ?? mainComment, packageComment);
 
   const normalizedPackageComment = normalizePackageComment(packageComment);
+
+  if (baseComment) {
+    const normalizedMainComment = normalizePackageComment(mainComment);
+    const normalizedBaseComment = normalizePackageComment(baseComment);
+    const merged = { ...normalizedMainComment };
+    const packageChanged = COMMENT_CONFLICT_FIELDS.some(
+      (field) =>
+        !samePackageValue(
+          normalizedPackageComment[field],
+          normalizedBaseComment[field],
+        ),
+    );
+    const mainChanged = COMMENT_CONFLICT_FIELDS.some(
+      (field) =>
+        !samePackageValue(
+          normalizedMainComment[field],
+          normalizedBaseComment[field],
+        ),
+    );
+    const sameResult = COMMENT_CONFLICT_FIELDS.every((field) =>
+      samePackageValue(
+        normalizedMainComment[field],
+        normalizedPackageComment[field],
+      ),
+    );
+    const usePackage =
+      packageChanged &&
+      (!mainChanged || sameResult || resolution?.action === "use_package");
+
+    if (usePackage) {
+      for (const field of COMMENT_CONFLICT_FIELDS) {
+        setMergedField(merged, normalizedPackageComment, field);
+      }
+      merged.updated_at = normalizedPackageComment.updated_at;
+      merged.updated_by = normalizedPackageComment.updated_by;
+    }
+
+    merged.resolved = merged.status === "resolved";
+    return normalizePackageComment(merged);
+  }
 
   return {
     ...mainComment,
@@ -1746,7 +2124,7 @@ interface EntryWorkflowSnapshot {
 }
 
 function getEntryWorkflowSnapshot(entry: Entry): EntryWorkflowSnapshot {
-  const normalized = normalizeEntry(entry);
+  const normalized = normalizeCollaborationEntry(entry);
 
   return {
     target: normalized.target,
@@ -1849,24 +2227,96 @@ function hasEntryConflict(
   packageEntry: Entry,
   useOrdinarySafeguards: boolean,
   events: ProjectEvent[] = [],
+  baseEntry?: Entry,
 ): EntryConflictReason[] {
   if (useOrdinarySafeguards) {
-    assertOrdinaryEntryPackageFields(mainEntry, packageEntry);
+    assertOrdinaryEntryPackageFields(baseEntry ?? mainEntry, packageEntry);
   }
 
-  const normalizedPackageEntry = normalizeEntry(packageEntry);
+  const normalizedMainEntry = normalizeCollaborationEntry(mainEntry);
+  const normalizedPackageEntry = normalizeCollaborationEntry(packageEntry);
+
+  if (useOrdinarySafeguards && baseEntry) {
+    const normalizedBaseEntry = normalizeCollaborationEntry(baseEntry);
+    return getEntryGroupConflictReasons(
+      normalizedBaseEntry,
+      normalizedMainEntry,
+      normalizedPackageEntry,
+    );
+  }
 
   const reasons = ENTRY_CONFLICT_FIELDS.filter(
-    (field) => !samePackageValue(mainEntry[field], normalizedPackageEntry[field]),
+    (field) =>
+      !samePackageValue(
+        normalizedMainEntry[field],
+        normalizedPackageEntry[field],
+      ),
   );
 
-  if (
-    useOrdinarySafeguards &&
-    reasons.length > 0 &&
-    reasons.every((reason) => ENTRY_VERSION_CONFLICT_FIELDS.has(reason)) &&
-    canApplyEntryFromVersionChain(mainEntry, normalizedPackageEntry, events)
-  ) {
-    return [];
+  if (useOrdinarySafeguards && reasons.length > 0) {
+    let remaining = [...reasons];
+
+    if (
+      canApplyEntryFromVersionChain(
+        normalizedMainEntry,
+        normalizedPackageEntry,
+        events,
+      )
+    ) {
+      remaining = remaining.filter(
+        (reason) => !ENTRY_VERSION_CONFLICT_FIELDS.has(reason),
+      );
+    }
+
+    const disputeEvent = [...events].reverse().find(
+      (event) =>
+        event.entry_id === normalizedPackageEntry.id &&
+        (event.type === "entry.mark_disputed" ||
+          event.type === "entry.resolve_dispute"),
+    );
+
+    if (
+      disputeEvent?.type === "entry.mark_disputed" &&
+      !normalizedMainEntry.disputed &&
+      normalizedPackageEntry.disputed
+    ) {
+      remaining = remaining.filter((reason) => reason !== "disputed");
+      const eventReason =
+        typeof disputeEvent.detail?.reason === "string"
+          ? disputeEvent.detail.reason
+          : "";
+      if (
+        !normalizedMainEntry.dispute_reason &&
+        normalizedPackageEntry.dispute_reason === eventReason
+      ) {
+        remaining = remaining.filter((reason) => reason !== "dispute_reason");
+      }
+    }
+
+    if (
+      disputeEvent?.type === "entry.resolve_dispute" &&
+      normalizedMainEntry.disputed &&
+      !normalizedPackageEntry.disputed
+    ) {
+      remaining = remaining.filter((reason) => reason !== "disputed");
+      if (
+        normalizedPackageEntry.dispute_resolved_at ===
+          disputeEvent.created_at
+      ) {
+        remaining = remaining.filter(
+          (reason) => reason !== "dispute_resolved_at",
+        );
+      }
+      if (
+        normalizedPackageEntry.dispute_resolved_by === disputeEvent.user_id
+      ) {
+        remaining = remaining.filter(
+          (reason) => reason !== "dispute_resolved_by",
+        );
+      }
+    }
+
+    return remaining;
   }
 
   return reasons;
@@ -1878,10 +2328,48 @@ function mergeOrdinaryPackageEntry(
   userId: string,
   operation: EntryWorkflowOperation,
   updatedAt = nowIso(),
+  baseEntry?: Entry,
+  resolution?: ConflictResolution,
 ): Entry {
-  const normalizedPackageEntry = normalizeEntry(packageEntry);
+  const normalizedPackageEntry = normalizeCollaborationEntry(packageEntry);
 
-  assertOrdinaryEntryPackageFields(currentEntry, packageEntry);
+  assertOrdinaryEntryPackageFields(baseEntry ?? currentEntry, packageEntry);
+
+  if (baseEntry) {
+    const normalizedBaseEntry = normalizeCollaborationEntry(baseEntry);
+    const normalizedCurrentEntry = normalizeCollaborationEntry(currentEntry);
+    let merged = normalizeCollaborationEntry({ ...normalizedCurrentEntry });
+
+    for (const fields of ENTRY_MERGE_GROUPS) {
+      if (sameEntryFieldGroup(normalizedPackageEntry, normalizedBaseEntry, fields)) {
+        continue;
+      }
+
+      const isConflict =
+        !sameEntryFieldGroup(normalizedCurrentEntry, normalizedBaseEntry, fields) &&
+        !sameEntryFieldGroup(normalizedCurrentEntry, normalizedPackageEntry, fields);
+
+      if (!isConflict || resolution?.action === "use_package") {
+        copyEntryFieldGroup(merged, normalizedPackageEntry, fields);
+      }
+    }
+
+    if (resolution?.action === "manual_merge") {
+      if (resolution.target !== undefined) {
+        merged = applyEntryTargetChange(merged, resolution.target, {
+          userId,
+          updatedAt,
+        });
+      }
+      if (resolution.context !== undefined) {
+        merged.context = resolution.context;
+      }
+    }
+
+    merged.updated_at = updatedAt;
+    merged.updated_by = userId;
+    return normalizeCollaborationEntry(merged);
+  }
 
   if (normalizedPackageEntry.target !== currentEntry.target) {
     if (operation === "translation_edit") {
@@ -2202,6 +2690,8 @@ function entryWorkflowChanged(before: Entry, after: Entry): boolean {
 function mergeOrdinaryPackageTasks(
   existingTasks: Task[],
   packageTasks: Task[],
+  baseTasks: Record<string, Task[]> = {},
+  resolutions: ConflictResolution[] = [],
 ): { rows: Task[]; imported: number } {
   const nextRows = [...existingTasks];
   let imported = 0;
@@ -2215,8 +2705,8 @@ function mergeOrdinaryPackageTasks(
     }
 
     const currentTask = nextRows[index]!;
-
-    assertOrdinaryTaskPackageFields(currentTask, packageTask);
+    const baseTask = findRowById(baseTasks, packageTask.id)?.row;
+    assertOrdinaryTaskPackageFields(baseTask ?? currentTask, packageTask);
 
     if (currentTask.status !== packageTask.status) {
       const allowedStatuses: Task["status"][] = [
@@ -2224,6 +2714,24 @@ function mergeOrdinaryPackageTasks(
         "in_progress",
         "submitted",
       ];
+
+      if (baseTask && packageTask.status === baseTask.status) {
+        continue;
+      }
+      const conflictId = `task:${packageTask.id}`;
+      const resolution = findConflictResolution(resolutions, conflictId);
+      const isConflict = baseTask
+        ? currentTask.status !== baseTask.status &&
+          packageTask.status !== baseTask.status &&
+          currentTask.status !== packageTask.status
+        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageTask.status) <
+          ORDINARY_TASK_STATUS_ORDER.indexOf(currentTask.status);
+      const shouldUsePackage =
+        !isConflict || resolution?.action === "use_package";
+
+      if (!shouldUsePackage || resolution?.action === "skip") {
+        continue;
+      }
 
       if (
         !allowedStatuses.includes(currentTask.status) ||
@@ -2775,11 +3283,23 @@ export async function exportChangePackage(
       throw new Error("普通成员只能导出分配给自己的任务修改。");
     }
 
+    const workspacePayload = await buildWorkspaceMemberChangePayload(
+      storage,
+      project,
+      userId,
+      tasks,
+      {
+        includeTerms: false,
+        includeTaskAssignees: canExportAnyTask,
+      },
+    );
+
     Object.assign(
       payload,
-      await collectTaskScopedChanges(storage, tasks, userId, {
-        includeAssignees: canExportAnyTask,
-      }),
+      workspacePayload ??
+        (await collectTaskScopedChanges(storage, tasks, userId, {
+          includeAssignees: canExportAnyTask,
+        })),
     );
 
     if (options.includeOwnCredentials) {
@@ -2792,23 +3312,34 @@ export async function exportChangePackage(
       throw new Error("当前成员没有导出普通修改包的权限。");
     }
 
-    if (canManageTask(actor)) {
+    const exportTasks = canManageTask(actor)
+      ? null
+      : await loadExportableTasksForUser(storage, userId);
+    const workspacePayload = await buildWorkspaceMemberChangePayload(
+      storage,
+      project,
+      userId,
+      exportTasks,
+      { includeTerms: true },
+    );
+
+    if (workspacePayload) {
+      Object.assign(payload, workspacePayload);
+    } else if (canManageTask(actor)) {
       payload.entries = await collectUserChangedEntries(storage, project, userId);
       payload.comments = await collectUserComments(storage, userId);
       payload.tasks = await collectUserTasks(storage, userId);
       payload.events = await collectUserEvents(storage, userId);
+      payload.terms = await collectUserTerms(storage, userId);
+      payload.termDeletions = await collectUserTermDeletions(storage, userId);
     } else {
       Object.assign(
         payload,
-        await collectTaskScopedChanges(
-          storage,
-          await loadExportableTasksForUser(storage, userId),
-          userId,
-        ),
+        await collectTaskScopedChanges(storage, exportTasks ?? [], userId),
       );
+      payload.terms = await collectUserTerms(storage, userId);
+      payload.termDeletions = await collectUserTermDeletions(storage, userId);
     }
-    payload.terms = await collectUserTerms(storage, userId);
-    payload.termDeletions = await collectUserTermDeletions(storage, userId);
 
     if (options.includeOwnCredentials) {
       payload.memberFiles = await collectOwnCredentialMemberFiles(storage, userId);
@@ -2958,6 +3489,10 @@ export async function exportChangePackage(
     files[path] = content;
   }
 
+  for (const [path, content] of Object.entries(payload.baseFiles ?? {})) {
+    files[path] = content;
+  }
+
   if (payload.events.length > 0) {
     files["logs/events.jsonl"] = stringifyJsonl(payload.events);
   }
@@ -2969,6 +3504,18 @@ export async function exportChangePackage(
   const blob = await createZip(files);
 
   const projectUpdateJson = payload.projectFiles["project/project.json"];
+  const sourceSnapshotHash =
+    options.mode === "project_update"
+      ? await calculateChangePackageContentHash({
+          ...payload,
+          projectFiles: {
+            "project/project.json": `${JSON.stringify(project, null, 2)}\n`,
+          },
+          memberFiles: options.projectUpdateMembers
+            ? await collectPublicMemberFiles(storage)
+            : payload.memberFiles,
+        })
+      : "";
 
   return {
     fileName: buildFileName(userId, manifestPackageType, createdAt, options.taskId),
@@ -2976,21 +3523,14 @@ export async function exportChangePackage(
     manifest,
     signature,
     completion:
-      options.mode === "member_changes"
-        ? {
-            kind: "member_changes",
-            projectId: project.project_id,
-            userId,
-            baseRevision,
-            contentHash,
-          }
-        : options.mode === "project_update" && projectUpdateJson && targetRevision
+      options.mode === "project_update" && projectUpdateJson && targetRevision
           ? {
               kind: "project_update",
               projectId: project.project_id,
               baseRevision,
               targetRevision,
               projectJson: projectUpdateJson,
+              sourceSnapshotHash,
             }
           : { kind: "none" },
   };
@@ -3013,20 +3553,6 @@ export async function completeChangePackageExport(
 
   const currentRevision = getProjectRevision(project);
 
-  if (completion.kind === "member_changes") {
-    if (currentRevision !== completion.baseRevision) {
-      throw new Error("项目版本已变化，未提交刚才的个人修改导出状态。请重新导出。");
-    }
-
-    storeExportedMemberChangeHash(
-      completion.projectId,
-      completion.userId,
-      completion.baseRevision,
-      completion.contentHash,
-    );
-    return undefined;
-  }
-
   if (currentRevision === completion.targetRevision) {
     return project;
   }
@@ -3035,9 +3561,27 @@ export async function completeChangePackageExport(
     throw new Error("项目版本已变化，未发布刚才生成的项目更新包。请重新导出。");
   }
 
-  const nextProject = JSON.parse(completion.projectJson) as ProjectConfig;
+  if (completion.sourceSnapshotHash) {
+    const currentSnapshotHash = await calculateProjectUpdateSourceSnapshotHash(
+      storage,
+      project,
+    );
 
-  await storage.writeText("project.json", completion.projectJson);
+    if (currentSnapshotHash !== completion.sourceSnapshotHash) {
+      throw new Error(
+        "项目内容在更新包生成后发生了变化，刚保存的文件未发布。请重新导出项目更新包。",
+      );
+    }
+  }
+
+  const nextProject = JSON.parse(completion.projectJson) as ProjectConfig;
+  const nextBaseline = await captureWorkspaceSnapshot(storage, project);
+  nextBaseline.revision = completion.targetRevision;
+  nextBaseline.captured_at = nowIso();
+  const writePlan = createProjectWritePlan(storage);
+  writePlan.writeText("project.json", completion.projectJson);
+  writePlan.writeJson(WORKSPACE_BASELINE_PATH, nextBaseline);
+  await writePlan.execute({ verifyWrites: true });
   setPermissionProject(nextProject);
   return nextProject;
 }
@@ -3088,6 +3632,31 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
     const events = files["logs/events.jsonl"]
       ? parseJsonl<ProjectEvent>(files["logs/events.jsonl"])
       : [];
+    const baseText = files[ORDINARY_CHANGE_BASE_PATH];
+    const baseFiles: Record<string, string> = baseText
+      ? { [ORDINARY_CHANGE_BASE_PATH]: baseText }
+      : {};
+    const base = baseText
+      ? (JSON.parse(baseText) as OrdinaryChangeBase)
+      : undefined;
+
+    const isRowsRecord = (value: unknown): value is Record<string, unknown[]> =>
+      Boolean(
+        value &&
+          typeof value === "object" &&
+          !Array.isArray(value) &&
+          Object.values(value).every(Array.isArray),
+      );
+    if (
+      base &&
+      (base.schema_version !== 1 ||
+        !isRowsRecord(base.entries) ||
+        !isRowsRecord(base.comments) ||
+        !isRowsRecord(base.terms) ||
+        !isRowsRecord(base.tasks))
+    ) {
+      throw new Error("修改包使用了无效或不支持的协作基线。");
+    }
 
     return {
       manifest,
@@ -3103,6 +3672,8 @@ export async function readChangePackage(file: Blob): Promise<ReadChangePackage> 
       projectFiles,
       memberFiles,
       events,
+      base,
+      baseFiles,
     };
   } catch (error) {
     if (error instanceof Error) {
@@ -3223,8 +3794,10 @@ export async function validateChangePackage(
   const members = await loadProjectMembers(storage);
   const packageProjectId = changePackage.manifest.project_id;
   const packageType = getPackageType(changePackage.manifest);
+  const rawEntries = parsePackageJsonl<Entry>(changePackage.files, "entries/");
   const payload: ChangePackagePayload = {
-    entries: changePackage.entries,
+    entries:
+      Object.keys(rawEntries).length > 0 ? rawEntries : changePackage.entries,
     comments: changePackage.comments,
     terms: changePackage.terms,
     termDeletions: changePackage.termDeletions ?? {},
@@ -3234,6 +3807,13 @@ export async function validateChangePackage(
     projectFiles: changePackage.projectFiles,
     memberFiles: changePackage.memberFiles,
     events: changePackage.events,
+    baseFiles:
+      changePackage.baseFiles ??
+      (changePackage.base
+        ? {
+            [ORDINARY_CHANGE_BASE_PATH]: `${JSON.stringify(changePackage.base, null, 2)}\n`,
+          }
+        : {}),
   };
   const calculatedContentHash = await calculateChangePackageContentHash(payload);
   const contentIntegrity: ContentIntegrityStatus = changePackage.manifest.content_hash
@@ -3392,17 +3972,1023 @@ export function previewChangePackage(
   };
 }
 
+interface ProjectUpdateRebaseResult {
+  entries: Record<string, Entry[]>;
+  comments: Record<string, Comment[]>;
+  terms: Record<string, Term[]>;
+  tasks: Record<string, Task[]>;
+  conflicts: ChangeConflict[];
+  preservedChanges: number;
+  localEvents: ProjectEvent[];
+  localTermDeletions: TermDeletion[];
+}
+
+function cloneRowsByPath<T extends object>(
+  rowsByPath: Record<string, T[]>,
+): Record<string, T[]> {
+  return Object.fromEntries(
+    Object.entries(rowsByPath).map(([path, rows]) => [
+      path,
+      rows.map((row) => ({ ...row })),
+    ]),
+  );
+}
+
+function findRowById<T extends { id: string }>(
+  rowsByPath: Record<string, T[]>,
+  id: string,
+): { path: string; row: T } | undefined {
+  for (const [path, rows] of Object.entries(rowsByPath)) {
+    const row = rows.find((item) => item.id === id);
+
+    if (row) {
+      return { path, row };
+    }
+  }
+
+  return undefined;
+}
+
+function removeRowById<T extends { id: string }>(
+  rowsByPath: Record<string, T[]>,
+  id: string,
+): void {
+  for (const [path, rows] of Object.entries(rowsByPath)) {
+    const nextRows = rows.filter((row) => row.id !== id);
+
+    if (nextRows.length !== rows.length) {
+      rowsByPath[path] = nextRows;
+    }
+  }
+}
+
+function upsertRow<T extends { id: string }>(
+  rowsByPath: Record<string, T[]>,
+  path: string,
+  row: T,
+): void {
+  removeRowById(rowsByPath, row.id);
+  (rowsByPath[path] ??= []).push(row);
+}
+
+function setMergedField<T extends object>(
+  target: T,
+  source: T,
+  field: keyof T,
+): void {
+  (target as Record<keyof T, unknown>)[field] = source[field];
+}
+
+function sameEntryFieldGroup(
+  left: Entry,
+  right: Entry,
+  fields: readonly EntryConflictReason[],
+): boolean {
+  return fields.every((field) => samePackageValue(left[field], right[field]));
+}
+
+function copyEntryFieldGroup(
+  target: Entry,
+  source: Entry,
+  fields: readonly EntryConflictReason[],
+): void {
+  for (const field of fields) {
+    setMergedField(target, source, field);
+  }
+}
+
+function getEntryGroupConflictReasons(
+  baseline: Entry,
+  current: Entry,
+  incoming: Entry,
+): EntryConflictReason[] {
+  return ENTRY_MERGE_GROUPS.flatMap((fields) => {
+    const bothChanged =
+      !sameEntryFieldGroup(current, baseline, fields) &&
+      !sameEntryFieldGroup(incoming, baseline, fields);
+
+    if (!bothChanged || sameEntryFieldGroup(current, incoming, fields)) {
+      return [];
+    }
+
+    return fields.filter(
+      (field) => !samePackageValue(current[field], incoming[field]),
+    );
+  });
+}
+
+function findConflictResolution(
+  resolutions: ConflictResolution[],
+  conflictId: string,
+): ConflictResolution | undefined {
+  return resolutions.find((resolution) => resolution.conflictId === conflictId);
+}
+
+function mergeRebasedEntry(
+  baseline: Entry,
+  local: Entry,
+  incoming: Entry,
+  path: string,
+  resolutions: ConflictResolution[],
+  conflicts: ChangeConflict[],
+): Entry {
+  const normalizedBaseline = normalizeCollaborationEntry(baseline);
+  const normalizedLocal = normalizeCollaborationEntry(local);
+  let merged = normalizeCollaborationEntry({
+    ...incoming,
+    proofread_by: [...(incoming.proofread_by ?? [])],
+  });
+  const reasons: EntryConflictReason[] = [];
+  const conflictingGroups: Array<readonly EntryConflictReason[]> = [];
+  let usedLocal = false;
+
+  for (const fields of ENTRY_MERGE_GROUPS) {
+    if (sameEntryFieldGroup(normalizedLocal, normalizedBaseline, fields)) {
+      continue;
+    }
+
+    if (sameEntryFieldGroup(merged, normalizedBaseline, fields)) {
+      copyEntryFieldGroup(merged, normalizedLocal, fields);
+      usedLocal = true;
+    } else if (!sameEntryFieldGroup(merged, normalizedLocal, fields)) {
+      conflictingGroups.push(fields);
+      reasons.push(
+        ...fields.filter(
+          (field) => !samePackageValue(merged[field], normalizedLocal[field]),
+        ),
+      );
+    }
+  }
+
+  if (reasons.length === 0) {
+    if (usedLocal) {
+      merged.updated_by = local.updated_by;
+      merged.updated_at = local.updated_at;
+    }
+    return normalizeCollaborationEntry(merged);
+  }
+
+  const conflictId = `workspace:entry:${local.id}`;
+  const resolution = findConflictResolution(resolutions, conflictId);
+
+  if (!resolution) {
+    conflicts.push({
+      kind: "entry",
+      conflictId,
+      entryId: local.id,
+      path,
+      mainEntry: incoming,
+      packageEntry: local,
+      reasons,
+    });
+    return merged;
+  }
+
+  if (resolution.action === "use_package") {
+    for (const fields of conflictingGroups) {
+      copyEntryFieldGroup(merged, normalizedLocal, fields);
+    }
+    usedLocal = true;
+  } else if (resolution.action === "manual_merge") {
+    if (resolution.target !== undefined) {
+      merged = applyEntryTargetChange(merged, resolution.target, {
+        userId: local.updated_by,
+        updatedAt: nowIso(),
+      });
+      usedLocal = true;
+    }
+
+    if (resolution.context !== undefined) {
+      merged.context = resolution.context;
+      usedLocal = true;
+    }
+  }
+
+  if (usedLocal) {
+    merged.updated_by = local.updated_by;
+    merged.updated_at = local.updated_at;
+  }
+
+  return normalizeCollaborationEntry(merged);
+}
+
+function mergeRebasedComment(
+  baseline: Comment,
+  local: Comment,
+  incoming: Comment,
+  path: string,
+  resolutions: ConflictResolution[],
+  conflicts: ChangeConflict[],
+): Comment {
+  const merged = { ...incoming };
+  const localChanged = COMMENT_CONFLICT_FIELDS.some(
+    (field) => !samePackageValue(local[field], baseline[field]),
+  );
+  const incomingChanged = COMMENT_CONFLICT_FIELDS.some(
+    (field) => !samePackageValue(incoming[field], baseline[field]),
+  );
+  const reasons = COMMENT_CONFLICT_FIELDS.filter(
+    (field) => !samePackageValue(incoming[field], local[field]),
+  );
+  let usedLocal = false;
+
+  if (localChanged && !incomingChanged) {
+    for (const field of COMMENT_CONFLICT_FIELDS) {
+      setMergedField(merged, local, field);
+    }
+    usedLocal = true;
+  }
+
+  if (!localChanged || !incomingChanged || reasons.length === 0) {
+    if (usedLocal) {
+      merged.updated_by = local.updated_by;
+      merged.updated_at = local.updated_at;
+    }
+    return normalizePackageComment(merged);
+  }
+
+  const conflictId = `workspace:comment:${local.id}`;
+  const resolution = findConflictResolution(resolutions, conflictId);
+
+  if (!resolution) {
+    conflicts.push({
+      kind: "comment",
+      conflictId,
+      entryId: local.entry_id,
+      commentId: local.id,
+      path,
+      mainComment: incoming,
+      packageComment: local,
+      reasons,
+    });
+    return merged;
+  }
+
+  if (resolution.action === "use_package") {
+    for (const field of COMMENT_CONFLICT_FIELDS) {
+      setMergedField(merged, local, field);
+    }
+    merged.updated_by = local.updated_by;
+    merged.updated_at = local.updated_at;
+  }
+
+  return normalizePackageComment(merged);
+}
+
+function mergeRebasedTerm(
+  baseline: Term,
+  local: Term,
+  incoming: Term,
+  resolutions: ConflictResolution[],
+  conflicts: ChangeConflict[],
+): Term {
+  const merged: Term = { ...incoming, variants: [...incoming.variants] };
+  let usedLocal = false;
+  const reasons = TERM_CONFLICT_FIELDS.filter((field) => {
+    if (samePackageValue(local[field], baseline[field])) {
+      return false;
+    }
+
+    if (samePackageValue(incoming[field], baseline[field])) {
+      setMergedField(merged, local, field);
+      usedLocal = true;
+      return false;
+    }
+
+    return !samePackageValue(incoming[field], local[field]);
+  });
+
+  if (reasons.length === 0) {
+    if (usedLocal) {
+      merged.updated_by = local.updated_by;
+      merged.updated_at = local.updated_at;
+    }
+    return merged;
+  }
+
+  const conflictId = `workspace:term:${local.id}`;
+  const resolution = findConflictResolution(resolutions, conflictId);
+
+  if (!resolution) {
+    conflicts.push({
+      kind: "term",
+      conflictId,
+      termId: local.id,
+      mainTerm: incoming,
+      packageTerm: local,
+      reasons,
+    });
+    return merged;
+  }
+
+  if (resolution.action === "use_package") {
+    for (const field of reasons) {
+      setMergedField(merged, local, field);
+    }
+    merged.updated_by = local.updated_by;
+    merged.updated_at = local.updated_at;
+  } else if (resolution.action === "manual_merge" && resolution.term) {
+    return { ...resolution.term, variants: [...resolution.term.variants] };
+  }
+
+  return merged;
+}
+
+function mergeRebasedTask(
+  baseline: Task,
+  local: Task,
+  incoming: Task,
+  resolutions: ConflictResolution[],
+  conflicts: ChangeConflict[],
+): Task {
+  if (samePackageValue(local, baseline)) {
+    return incoming;
+  }
+
+  if (samePackageValue(incoming, baseline)) {
+    return { ...local, entry_ids: [...local.entry_ids], file_ids: local.file_ids ? [...local.file_ids] : undefined };
+  }
+
+  if (samePackageValue(incoming, local)) {
+    return incoming;
+  }
+
+  const conflictId = `workspace:task:${local.id}`;
+  const resolution = findConflictResolution(resolutions, conflictId);
+
+  if (!resolution) {
+    conflicts.push({
+      kind: "task",
+      conflictId,
+      taskId: local.id,
+      mainTask: incoming,
+      packageTask: local,
+      reasons:
+        incoming.status !== local.status ? ["status"] : ["details"],
+    });
+    return incoming;
+  }
+
+  return resolution.action === "use_package"
+    ? { ...local, entry_ids: [...local.entry_ids], file_ids: local.file_ids ? [...local.file_ids] : undefined }
+    : incoming;
+}
+
+function buildLegacyMigrationBaseline(
+  current: WorkspaceSnapshot,
+  incoming: ReadChangePackage,
+  userId: string,
+  events: ProjectEvent[],
+): WorkspaceSnapshot {
+  const baseline: WorkspaceSnapshot = {
+    ...current,
+    entries: cloneRowsByPath(current.entries),
+    comments: cloneRowsByPath(current.comments),
+    terms: current.terms.map((term) => ({ ...term, variants: [...term.variants] })),
+    term_deletions: current.term_deletions.map((deletion) => ({ ...deletion })),
+    tasks: current.tasks.map((task) => ({ ...task })),
+    event_ids: events
+      .filter((event) => event.user_id !== userId)
+      .map((event) => event.id),
+  };
+  delete baseline.legacy_user_id;
+
+  for (const rows of Object.values(current.entries)) {
+    for (const row of rows.filter((entry) => entry.updated_by === userId)) {
+      const found = findRowById(incoming.entries, row.id);
+      removeRowById(baseline.entries, row.id);
+      if (found) {
+        upsertRow(baseline.entries, found.path, found.row);
+      }
+    }
+  }
+
+  for (const rows of Object.values(current.comments)) {
+    for (const row of rows.filter(
+      (comment) =>
+        comment.user_id === userId || comment.updated_by === userId,
+    )) {
+      const found = findRowById(incoming.comments, row.id);
+      removeRowById(baseline.comments, row.id);
+      if (found) {
+        upsertRow(baseline.comments, found.path, found.row);
+      }
+    }
+  }
+
+  baseline.terms = current.terms
+    .filter(
+      (term) => term.created_by !== userId && term.updated_by !== userId,
+    )
+    .concat(
+      current.terms.flatMap((term) => {
+        if (term.created_by !== userId && term.updated_by !== userId) {
+          return [];
+        }
+        const incomingTerm = findRowById(incoming.terms, term.id);
+        return incomingTerm ? [incomingTerm.row] : [];
+      }),
+    );
+  baseline.term_deletions = current.term_deletions.filter(
+    (deletion) => deletion.deleted_by !== userId,
+  );
+
+  baseline.tasks = current.tasks
+    .filter(
+      (task) => task.created_by !== userId && task.assignee !== userId,
+    )
+    .concat(
+      current.tasks.flatMap((task) => {
+        if (task.created_by !== userId && task.assignee !== userId) {
+          return [];
+        }
+        const incomingTask = findRowById(incoming.tasks, task.id);
+        return incomingTask ? [incomingTask.row] : [];
+      }),
+    );
+
+  return baseline;
+}
+
+async function prepareProjectUpdateRebase(
+  storage: ProjectStorage,
+  currentProject: ProjectConfig,
+  _nextProject: ProjectConfig,
+  changePackage: ReadChangePackage,
+  resolutions: ConflictResolution[] = [],
+): Promise<ProjectUpdateRebaseResult> {
+  let baseline =
+    (await readWorkspaceBaseline(storage, currentProject)) ??
+    (await captureWorkspaceSnapshot(storage, currentProject));
+
+  const current = await captureWorkspaceSnapshot(storage, currentProject);
+  const currentEvents = (await storage.fileExists("logs/events.jsonl"))
+    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
+    : [];
+  if (baseline.legacy_user_id) {
+    baseline = buildLegacyMigrationBaseline(
+      current,
+      changePackage,
+      baseline.legacy_user_id,
+      currentEvents,
+    );
+  }
+  const diff = diffWorkspaceSnapshots(baseline, current);
+  const baselineEventIds = new Set(baseline.event_ids);
+  const localEvents = currentEvents.filter(
+    (event) => !baselineEventIds.has(event.id),
+  );
+  const entries = cloneRowsByPath(changePackage.entries);
+  const comments = cloneRowsByPath(changePackage.comments);
+  const terms = cloneRowsByPath(changePackage.terms);
+  const tasks = cloneRowsByPath(changePackage.tasks);
+  const conflicts: ChangeConflict[] = [];
+  let preservedChanges = 0;
+  const handledCommentDeletionIds = new Set<string>();
+
+  for (const change of diff.entries) {
+    if (!change.before || !change.after) {
+      throw new Error(`本地词条 ${change.id} 被新增或删除，无法安全接收项目更新。`);
+    }
+
+    const incoming = findRowById(entries, change.id);
+
+    if (!incoming) {
+      throw new Error(`项目更新删除了本地正在修改的词条 ${change.id}，请先人工处理。`);
+    }
+
+    const merged = mergeRebasedEntry(
+      change.before,
+      change.after,
+      incoming.row,
+      incoming.path,
+      resolutions,
+      conflicts,
+    );
+    upsertRow(entries, incoming.path, merged);
+    preservedChanges += 1;
+  }
+
+  for (const event of localEvents.filter(
+    (candidate) => candidate.type === "comment.deleted",
+  )) {
+    const commentId = getCommentIdFromEvent(event);
+    const baselineComment = findRowById(baseline.comments, commentId);
+
+    if (!commentId || !baselineComment || findRowById(current.comments, commentId)) {
+      continue;
+    }
+
+    const path = baselineComment.path;
+    const baselineRows = baseline.comments[path] ?? [];
+    const incomingRows = comments[path] ?? [];
+    const baselineDeleteIds = getCommentDeletionIds(baselineRows, commentId);
+    const incomingDeleteIds = getCommentDeletionIds(incomingRows, commentId);
+    for (const id of baselineDeleteIds) {
+      handledCommentDeletionIds.add(id);
+    }
+    if (!findRowById(comments, commentId)) {
+      preservedChanges += 1;
+      continue;
+    }
+
+    const normalizeDeletionRows = (rows: Comment[], ids: Set<string>) =>
+      rows
+        .filter((comment) => ids.has(comment.id))
+        .map(normalizePackageComment)
+        .sort((left, right) => left.id.localeCompare(right.id));
+    const incomingChanged = !samePackageValue(
+      normalizeDeletionRows(baselineRows, baselineDeleteIds),
+      normalizeDeletionRows(incomingRows, incomingDeleteIds),
+    );
+    const conflictId = `workspace:comment-delete:${commentId}`;
+    const resolution = findConflictResolution(resolutions, conflictId);
+
+    if (incomingChanged && !resolution) {
+      conflicts.push({
+        kind: "comment",
+        conflictId,
+        entryId: baselineComment.row.entry_id,
+        commentId,
+        path,
+        mainComment: findRowById(comments, commentId)?.row,
+        reasons: ["deleted"],
+      });
+    } else if (!incomingChanged || resolution?.action === "use_package") {
+      for (const id of incomingDeleteIds) {
+        removeRowById(comments, id);
+      }
+    }
+    preservedChanges += 1;
+  }
+
+  for (const change of diff.comments) {
+    if (handledCommentDeletionIds.has(change.id)) {
+      continue;
+    }
+
+    const incoming = findRowById(comments, change.id);
+
+    if (!change.before && change.after) {
+      if (!incoming) {
+        upsertRow(comments, change.path, change.after);
+      } else if (!samePackageValue(incoming.row, change.after)) {
+        const conflictId = `workspace:comment:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+
+        if (!resolution) {
+          conflicts.push({
+            kind: "comment",
+            conflictId,
+            entryId: change.after.entry_id,
+            commentId: change.id,
+            path: incoming.path,
+            mainComment: incoming.row,
+            packageComment: change.after,
+            reasons: ["status"],
+          });
+        } else if (resolution.action === "use_package") {
+          upsertRow(comments, change.path, change.after);
+        }
+      }
+      preservedChanges += 1;
+      continue;
+    }
+
+    if (change.before && !change.after) {
+      if (!incoming) {
+        continue;
+      }
+
+      if (samePackageValue(incoming.row, change.before)) {
+        removeRowById(comments, change.id);
+      } else {
+        const conflictId = `workspace:comment:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+
+        if (!resolution) {
+          conflicts.push({
+            kind: "comment",
+            conflictId,
+            entryId: change.before.entry_id,
+            commentId: change.id,
+            path: incoming.path,
+            mainComment: incoming.row,
+            reasons: ["deleted"],
+          });
+        } else if (resolution.action === "use_package") {
+          removeRowById(comments, change.id);
+        }
+      }
+      preservedChanges += 1;
+      continue;
+    }
+
+    if (change.before && change.after) {
+      if (!incoming) {
+        const conflictId = `workspace:comment:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+
+        if (!resolution) {
+          conflicts.push({
+            kind: "comment",
+            conflictId,
+            entryId: change.after.entry_id,
+            commentId: change.id,
+            path: change.path,
+            packageComment: change.after,
+            reasons: ["deleted"],
+          });
+        } else if (resolution.action === "use_package") {
+          upsertRow(comments, change.path, change.after);
+        }
+      } else {
+        upsertRow(
+          comments,
+          incoming.path,
+          mergeRebasedComment(
+            change.before,
+            change.after,
+            incoming.row,
+            incoming.path,
+            resolutions,
+            conflicts,
+          ),
+        );
+      }
+      preservedChanges += 1;
+    }
+  }
+
+  for (const change of diff.terms) {
+    const incoming = findRowById(terms, change.id);
+
+    if (!change.before && change.after) {
+      if (!incoming) {
+        upsertRow(terms, "terms/terms.jsonl", change.after);
+      } else if (!samePackageValue(incoming.row, change.after)) {
+        const conflictId = `workspace:term:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+
+        if (!resolution) {
+          conflicts.push({
+            kind: "term",
+            conflictId,
+            termId: change.id,
+            mainTerm: incoming.row,
+            packageTerm: change.after,
+            reasons: getTermConflictReasons(incoming.row, change.after),
+          });
+        } else if (resolution.action === "use_package") {
+          upsertRow(terms, "terms/terms.jsonl", change.after);
+        }
+      }
+      preservedChanges += 1;
+      continue;
+    }
+
+    if (change.before && !change.after) {
+      if (!incoming) {
+        continue;
+      }
+
+      if (samePackageValue(incoming.row, change.before)) {
+        removeRowById(terms, change.id);
+      } else {
+        const conflictId = `workspace:term:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+
+        if (!resolution) {
+          conflicts.push({
+            kind: "term",
+            conflictId,
+            termId: change.id,
+            mainTerm: incoming.row,
+            deletion: {
+              id: `workspace-delete:${change.id}`,
+              term_id: change.id,
+              term: change.before,
+              deleted_by: "",
+              deleted_at: nowIso(),
+            },
+            reasons: ["deleted"],
+          });
+        } else if (resolution.action === "use_package") {
+          removeRowById(terms, change.id);
+        }
+      }
+      preservedChanges += 1;
+      continue;
+    }
+
+    if (change.before && change.after) {
+      if (!incoming) {
+        const conflictId = `workspace:term:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+
+        if (!resolution) {
+          conflicts.push({
+            kind: "term",
+            conflictId,
+            termId: change.id,
+            packageTerm: change.after,
+            reasons: ["deleted"],
+          });
+        } else if (resolution.action === "use_package") {
+          upsertRow(terms, "terms/terms.jsonl", change.after);
+        }
+      } else {
+        upsertRow(
+          terms,
+          incoming.path,
+          mergeRebasedTerm(
+            change.before,
+            change.after,
+            incoming.row,
+            resolutions,
+            conflicts,
+          ),
+        );
+      }
+      preservedChanges += 1;
+    }
+  }
+
+  for (const change of diff.tasks) {
+    const incoming = findRowById(tasks, change.id);
+
+    if (!change.before && change.after) {
+      if (!incoming) {
+        upsertRow(tasks, "tasks/tasks.jsonl", change.after);
+      } else if (!samePackageValue(incoming.row, change.after)) {
+        const conflictId = `workspace:task:${change.id}`;
+        const resolution = findConflictResolution(resolutions, conflictId);
+        if (!resolution) {
+          conflicts.push({
+            kind: "task",
+            conflictId,
+            taskId: change.id,
+            mainTask: incoming.row,
+            packageTask: change.after,
+            reasons: ["details"],
+          });
+        } else if (resolution.action === "use_package") {
+          upsertRow(tasks, "tasks/tasks.jsonl", change.after);
+        }
+      }
+      preservedChanges += 1;
+      continue;
+    }
+
+    if (change.before && !change.after) {
+      if (!incoming) {
+        continue;
+      }
+      if (!samePackageValue(incoming.row, change.before)) {
+        throw new Error(`项目更新同时修改了本地已删除的任务 ${change.id}，请先人工处理。`);
+      }
+      removeRowById(tasks, change.id);
+      preservedChanges += 1;
+      continue;
+    }
+
+    if (change.before && change.after && !incoming) {
+      throw new Error(`项目更新删除了本地正在修改的任务 ${change.id}，请先人工处理。`);
+    }
+
+    if (change.before && change.after && incoming) {
+      upsertRow(
+        tasks,
+        incoming.path,
+        mergeRebasedTask(
+          change.before,
+          change.after,
+          incoming.row,
+          resolutions,
+          conflicts,
+        ),
+      );
+      preservedChanges += 1;
+    }
+  }
+
+  const localTermDeletions = diff.termDeletions
+    .filter(
+      (change) =>
+        Boolean(change.after) &&
+        !findRowById(terms, change.after!.term_id) &&
+        Boolean(findRowById(changePackage.terms, change.after!.term_id)),
+    )
+    .map((change) => change.after!);
+
+  return {
+    entries,
+    comments,
+    terms,
+    tasks,
+    conflicts,
+    preservedChanges,
+    localEvents,
+    localTermDeletions,
+  };
+}
+
+function assertOrdinaryChangeBase(
+  changePackage: ReadChangePackage,
+  localBaseline: WorkspaceSnapshot,
+): void {
+  const base = changePackage.base;
+
+  if (!base) {
+    return;
+  }
+
+  const assertBaseRows = <T extends { id: string }>(
+    packaged: Record<string, T[]>,
+    local: Record<string, T[]>,
+    label: string,
+  ) => {
+    const seenIds = new Set<string>();
+    for (const rows of Object.values(packaged)) {
+      for (const row of rows) {
+        if (!row?.id || seenIds.has(row.id)) {
+          throw new Error(`修改包${label}基线包含无效或重复记录，不能自动合并。`);
+        }
+        seenIds.add(row.id);
+        const trusted = findRowById(local, row.id)?.row;
+        if (!trusted || !samePackageValue(trusted, row)) {
+          throw new Error(`修改包${label}基线与当前项目不一致，不能自动合并。`);
+        }
+      }
+    }
+  };
+  const requireBaseRow = <T extends { id: string }>(
+    packagedRows: Record<string, T[]>,
+    localRows: Record<string, T[]>,
+    id: string,
+    label: string,
+    incoming?: T,
+    changedFromTrusted?: boolean,
+  ) => {
+    const trusted = findRowById(localRows, id)?.row;
+    if (
+      trusted &&
+      !findRowById(packagedRows, id) &&
+      (changedFromTrusted ??
+        (!incoming || !samePackageValue(incoming, trusted)))
+    ) {
+      throw new Error(`修改包缺少${label} ${id} 的共同基线，不能自动合并。`);
+    }
+  };
+  const localTerms = { "terms/terms.jsonl": localBaseline.terms };
+  const localTasks = { "tasks/tasks.jsonl": localBaseline.tasks };
+
+  assertBaseRows(base.entries, localBaseline.entries, "词条");
+  assertBaseRows(base.comments, localBaseline.comments, "批注");
+  assertBaseRows(base.terms, localTerms, "术语");
+  assertBaseRows(base.tasks, localTasks, "任务");
+
+  for (const row of Object.values(changePackage.entries).flat()) {
+    const trusted = findRowById(localBaseline.entries, row.id)?.row;
+    requireBaseRow(
+      base.entries,
+      localBaseline.entries,
+      row.id,
+      "词条",
+      row,
+      Boolean(
+        trusted &&
+          ENTRY_CONFLICT_FIELDS.some(
+            (field) =>
+              !samePackageValue(
+                normalizeCollaborationEntry(row)[field],
+                normalizeCollaborationEntry(trusted)[field],
+              ),
+          ),
+      ),
+    );
+  }
+  for (const row of Object.values(changePackage.comments).flat()) {
+    const trusted = findRowById(localBaseline.comments, row.id)?.row;
+    requireBaseRow(
+      base.comments,
+      localBaseline.comments,
+      row.id,
+      "批注",
+      row,
+      Boolean(
+        trusted &&
+          COMMENT_CONFLICT_FIELDS.some(
+            (field) => !samePackageValue(row[field], trusted[field]),
+          ),
+      ),
+    );
+  }
+  for (const row of Object.values(changePackage.terms).flat()) {
+    const trusted = localBaseline.terms.find((term) => term.id === row.id);
+    requireBaseRow(
+      base.terms,
+      localTerms,
+      row.id,
+      "术语",
+      row,
+      Boolean(
+        trusted &&
+          TERM_CONFLICT_FIELDS.some(
+            (field) => !samePackageValue(row[field], trusted[field]),
+          ),
+      ),
+    );
+  }
+  for (const row of Object.values(changePackage.tasks).flat()) {
+    const trusted = localBaseline.tasks.find((task) => task.id === row.id);
+    requireBaseRow(
+      base.tasks,
+      localTasks,
+      row.id,
+      "任务",
+      row,
+      Boolean(trusted && row.status !== trusted.status),
+    );
+  }
+
+  for (const event of changePackage.events.filter(
+    (candidate) => candidate.type === "comment.deleted",
+  )) {
+    const commentId = getCommentIdFromEvent(event);
+    const baselineComment = findRowById(localBaseline.comments, commentId);
+    if (!baselineComment) {
+      continue;
+    }
+
+    for (const id of getCommentDeletionIds(
+      localBaseline.comments[baselineComment.path] ?? [],
+      commentId,
+    )) {
+      requireBaseRow(base.comments, localBaseline.comments, id, "批注");
+    }
+  }
+
+  for (const deletion of Object.values(changePackage.termDeletions ?? {}).flat()) {
+    const normalized = normalizeTermDeletion(deletion);
+    const baselineTerm = localBaseline.terms.find(
+      (term) => term.id === normalized.term_id,
+    );
+    if (!baselineTerm) {
+      continue;
+    }
+
+    const baseTerm = findRowById(base.terms, normalized.term_id)?.row;
+    if (!baseTerm) {
+      throw new Error(
+        `修改包缺少术语 ${normalized.term_id} 的共同基线，不能自动合并。`,
+      );
+    }
+    if (!samePackageValue(normalized.term, baseTerm)) {
+      throw new Error(`修改包术语删除记录与共同基线不一致，不能自动合并。`);
+    }
+  }
+}
+
 export async function detectConflicts(
   changePackage: ReadChangePackage,
 ): Promise<ChangeConflict[]> {
   if (isProjectUpdatePackage(getPackageType(changePackage.manifest))) {
-    return [];
+    const storage = getProjectStorage();
+    const currentProject = await storage.readJson<ProjectConfig>("project.json");
+    const nextProject = parseProjectFromPackage(changePackage.projectFiles);
+
+    if (!nextProject) {
+      return [];
+    }
+
+    return (
+      await prepareProjectUpdateRebase(
+        storage,
+        currentProject,
+        nextProject,
+        changePackage,
+      )
+    ).conflicts;
   }
 
   const conflicts: ChangeConflict[] = [];
   const useOrdinarySafeguards = isMemberChangePackage(
     getPackageType(changePackage.manifest),
   );
+  if (useOrdinarySafeguards && changePackage.base) {
+    const storage = getProjectStorage();
+    const project = await storage.readJson<ProjectConfig>("project.json");
+    const localBaseline = await readWorkspaceBaseline(storage, project);
+
+    if (!localBaseline) {
+      throw new Error(
+        "当前项目缺少可验证的协作基线，不能自动合并这个新版修改包。请先获取正确的项目副本。",
+      );
+    }
+
+    assertOrdinaryChangeBase(changePackage, localBaseline);
+  }
   const packageEntryIds = new Set<string>();
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
@@ -3427,6 +5013,7 @@ export async function detectConflicts(
         packageEntry,
         useOrdinarySafeguards,
         changePackage.events,
+        findRowById(changePackage.base?.entries ?? {}, packageEntry.id)?.row,
       );
 
       if (reasons.length > 0) {
@@ -3468,6 +5055,10 @@ export async function detectConflicts(
         const reasons = getCommentConflictReasons(
           mainComment,
           packageComment,
+          findRowById(
+            changePackage.base?.comments ?? {},
+            packageComment.id,
+          )?.row,
         );
 
         if (reasons.length > 0) {
@@ -3492,7 +5083,11 @@ export async function detectConflicts(
         continue;
       }
 
-      const reasons = getTermConflictReasons(mainTerm, packageTerm);
+      const baseTerm = findRowById(
+        changePackage.base?.terms ?? {},
+        packageTerm.id,
+      )?.row;
+      const reasons = getTermConflictReasons(mainTerm, packageTerm, baseTerm);
 
       if (reasons.length > 0) {
         conflicts.push({
@@ -3519,6 +5114,10 @@ export async function detectConflicts(
       const reasons = getTermConflictReasons(
         mainTerm,
         normalizedDeletion.term,
+        findRowById(
+          changePackage.base?.terms ?? {},
+          normalizedDeletion.term_id,
+        )?.row,
       );
 
       if (reasons.length > 0) {
@@ -3532,57 +5131,98 @@ export async function detectConflicts(
         });
       }
     }
+
+    const currentTasks = (await getProjectStorage().fileExists("tasks/tasks.jsonl"))
+      ? await getProjectStorage().readJsonl<Task>("tasks/tasks.jsonl")
+      : [];
+
+    for (const packageTask of Object.values(changePackage.tasks).flat()) {
+      const mainTask = currentTasks.find((task) => task.id === packageTask.id);
+      if (!mainTask || mainTask.status === packageTask.status) {
+        continue;
+      }
+
+      const baseTask = findRowById(
+        changePackage.base?.tasks ?? {},
+        packageTask.id,
+      )?.row;
+      const hasConflict = baseTask
+        ? mainTask.status !== baseTask.status &&
+          packageTask.status !== baseTask.status &&
+          mainTask.status !== packageTask.status
+        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageTask.status) <
+          ORDINARY_TASK_STATUS_ORDER.indexOf(mainTask.status);
+
+      if (hasConflict) {
+        conflicts.push({
+          kind: "task",
+          conflictId: `task:${packageTask.id}`,
+          taskId: packageTask.id,
+          mainTask,
+          packageTask,
+          reasons: ["status"],
+        });
+      }
+    }
+
+    const commentRowsByPath: CommentImportRowsByPath = new Map();
+    for (const event of changePackage.events) {
+      if (event.type !== "comment.deleted") {
+        continue;
+      }
+
+      const commentId = getCommentIdFromEvent(event);
+      const path = await findCommentPathForDeletion(
+        getProjectStorage(),
+        commentRowsByPath,
+        event,
+      );
+      if (!path) {
+        continue;
+      }
+
+      const currentComments = await readCommentRowsForImport(
+        getProjectStorage(),
+        commentRowsByPath,
+        path,
+      );
+      const mainComment = currentComments.find(
+        (comment) => comment.id === commentId,
+      );
+      if (!mainComment) {
+        continue;
+      }
+
+      const baseComments = changePackage.base?.comments[path] ?? [];
+      const baseDeleteIds = getCommentDeletionIds(baseComments, commentId);
+      const currentDeleteIds = getCommentDeletionIds(currentComments, commentId);
+      const normalizeDeletionRows = (rows: Comment[], ids: Set<string>) =>
+        rows
+          .filter((comment) => ids.has(comment.id))
+          .map(normalizePackageComment)
+          .sort((left, right) => left.id.localeCompare(right.id));
+      const deletionIsUnchanged =
+        baseComments.length > 0 &&
+        samePackageValue(
+          normalizeDeletionRows(baseComments, baseDeleteIds),
+          normalizeDeletionRows(currentComments, currentDeleteIds),
+        );
+
+      if (!deletionIsUnchanged) {
+        conflicts.push({
+          kind: "comment",
+          conflictId: `comment-delete:${path}:${commentId}`,
+          entryId: event.entry_id ?? mainComment.entry_id,
+          commentId,
+          path,
+          mainComment,
+          reasons: ["deleted"],
+        });
+      }
+    }
   }
 
   return conflicts;
-}
-
-async function buildMemberChangePayload(
-  storage: ProjectStorage,
-  project: ProjectConfig,
-  userId: string,
-): Promise<ChangePackagePayload> {
-  return {
-    entries: await collectUserChangedEntries(storage, project, userId),
-    comments: await collectUserComments(storage, userId),
-    terms: await collectUserTerms(storage, userId),
-    termDeletions: await collectUserTermDeletions(storage, userId),
-    contexts: {},
-    sourceFiles: {},
-    tasks: await collectUserCreatedTasks(storage, userId),
-    projectFiles: {},
-    memberFiles: {},
-    events: await collectUserEvents(storage, userId),
-  };
-}
-
-async function assertNoUnexportedMemberChanges(
-  storage: ProjectStorage,
-  project: ProjectConfig,
-  actor: Member | null | undefined,
-): Promise<void> {
-  if (!actor?.id) {
-    throw new Error("请先登录后再接收项目更新包。");
-  }
-
-  const revision = getProjectRevision(project);
-  const payload = await buildMemberChangePayload(storage, project, actor.id);
-  const summary = getPackageSummary(payload);
-
-  if (!hasPackageContent(summary)) {
-    return;
-  }
-
-  const currentHash = await calculateChangePackageContentHash(payload);
-  const exportedHash = readExportedMemberChangeHash(
-    project.project_id,
-    actor.id,
-    revision,
-  );
-
-  if (currentHash !== exportedHash) {
-    throw new Error("本地仍有未导出的个人修改。请先导出我的修改包，再接收项目更新包。");
-  }
 }
 
 function assertProjectUpdateCanApply(
@@ -3687,17 +5327,13 @@ async function listExistingFiles(
 
 async function collectProjectUpdateStaleFiles(
   storage: ProjectStorage,
-  currentProject: ProjectConfig,
-  nextProject: ProjectConfig,
+  _currentProject: ProjectConfig,
+  _nextProject: ProjectConfig,
   changePackage: ReadChangePackage,
 ): Promise<string[]> {
-  const nextSourcePaths = new Set(nextProject.files.map((file) => file.source_path));
-  const nextEntryDirectories = new Set(nextProject.files.map((file) => file.entries_path));
-  const packageEntryPaths = new Set(Object.keys(changePackage.entries));
-  const packageSourcePaths = new Set(Object.keys(changePackage.sourceFiles));
   const writePaths = new Set([
-    ...packageEntryPaths,
-    ...packageSourcePaths,
+    ...Object.keys(changePackage.entries),
+    ...Object.keys(changePackage.sourceFiles),
     ...Object.keys(changePackage.comments),
     ...Object.keys(changePackage.terms),
     ...Object.keys(changePackage.tasks),
@@ -3708,35 +5344,16 @@ async function collectProjectUpdateStaleFiles(
   ]);
   const staleFiles = new Set<string>();
 
-  for (const file of currentProject.files) {
-    if (!nextSourcePaths.has(file.source_path)) {
-      staleFiles.add(file.source_path);
-    }
-
-    if (!nextEntryDirectories.has(file.entries_path)) {
-      for (const path of await listExistingFiles(storage, file.entries_path)) {
-        staleFiles.add(path);
-      }
-    }
-
-    if (!nextProject.files.some((nextFile) => nextFile.id === file.id)) {
-      for (const path of await listExistingFiles(storage, `comments/${file.id}`)) {
-        staleFiles.add(path);
-      }
-    }
-  }
-
-  for (const directory of nextEntryDirectories) {
-    const packageHasDirectory = Array.from(packageEntryPaths).some((path) =>
-      path.startsWith(`${directory}/`),
-    );
-
-    if (!packageHasDirectory) {
-      continue;
-    }
-
+  for (const directory of [
+    "source",
+    "entries",
+    "comments",
+    "terms",
+    "tasks",
+    "contexts",
+  ]) {
     for (const path of await listExistingFiles(storage, directory)) {
-      if (!packageEntryPaths.has(path)) {
+      if (!writePaths.has(path)) {
         staleFiles.add(path);
       }
     }
@@ -3812,6 +5429,7 @@ async function findCommentPathForDeletion(
 async function applyProjectUpdatePackage(
   changePackage: ReadChangePackage,
   validation: ChangePackageValidation,
+  resolutions: ConflictResolution[],
   options: ApplyChangePackageOptions,
 ): Promise<ApplyChangePackageResult> {
   const storage = getProjectStorage();
@@ -3825,8 +5443,20 @@ async function applyProjectUpdatePackage(
     options.actor,
   );
 
-  await assertNoUnexportedMemberChanges(storage, currentProject, options.actor);
   await precheckChangePackageImport(changePackage, validation, []);
+  const rebased = await prepareProjectUpdateRebase(
+    storage,
+    currentProject,
+    nextProject,
+    changePackage,
+    resolutions,
+  );
+
+  if (rebased.conflicts.length > 0) {
+    throw new Error(
+      `仍有 ${rebased.conflicts.length} 项本地修改冲突未处理，不能接收项目更新。`,
+    );
+  }
 
   const packageEntries = flattenEntries(changePackage.entries).length;
   let appliedEntries = 0;
@@ -3841,17 +5471,17 @@ async function applyProjectUpdatePackage(
 
   const writePlan = createProjectWritePlan(storage);
 
-  for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
+  for (const [path, packageEntries] of Object.entries(rebased.entries)) {
     writePlan.writeJsonl(path, packageEntries.map(normalizeEntry));
     appliedEntries += packageEntries.length;
   }
 
-  for (const [path, packageComments] of Object.entries(changePackage.comments)) {
+  for (const [path, packageComments] of Object.entries(rebased.comments)) {
     writePlan.writeJsonl(path, packageComments);
     importedComments += packageComments.length;
   }
 
-  for (const [path, packageTerms] of Object.entries(changePackage.terms)) {
+  for (const [path, packageTerms] of Object.entries(rebased.terms)) {
     writePlan.writeJsonl(path, packageTerms);
     importedTerms += packageTerms.length;
   }
@@ -3866,7 +5496,7 @@ async function applyProjectUpdatePackage(
     importedSourceFiles += 1;
   }
 
-  for (const [path, packageTasks] of Object.entries(changePackage.tasks)) {
+  for (const [path, packageTasks] of Object.entries(rebased.tasks)) {
     writePlan.writeJsonl(path, packageTasks);
     importedTasks += packageTasks.length;
   }
@@ -3905,43 +5535,64 @@ async function applyProjectUpdatePackage(
     validation,
     options,
   );
+  const incomingEventIds = new Set(
+    changePackage.events.map((event) => event.id),
+  );
+  const preservedLocalEvents = rebased.localEvents.filter(
+    (event) => !incomingEventIds.has(event.id),
+  );
+  const effectiveChangePackage: ReadChangePackage = {
+    ...changePackage,
+    entries: rebased.entries,
+    comments: rebased.comments,
+    terms: rebased.terms,
+    tasks: rebased.tasks,
+  };
   const staleFiles = await collectProjectUpdateStaleFiles(
     storage,
     currentProject,
     nextProject,
-    changePackage,
+    effectiveChangePackage,
   );
 
   for (const path of staleFiles) {
     writePlan.deleteFile(path);
   }
 
+  if (rebased.localTermDeletions.length > 0) {
+    writePlan.writeJsonl(
+      LOCAL_TERM_DELETIONS_PATH,
+      rebased.localTermDeletions,
+    );
+  } else if (await storage.fileExists(LOCAL_TERM_DELETIONS_PATH)) {
+    writePlan.deleteFile(LOCAL_TERM_DELETIONS_PATH);
+  }
+
   writePlan.writeJsonl("logs/events.jsonl", [
     ...changePackage.events,
+    ...preservedLocalEvents,
     importEvent,
   ]);
   writePlan.writeText(
     "project.json",
     changePackage.projectFiles["project/project.json"],
   );
+  const incomingBaseline: WorkspaceSnapshot = {
+    schema_version: 1,
+    project_id: nextProject.project_id,
+    revision: getProjectRevision(nextProject),
+    captured_at: nowIso(),
+    entries: cloneRowsByPath(changePackage.entries),
+    comments: cloneRowsByPath(changePackage.comments),
+    terms: Object.values(changePackage.terms).flat(),
+    term_deletions: [],
+    tasks: Object.values(changePackage.tasks).flat(),
+    event_ids: [...changePackage.events.map((event) => event.id), importEvent.id],
+  };
+  writePlan.writeJson(WORKSPACE_BASELINE_PATH, incomingBaseline);
 
   await writePlan.execute();
   setPermissionProject(nextProject);
-
-  if (options.actor?.id) {
-    const postUpdatePayload = await buildMemberChangePayload(
-      storage,
-      nextProject,
-      options.actor.id,
-    );
-
-    storeExportedMemberChangeHash(
-      nextProject.project_id,
-      options.actor.id,
-      getProjectRevision(nextProject),
-      await calculateChangePackageContentHash(postUpdatePayload),
-    );
-  }
 
   return result;
 }
@@ -3959,7 +5610,12 @@ export async function applyChangePackage(
   }
 
   if (isProjectUpdatePackage(validation.packageType)) {
-    return applyProjectUpdatePackage(changePackage, validation, options);
+    return applyProjectUpdatePackage(
+      changePackage,
+      validation,
+      resolutions,
+      options,
+    );
   }
 
   if (!isMemberChangePackage(validation.packageType)) {
@@ -4097,7 +5753,27 @@ export async function applyChangePackage(
         ? findResolution(resolutions, conflict)
         : undefined;
 
-      if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+      const baseEntry = findRowById(
+        changePackage.base?.entries ?? {},
+        packageEntry.id,
+      )?.row;
+
+      if (baseEntry && resolution?.action === "keep_main") {
+        keptEntries += 1;
+        if (
+          conflict?.kind === "entry" &&
+          conflict.reasons.some((reason) =>
+            ENTRY_VERSION_CONFLICT_FIELDS.has(reason),
+          )
+        ) {
+          rejectedEntryIds.add(packageEntry.id);
+        }
+      }
+
+      if (
+        resolution?.action === "skip" ||
+        (!baseEntry && resolution?.action === "keep_main")
+      ) {
         keptEntries += 1;
         rejectedEntryIds.add(packageEntry.id);
         continue;
@@ -4111,7 +5787,7 @@ export async function applyChangePackage(
       const currentEntry = currentEntries[entryIndex];
       let nextEntry: Entry;
 
-      if (resolution?.action === "manual_merge") {
+      if (resolution?.action === "manual_merge" && !baseEntry) {
         const target = resolution.target ?? currentEntry.target;
         const updatedAt = nowIso();
         const baseEntry = target !== currentEntry.target
@@ -4134,6 +5810,9 @@ export async function applyChangePackage(
               packageEntry,
               changePackage.manifest.user_id,
               operation,
+              undefined,
+              baseEntry,
+              resolution,
             )
           : normalizeEntry(packageEntry);
       }
@@ -4217,10 +5896,18 @@ export async function applyChangePackage(
         const resolution = conflict
           ? findResolution(resolutions, conflict)
           : undefined;
+        const baseComment = findRowById(
+          changePackage.base?.comments ?? {},
+          packageComment.id,
+        )?.row;
+
+        if (baseComment && resolution?.action === "keep_main") {
+          rejectedCommentIds.add(packageComment.id);
+        }
 
         if (
-          resolution?.action === "keep_main" ||
-          resolution?.action === "skip"
+          resolution?.action === "skip" ||
+          (!baseComment && resolution?.action === "keep_main")
         ) {
           rejectedCommentIds.add(packageComment.id);
           continue;
@@ -4230,14 +5917,22 @@ export async function applyChangePackage(
           throw new Error("批注冲突只能保留当前项目或使用修改包版本。");
         }
 
-        if (getCommentConflictReasons(currentComment, packageComment).length === 0) {
+        const nextComment = mergeOrdinaryPackageComment(
+          currentComment,
+          packageComment,
+          baseComment,
+          resolution,
+        );
+        if (
+          samePackageValue(
+            normalizePackageComment(currentComment),
+            nextComment,
+          )
+        ) {
           continue;
         }
 
-        existingComments[commentIndex] = mergeOrdinaryPackageComment(
-          currentComment,
-          packageComment,
-        );
+        existingComments[commentIndex] = nextComment;
       } else {
         const normalizedPackageComment = normalizePackageComment(packageComment);
 
@@ -4275,6 +5970,28 @@ export async function applyChangePackage(
       continue;
     }
 
+    const deletedCommentId = getCommentIdFromEvent(event);
+    const deletionConflict = conflicts.find(
+      (item) =>
+        item.kind === "comment" &&
+        item.commentId === deletedCommentId &&
+        item.path === path &&
+        item.reasons.includes("deleted"),
+    );
+    const deletionResolution = deletionConflict
+      ? findResolution(resolutions, deletionConflict)
+      : undefined;
+    if (
+      deletionResolution?.action === "keep_main" ||
+      deletionResolution?.action === "skip"
+    ) {
+      rejectedCommentIds.add(deletedCommentId);
+      continue;
+    }
+    if (deletionResolution?.action === "manual_merge") {
+      throw new Error("批注删除冲突只能保留当前项目或确认删除。");
+    }
+
     const comments = await readCommentRowsForImport(
       storage,
       commentRowsByPath,
@@ -4282,7 +5999,7 @@ export async function applyChangePackage(
     );
     const deleteIds = getCommentDeletionIds(
       comments,
-      getCommentIdFromEvent(event),
+      deletedCommentId,
     );
     const commentsToDelete = comments.filter((comment) =>
       deleteIds.has(comment.id),
@@ -4336,8 +6053,19 @@ export async function applyChangePackage(
       const resolution = conflict
         ? findResolution(resolutions, conflict)
         : undefined;
+      const baseTerm = findRowById(
+        changePackage.base?.terms ?? {},
+        packageTerm.id,
+      )?.row;
 
-      if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+      if (baseTerm && resolution?.action === "keep_main") {
+        rejectedTermIds.add(packageTerm.id);
+      }
+
+      if (
+        resolution?.action === "skip" ||
+        (!baseTerm && resolution?.action === "keep_main")
+      ) {
         rejectedTermIds.add(packageTerm.id);
         continue;
       }
@@ -4345,7 +6073,13 @@ export async function applyChangePackage(
       const nextTerm =
         resolution?.action === "manual_merge"
           ? resolution.term
-          : packageTerm;
+          : mergeOrdinaryPackageTerm(
+              currentTerms[findExistingTermIndex(currentTerms, packageTerm)] ??
+                packageTerm,
+              packageTerm,
+              baseTerm,
+              resolution,
+            );
 
       if (!nextTerm) {
         throw new Error("术语冲突缺少手动处理结果。");
@@ -4459,7 +6193,12 @@ export async function applyChangePackage(
     }
 
     const result = useOrdinarySafeguards
-      ? mergeOrdinaryPackageTasks(existingTasks, normalizedPackageTasks)
+      ? mergeOrdinaryPackageTasks(
+          existingTasks,
+          normalizedPackageTasks,
+          changePackage.base?.tasks ?? {},
+          resolutions,
+        )
       : mergeRowsById(existingTasks, normalizedPackageTasks);
 
     if (result.imported > 0) {

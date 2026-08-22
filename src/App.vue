@@ -75,6 +75,7 @@ import { getProjectStats, type BasicProjectStats } from "./services/stats";
 import { loadTasks, setTasksProjectStorage } from "./services/tasks";
 import { setTermsProjectStorage } from "./services/terms";
 import { setAppUpdateSafety } from "./services/updateSafety";
+import { ensureWorkspaceBaseline } from "./services/workspaceBaseline";
 import {
   getProjectWorkspacePosition,
   rememberProjectEntryPosition,
@@ -367,6 +368,7 @@ async function enterOpenedProject(
     preferredPath?: string;
     preferredSection?: ProjectSection;
     loginAs?: Member;
+    initializeCleanBaseline?: boolean;
   } = {},
 ) {
   currentProject.value = project;
@@ -384,6 +386,11 @@ async function enterOpenedProject(
   }
 
   if (loginMember) {
+    await ensureWorkspaceBaseline(
+      project.storage,
+      project.config,
+      options.initializeCleanBaseline ? undefined : loginMember.id,
+    );
     restoreWorkspacePosition(project, loginMember);
   }
 
@@ -671,6 +678,7 @@ async function handleProjectCreated(project: OpenedProject, owner: Member) {
   await enterOpenedProject(project, {
     preferredSection: "files",
     loginAs: owner,
+    initializeCleanBaseline: true,
   });
 }
 
@@ -711,6 +719,11 @@ async function handleLogin(memberName: string, password: string) {
 
     setCurrentUser(member);
     currentUser.value = getCurrentUser();
+    await ensureWorkspaceBaseline(
+      currentProject.value.storage,
+      currentProject.value.config,
+      member.id,
+    );
     saveProjectSession(currentProject.value.config.project_id, member.id);
     restoreWorkspacePosition(currentProject.value, member);
     recentProjects.value = updateRecentProjectUser(

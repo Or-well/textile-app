@@ -5,7 +5,7 @@ import type {
   ConflictResolution,
   ConflictResolutionAction,
 } from "../services/changes";
-import type { Comment, Entry, Term } from "../model/types";
+import type { Comment, Entry, Task, Term } from "../model/types";
 import {
   hasVisibleText,
   hasWorkflowTarget,
@@ -14,6 +14,7 @@ import {
 interface ConflictDraft {
   conflictId: string;
   entryId?: string;
+  taskId?: string;
   action: ConflictResolutionAction | "";
   target?: string;
   context?: string;
@@ -26,6 +27,7 @@ const props = defineProps<{
   isApplying?: boolean;
   canApply?: boolean;
   disabledReason?: string;
+  isProjectUpdate?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -64,7 +66,8 @@ watch(
 
       return {
         conflictId: conflict.conflictId,
-        entryId: conflict.entryId,
+        entryId: conflict.kind === "comment" ? conflict.entryId : undefined,
+        taskId: conflict.kind === "task" ? conflict.taskId : undefined,
         action: "",
       };
     });
@@ -135,6 +138,7 @@ function handleApply() {
     drafts.value.map((draft) => ({
       conflictId: draft.conflictId,
       entryId: draft.entryId,
+      taskId: draft.taskId,
       action: draft.action as ConflictResolutionAction,
       target: draft.target,
       context: draft.context,
@@ -177,6 +181,7 @@ function formatConflictReasons(conflict: ChangeConflict): string {
     context: "上下文",
   };
   const commentLabels: Record<string, string> = {
+    deleted: "删除状态",
     status: "批注状态",
     resolved_at: "解决时间",
     resolved_by: "解决人",
@@ -190,12 +195,18 @@ function formatConflictReasons(conflict: ChangeConflict): string {
     case_sensitive: "大小写规则",
     deleted: "删除状态",
   };
+  const taskLabels: Record<string, string> = {
+    status: "任务状态",
+    details: "任务内容",
+  };
   const labels =
     conflict.kind === "entry"
       ? entryLabels
       : conflict.kind === "comment"
         ? commentLabels
-        : termLabels;
+        : conflict.kind === "term"
+          ? termLabels
+          : taskLabels;
 
   return conflict.reasons
     .map((reason) => labels[reason] ?? reason)
@@ -211,7 +222,9 @@ function formatConflictTitle(conflict: ChangeConflict): string {
     return `批注 ${conflict.commentId}（词条 ${conflict.entryId}）`;
   }
 
-  return `术语 ${conflict.termId}`;
+  return conflict.kind === "term"
+    ? `术语 ${conflict.termId}`
+    : `任务 ${conflict.taskId}`;
 }
 
 function formatTarget(entry: Entry): string {
@@ -266,6 +279,19 @@ function formatTermMeta(term: Term | undefined): string {
     term.case_sensitive ? "区分大小写" : "忽略大小写",
   ].filter(Boolean).join("；");
 }
+
+function formatTaskMeta(task: Task): string {
+  const scope = task.entry_ids.length > 0
+    ? `${task.entry_ids.length} 个指定词条`
+    : `${task.file_id || task.file_ids?.join("、") || "未指定文件"}，${task.range_start}-${task.range_end}`;
+
+  return [
+    task.description ? `说明：${task.description}` : "",
+    task.assignee ? `负责人：${task.assignee}` : "",
+    `范围：${scope}`,
+    task.due_at ? `截止：${task.due_at}` : "",
+  ].filter(Boolean).join("；");
+}
 </script>
 
 <template>
@@ -279,10 +305,10 @@ function formatTermMeta(term: Term | undefined): string {
       </div>
       <div class="header-actions">
         <button type="button" class="secondary" @click="applyBulkAction('use_package')">
-          全部使用修改包
+          {{ isProjectUpdate ? "全部保留本地修改" : "全部使用修改包" }}
         </button>
         <button type="button" class="secondary" @click="applyBulkAction('keep_main')">
-          全部保留当前项目
+          {{ isProjectUpdate ? "全部使用项目更新" : "全部保留当前项目" }}
         </button>
         <button
           type="button"
@@ -310,35 +336,44 @@ function formatTermMeta(term: Term | undefined): string {
 
       <div class="compare-grid">
         <section>
-          <h3>当前项目版本</h3>
+          <h3>{{ isProjectUpdate ? "项目更新版本" : "当前项目版本" }}</h3>
           <template v-if="conflict.kind === 'entry'">
             <p>{{ formatTarget(conflict.mainEntry) }}</p>
             <small>状态：{{ conflict.mainEntry.status }}</small>
             <small>上下文：{{ formatContext(conflict.mainEntry) }}</small>
           </template>
           <template v-else-if="conflict.kind === 'comment'">
-            <p>{{ conflict.mainComment.body }}</p>
-            <small>状态：{{ formatCommentStatus(conflict.mainComment) }}</small>
-            <small>{{ formatCommentResolution(conflict.mainComment) }}</small>
+            <p>{{ conflict.mainComment?.body ?? "项目更新中已删除" }}</p>
+            <template v-if="conflict.mainComment">
+              <small>状态：{{ formatCommentStatus(conflict.mainComment) }}</small>
+              <small>{{ formatCommentResolution(conflict.mainComment) }}</small>
+            </template>
           </template>
-          <template v-else>
+          <template v-else-if="conflict.kind === 'term'">
             <p>{{ formatTerm(conflict.mainTerm) }}</p>
             <small>{{ formatTermMeta(conflict.mainTerm) }}</small>
           </template>
+          <template v-else>
+            <p>{{ conflict.mainTask.title }}</p>
+            <small>状态：{{ conflict.mainTask.status }}</small>
+            <small>{{ formatTaskMeta(conflict.mainTask) }}</small>
+          </template>
         </section>
         <section>
-          <h3>修改包版本</h3>
+          <h3>{{ isProjectUpdate ? "本地工作版本" : "修改包版本" }}</h3>
           <template v-if="conflict.kind === 'entry'">
             <p>{{ formatTarget(conflict.packageEntry) }}</p>
             <small>状态：{{ conflict.packageEntry.status }}</small>
             <small>上下文：{{ formatContext(conflict.packageEntry) }}</small>
           </template>
           <template v-else-if="conflict.kind === 'comment'">
-            <p>{{ conflict.packageComment.body }}</p>
-            <small>状态：{{ formatCommentStatus(conflict.packageComment) }}</small>
-            <small>{{ formatCommentResolution(conflict.packageComment) }}</small>
+            <p>{{ conflict.packageComment?.body ?? "本地已删除" }}</p>
+            <template v-if="conflict.packageComment">
+              <small>状态：{{ formatCommentStatus(conflict.packageComment) }}</small>
+              <small>{{ formatCommentResolution(conflict.packageComment) }}</small>
+            </template>
           </template>
-          <template v-else>
+          <template v-else-if="conflict.kind === 'term'">
             <p>
               {{
                 conflict.deletion
@@ -353,6 +388,11 @@ function formatTermMeta(term: Term | undefined): string {
                   : formatTermMeta(conflict.packageTerm)
               }}
             </small>
+          </template>
+          <template v-else>
+            <p>{{ conflict.packageTask.title }}</p>
+            <small>状态：{{ conflict.packageTask.status }}</small>
+            <small>{{ formatTaskMeta(conflict.packageTask) }}</small>
           </template>
         </section>
       </div>
@@ -369,8 +409,12 @@ function formatTermMeta(term: Term | undefined): string {
             @change="draft.action && updateAction(conflict, draft.action)"
           >
             <option disabled value="">请选择处理方式</option>
-            <option value="keep_main">保留当前项目</option>
-            <option value="use_package">使用修改包版本</option>
+            <option value="keep_main">
+              {{ isProjectUpdate ? "使用项目更新" : "保留当前项目" }}
+            </option>
+            <option value="use_package">
+              {{ isProjectUpdate ? "保留本地修改" : "使用修改包版本" }}
+            </option>
             <option
               v-if="conflict.kind === 'entry' || (conflict.kind === 'term' && conflict.packageTerm)"
               value="manual_merge"

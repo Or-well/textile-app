@@ -22,6 +22,7 @@ import {
 } from "../../src/services/changePackageHash";
 import {
   applyChangePackage,
+  completeChangePackageExport,
   detectConflicts,
   exportChangePackage,
   readChangePackage,
@@ -30,6 +31,7 @@ import {
 } from "../../src/services/changes";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
+import { ensureWorkspaceBaseline } from "../../src/services/workspaceBaseline";
 import { createEntry, createMember, createProject } from "./factories";
 import { FailingProjectStorage } from "./failingProjectStorage";
 
@@ -233,6 +235,11 @@ async function refreshChangePackageHash(
       projectFiles: changePackage.projectFiles,
       memberFiles: changePackage.memberFiles,
       events: changePackage.events,
+      baseFiles: changePackage.base
+        ? {
+            "base/changes.json": `${JSON.stringify(changePackage.base, null, 2)}\n`,
+          }
+        : {},
     });
 }
 
@@ -388,6 +395,8 @@ async function createProjectUpdateFixture(options: {
   );
 
   return {
+    exported,
+    sourceStorage,
     changePackage,
     receiverOwner,
     receiverProject,
@@ -530,6 +539,168 @@ describe("ordinary change-package write plan", () => {
     });
   });
 
+  it("exports a task comment even when the entry text was not changed", async () => {
+    const fixture = await createExportFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    const comment: Comment = {
+      id: "comment-only-1",
+      entry_id: "file-1:1",
+      file_id: "file-1",
+      user_id: fixture.contributor.id,
+      body: "Comment without editing the translation",
+      reply_to: null,
+      status: "open",
+      created_at: "2026-02-01T00:00:00.000Z",
+    };
+
+    await ensureWorkspaceBaseline(fixture.storage, project);
+    await fixture.storage.writeJsonl("comments/file-1/000001.jsonl", [comment]);
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage(fixture.contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: fixture.contributor,
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(changePackage.comments).toEqual({
+      "comments/file-1/000001.jsonl": [comment],
+    });
+    expect(changePackage.entries).toEqual({});
+  });
+
+  it("exports only the selected task changes without treating the workspace as clean", async () => {
+    const fixture = await createExportFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    const entries = await fixture.storage.readJsonl<Entry>(
+      "entries/file-1/chunk_0001.jsonl",
+    );
+    const tasks = await fixture.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    const secondEntry = createEntry({
+      id: "file-1:2",
+      file_id: "file-1",
+      index: 2,
+      target: "Second baseline",
+      status: "translated",
+      translated_by: fixture.contributor.id,
+      updated_by: fixture.contributor.id,
+    });
+    const secondTask: Task = {
+      ...tasks[0]!,
+      id: "task-2",
+      title: "Translate second entry",
+      range_start: 2,
+      range_end: 2,
+    };
+
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      ...entries,
+      secondEntry,
+    ]);
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [
+      ...tasks,
+      secondTask,
+    ]);
+    await ensureWorkspaceBaseline(fixture.storage, project);
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      { ...entries[0]!, target: "First local change" },
+      { ...secondEntry, target: "Second local change" },
+    ]);
+    setChangesProjectStorage(fixture.storage);
+
+    const selectedExport = await exportChangePackage(fixture.contributor.id, {
+      mode: "task_changes",
+      taskId: "task-1",
+      taskIds: ["task-1"],
+      sign: false,
+      actor: fixture.contributor,
+    });
+    const selectedPackage = await readChangePackage(
+      new Uint8Array(await selectedExport.blob.arrayBuffer()) as unknown as Blob,
+    );
+    const allExport = await exportChangePackage(fixture.contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: fixture.contributor,
+    });
+    const allPackage = await readChangePackage(
+      new Uint8Array(await allExport.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(Object.values(selectedPackage.entries).flat().map((entry) => entry.id)).toEqual([
+      "file-1:1",
+    ]);
+    expect(
+      Object.values(selectedPackage.base?.entries ?? {}).flat(),
+    ).toMatchObject([{ id: "file-1:1", target: entries[0]!.target }]);
+    expect(Object.values(allPackage.entries).flat().map((entry) => entry.id)).toEqual([
+      "file-1:1",
+      "file-1:2",
+    ]);
+  });
+
+  it("exports attributed pre-upgrade work instead of treating it as the baseline", async () => {
+    const fixture = await createExportFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      project,
+      fixture.contributor.id,
+    );
+    setChangesProjectStorage(fixture.storage);
+
+    const exported = await exportChangePackage(fixture.contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: fixture.contributor,
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(Object.values(changePackage.entries).flat()).toMatchObject([
+      { id: "file-1:1", target: "Translated" },
+    ]);
+    expect(changePackage.base).toBeUndefined();
+  });
+
+  it("round-trips an exported ordinary package through the verified project base", async () => {
+    const fixture = await createExportFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    const path = "entries/file-1/chunk_0001.jsonl";
+    const [baseEntry] = await fixture.storage.readJsonl<Entry>(path);
+    await ensureWorkspaceBaseline(fixture.storage, project);
+    await fixture.storage.writeJsonl(path, [
+      {
+        ...baseEntry!,
+        target: "Member change",
+        updated_by: fixture.contributor.id,
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    setChangesProjectStorage(fixture.storage);
+    const exported = await exportChangePackage(fixture.contributor.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: fixture.contributor,
+    });
+    const changePackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+    await fixture.storage.writeJsonl(path, [baseEntry!]);
+    await expect(detectConflicts(changePackage)).resolves.toEqual([]);
+    await expect(
+      applyChangePackage(changePackage, [], { actor: fixture.members[0] }),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(fixture.storage.readJsonl<Entry>(path)).resolves.toMatchObject([
+      { target: "Member change" },
+    ]);
+  });
+
   it("rejects unsigned package import when project requires signatures", async () => {
     const fixture = await createChangePackageFixture({
       requireSignedChangePackages: true,
@@ -540,7 +711,7 @@ describe("ordinary change-package write plan", () => {
     await expect(
       applyChangePackage(
         fixture.changePackage,
-        [{ entryId: fixture.originalEntry.id, action: "use_package" }],
+        [],
         { actor: fixture.actor },
       ),
     ).rejects.toThrow("有效成员签名");
@@ -1016,6 +1187,159 @@ describe("ordinary change-package write plan", () => {
     ]);
   });
 
+  it("applies an unchanged-base comment status update without a false conflict", async () => {
+    const fixture = await createChangePackageFixture();
+    const path = "comments/file-1/1.jsonl";
+    const baseComment: Comment = {
+      ...fixture.changePackage.comments[path][0]!,
+      status: "open",
+      resolved: false,
+      updated_at: "2026-02-01T00:00:00.000Z",
+      resolved_at: "",
+      resolved_by: "",
+    };
+    const packageComment: Comment = {
+      ...baseComment,
+      status: "resolved",
+      resolved: true,
+      updated_at: "2026-02-02T00:00:00.000Z",
+      updated_by: "member-2",
+      resolved_at: "2026-02-02T00:00:00.000Z",
+      resolved_by: "member-2",
+    };
+    fixture.changePackage.comments[path] = [packageComment];
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: {},
+      comments: { [path]: [baseComment] },
+      terms: {},
+      tasks: {},
+    };
+    await fixture.storage.writeJsonl(path, [baseComment]);
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await expect(
+      applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }),
+    ).resolves.toMatchObject({ importedComments: 1 });
+  });
+
+  it("treats translation workflow fields as one merge unit", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: { target: "Package translation" },
+    });
+    const path = "entries/file-1/chunk_0001.jsonl";
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: { [path]: [fixture.originalEntry] },
+      comments: {},
+      terms: {},
+      tasks: {},
+    };
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await fixture.storage.writeJsonl(path, [
+      {
+        ...fixture.originalEntry,
+        status: "reviewed",
+        reviewed_by: fixture.actor.id,
+        updated_by: fixture.actor.id,
+      },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "entry",
+        reasons: expect.arrayContaining(["target", "status"]),
+      }),
+    ]);
+  });
+
+  it("rejects a changed existing record when the new package omits its base", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: { target: "Package translation" },
+    });
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: {},
+      comments: {},
+      terms: {},
+      tasks: {},
+    };
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).rejects.toThrow(
+      "缺少词条 file-1:1 的共同基线",
+    );
+  });
+
+  it("preserves concurrent task details while applying a based status change", async () => {
+    const baseTask: Task = {
+      id: "task-based-status",
+      type: "translate",
+      title: "Original title",
+      description: "Original description",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 1,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "assigned",
+      target: "",
+      submit_method: "change_package",
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      originalTask: baseTask,
+      packageTask: {
+        ...baseTask,
+        status: "submitted",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    });
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: {},
+      comments: {},
+      terms: {},
+      tasks: { "tasks/tasks.jsonl": [baseTask] },
+    };
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [
+      { ...baseTask, title: "Manager clarified title" },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await applyChangePackage(fixture.changePackage, [], { actor: fixture.actor });
+    await expect(
+      fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([
+      { title: "Manager clarified title", status: "submitted" },
+    ]);
+  });
+
   it("imports ordinary comment deletion events", async () => {
     const fixture = await createChangePackageFixture();
     const path = "comments/file-1/1.jsonl";
@@ -1050,7 +1374,12 @@ describe("ordinary change-package write plan", () => {
     await expect(
       applyChangePackage(
         fixture.changePackage,
-        [{ entryId: fixture.originalEntry.id, action: "use_package" }],
+        [
+          {
+            conflictId: `comment-delete:${path}:${parentComment.id}`,
+            action: "use_package",
+          },
+        ],
         { actor: fixture.actor },
       ),
     ).resolves.toMatchObject({
@@ -1068,6 +1397,58 @@ describe("ordinary change-package write plan", () => {
         expect.objectContaining({ type: "change_package.applied" }),
       ]),
     );
+  });
+
+  it("detects a reply added after an ordinary comment deletion was exported", async () => {
+    const fixture = await createChangePackageFixture();
+    const path = "comments/file-1/1.jsonl";
+    const parentComment: Comment = {
+      ...fixture.changePackage.comments[path][0]!,
+      status: "open",
+      resolved: false,
+    };
+    const concurrentReply: Comment = {
+      ...parentComment,
+      id: "concurrent-reply",
+      body: "Added after export",
+      reply_to: parentComment.id,
+      user_id: "owner-1",
+    };
+    fixture.changePackage.comments = {};
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: {},
+      comments: { [path]: [parentComment] },
+      terms: {},
+      tasks: {},
+    };
+    fixture.changePackage.events = [
+      {
+        id: "comment-delete-event",
+        type: "comment.deleted",
+        user_id: "member-2",
+        entry_id: fixture.originalEntry.id,
+        file_id: fixture.originalEntry.file_id,
+        created_at: "2026-02-03T00:00:00.000Z",
+        detail: { comment_id: parentComment.id },
+      },
+    ];
+    await fixture.storage.writeJsonl(path, [parentComment]);
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await fixture.storage.writeJsonl(path, [parentComment, concurrentReply]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "comment",
+        conflictId: `comment-delete:${path}:${parentComment.id}`,
+        reasons: ["deleted"],
+      }),
+    ]);
   });
 
   it("imports ordinary package term deletions", async () => {
@@ -1154,6 +1535,50 @@ describe("ordinary change-package write plan", () => {
         actor: fixture.actor,
       }),
     ).rejects.toThrow("仍有冲突未处理");
+  });
+
+  it("applies an unchanged-base term edit without a false conflict", async () => {
+    const fixture = await createChangePackageFixture();
+    const membersFile = await fixture.storage.readJson<{ members: Member[] }>(
+      "members.json",
+    );
+    await fixture.storage.writeJson("members.json", {
+      schema_version: 1,
+      members: membersFile.members.map((member) =>
+        member.id === "member-2"
+          ? { ...member, roles: ["translator", "term_manager"] }
+          : member,
+      ),
+    });
+    const baseTerm = createTerm({ id: "term-three-way", target: "旧译名" });
+    const packageTerm = {
+      ...baseTerm,
+      target: "新译名",
+      updated_by: "member-2",
+      updated_at: "2026-02-01T00:00:00.000Z",
+    };
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.terms = { "terms/terms.jsonl": [packageTerm] };
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: {},
+      comments: {},
+      terms: { "terms/terms.jsonl": [baseTerm] },
+      tasks: {},
+    };
+    await fixture.storage.writeJsonl("terms/terms.jsonl", [baseTerm]);
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await expect(
+      applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }),
+    ).resolves.toMatchObject({ importedTerms: 1 });
   });
 
   it("restores earlier files when a later package write fails", async () => {
@@ -1368,6 +1793,97 @@ describe("ordinary change-package write plan", () => {
         proofread_by: ["member-2"],
         proofread_count: 1,
       },
+    ]);
+  });
+
+  it("three-way merges ordinary entry fields from the packaged base", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: { target: "Package translation" },
+    });
+    const path = "entries/file-1/chunk_0001.jsonl";
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: { [path]: [fixture.originalEntry] },
+      comments: {},
+      terms: {},
+      tasks: {},
+    };
+    await ensureWorkspaceBaseline(
+      fixture.storage,
+      await fixture.storage.readJson<ProjectConfig>("project.json"),
+    );
+    await fixture.storage.writeJsonl(path, [
+      { ...fixture.originalEntry, context: "Main-only context" },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await applyChangePackage(fixture.changePackage, [], {
+      actor: fixture.actor,
+    });
+    await expect(fixture.storage.readJsonl<Entry>(path)).resolves.toMatchObject([
+      { target: "Package translation", context: "Main-only context" },
+    ]);
+  });
+
+  it("does not let dispute metadata turn a safe legacy translation into a conflict", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        target: "Package translation",
+        disputed: true,
+        dispute_reason: "",
+        dispute_resolved_at: "",
+        dispute_resolved_by: "",
+      },
+      packageOperation: "translation_edit",
+    });
+    fixture.changePackage.events.push({
+      id: "mark-disputed-event",
+      type: "entry.mark_disputed",
+      user_id: "member-2",
+      entry_id: fixture.originalEntry.id,
+      file_id: fixture.originalEntry.file_id,
+      created_at: "2026-02-01T00:00:01.000Z",
+      detail: { reason: "", status: "translated" },
+    });
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+  });
+
+  it("reports a legacy task status regression instead of applying it silently", async () => {
+    const submittedTask: Task = {
+      id: "task-1",
+      type: "translate",
+      title: "Translate chapter",
+      description: "",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 1,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "submitted",
+      target: "",
+      submit_method: "change_package",
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-02-02T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      originalTask: submittedTask,
+      packageTask: { ...submittedTask, status: "assigned" },
+    });
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "task",
+        conflictId: "task:task-1",
+        reasons: ["status"],
+      }),
     ]);
   });
 
@@ -1742,6 +2258,25 @@ describe("project update package write plan", () => {
     });
   });
 
+  it("does not publish an update when project content changes after generation", async () => {
+    const fixture = await createProjectUpdateFixture({ sign: false });
+    const [entry] = await fixture.sourceStorage.readJsonl<Entry>(
+      "entries/file-1/chunk_0001.jsonl",
+    );
+
+    await fixture.sourceStorage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      { ...entry!, target: "Changed after export" },
+    ]);
+    setChangesProjectStorage(fixture.sourceStorage);
+
+    await expect(
+      completeChangePackageExport(fixture.exported),
+    ).rejects.toThrow("项目内容在更新包生成后发生了变化");
+    await expect(
+      fixture.sourceStorage.readJson<ProjectConfig>("project.json"),
+    ).resolves.toMatchObject({ revision: "base-revision" });
+  });
+
   it("applies an owner transfer package signed by the previous owner", async () => {
     const project = createProject({
       revision: "base-revision",
@@ -1967,6 +2502,383 @@ describe("project update package write plan", () => {
         expect.objectContaining({ type: "change_package.applied" }),
       ]),
     );
+  });
+
+  it("rebases local entry fields onto a project update", async () => {
+    const fixture = await createProjectUpdateFixture();
+
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    const [localEntry] = await fixture.receiverStorage.readJsonl<Entry>(
+      "entries/file-1/chunk_0001.jsonl",
+    );
+    await fixture.receiverStorage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      {
+        ...localEntry!,
+        context: "Local context",
+        updated_by: "member-2",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.receiverStorage.readJsonl<Entry>(
+        "entries/file-1/chunk_0001.jsonl",
+      ),
+    ).resolves.toMatchObject([
+      {
+        target: "Updated",
+        context: "Local context",
+      },
+    ]);
+  });
+
+  it("keeps rebased local attribution so the work remains exportable", async () => {
+    const fixture = await createProjectUpdateFixture();
+    const path = "entries/file-1/chunk_0001.jsonl";
+
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    const [localEntry] = await fixture.receiverStorage.readJsonl<Entry>(path);
+    await fixture.receiverStorage.writeJsonl(path, [
+      {
+        ...localEntry!,
+        context: "Still pending local work",
+        updated_by: fixture.receiverOwner.id,
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    setChangesProjectStorage(fixture.receiverStorage);
+    await applyChangePackage(fixture.changePackage, [], {
+      actor: fixture.receiverOwner,
+    });
+
+    const exported = await exportChangePackage(fixture.receiverOwner.id, {
+      mode: "member_changes",
+      sign: false,
+      actor: fixture.receiverOwner,
+    });
+    const memberPackage = await readChangePackage(
+      new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
+    );
+
+    expect(Object.values(memberPackage.entries).flat()).toMatchObject([
+      {
+        id: "file-1:1",
+        context: "Still pending local work",
+        updated_by: fixture.receiverOwner.id,
+      },
+    ]);
+  });
+
+  it("rebases the complete local task record when the update left it unchanged", async () => {
+    const fixture = await createProjectUpdateFixture({ sign: false });
+    const baseTask: Task = {
+      id: "task-rebase",
+      type: "translate",
+      title: "Original task",
+      description: "Original description",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 1,
+      entry_ids: [],
+      assignee: fixture.receiverOwner.id,
+      status: "assigned",
+      target: "",
+      submit_method: "change_package",
+      created_by: fixture.receiverOwner.id,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "2026-03-01T00:00:00.000Z",
+    };
+    fixture.changePackage.tasks = { "tasks/tasks.jsonl": [baseTask] };
+    await fixture.receiverStorage.writeJsonl("tasks/tasks.jsonl", [baseTask]);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    await fixture.receiverStorage.writeJsonl("tasks/tasks.jsonl", [
+      {
+        ...baseTask,
+        title: "Locally clarified task",
+        description: "Keep every local task field",
+        due_at: "2026-03-15T00:00:00.000Z",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await applyChangePackage(fixture.changePackage, [], {
+      actor: fixture.receiverOwner,
+    });
+    await expect(
+      fixture.receiverStorage.readJsonl<Task>("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        title: "Locally clarified task",
+        description: "Keep every local task field",
+        due_at: "2026-03-15T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("detects a reply added by the update before applying a local comment-tree deletion", async () => {
+    const fixture = await createProjectUpdateFixture({ sign: false });
+    const path = "comments/file-1/000001.jsonl";
+    const parent: Comment = {
+      id: "comment-parent",
+      entry_id: "file-1:1",
+      file_id: "file-1",
+      user_id: fixture.receiverOwner.id,
+      body: "Delete this thread locally",
+      reply_to: null,
+      status: "open",
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+    const incomingReply: Comment = {
+      ...parent,
+      id: "comment-incoming-reply",
+      body: "Reply added in the project update",
+      reply_to: parent.id,
+      created_at: "2026-02-01T00:00:00.000Z",
+    };
+    fixture.changePackage.comments = { [path]: [parent, incomingReply] };
+    await fixture.receiverStorage.writeJsonl(path, [parent]);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    await fixture.receiverStorage.writeJsonl(path, []);
+    await fixture.receiverStorage.writeJsonl("logs/events.jsonl", [
+      {
+        id: "local-comment-delete",
+        type: "comment.deleted",
+        user_id: fixture.receiverOwner.id,
+        entry_id: parent.entry_id,
+        file_id: parent.file_id,
+        created_at: "2026-02-02T00:00:00.000Z",
+        detail: { comment_id: parent.id },
+      },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "comment",
+        conflictId: `workspace:comment-delete:${parent.id}`,
+        reasons: ["deleted"],
+      }),
+    ]);
+    await applyChangePackage(
+      fixture.changePackage,
+      [
+        {
+          conflictId: `workspace:comment-delete:${parent.id}`,
+          action: "use_package",
+        },
+      ],
+      { actor: fixture.receiverOwner },
+    );
+    await expect(
+      fixture.receiverStorage.readJsonl<Comment>(path),
+    ).resolves.toEqual([]);
+  });
+
+  it("does not re-export a local comment deletion that was discarded during update", async () => {
+    const fixture = await createProjectUpdateFixture({ sign: false });
+    const path = "comments/file-1/000001.jsonl";
+    const parent: Comment = {
+      id: "comment-restored",
+      entry_id: "file-1:1",
+      file_id: "file-1",
+      user_id: fixture.receiverOwner.id,
+      body: "Keep this thread from the update",
+      reply_to: null,
+      status: "open",
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+    const reply: Comment = {
+      ...parent,
+      id: "comment-restored-reply",
+      body: "Concurrent reply",
+      reply_to: parent.id,
+    };
+    fixture.changePackage.comments = { [path]: [parent, reply] };
+    await fixture.receiverStorage.writeJsonl(path, [parent]);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    await fixture.receiverStorage.writeJsonl(path, []);
+    await fixture.receiverStorage.writeJsonl("logs/events.jsonl", [
+      {
+        id: "discarded-comment-delete",
+        type: "comment.deleted",
+        user_id: fixture.receiverOwner.id,
+        entry_id: parent.entry_id,
+        file_id: parent.file_id,
+        created_at: "2026-02-02T00:00:00.000Z",
+        detail: { comment_id: parent.id },
+      },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.receiverStorage);
+    await applyChangePackage(
+      fixture.changePackage,
+      [
+        {
+          conflictId: `workspace:comment-delete:${parent.id}`,
+          action: "keep_main",
+        },
+      ],
+      { actor: fixture.receiverOwner },
+    );
+
+    await expect(
+      exportChangePackage(fixture.receiverOwner.id, {
+        mode: "member_changes",
+        sign: false,
+        actor: fixture.receiverOwner,
+      }),
+    ).rejects.toThrow("没有可提交的修改");
+  });
+
+  it("protects attributed local work when an old project creates its first baseline", async () => {
+    const fixture = await createProjectUpdateFixture();
+    const [staleEntry] = await fixture.receiverStorage.readJsonl<Entry>(
+      "entries/file-old/chunk_0001.jsonl",
+    );
+    await fixture.receiverStorage.writeJsonl(
+      "entries/file-old/chunk_0001.jsonl",
+      [{ ...staleEntry!, updated_by: "owner-1" }],
+    );
+    const [localEntry] = await fixture.receiverStorage.readJsonl<Entry>(
+      "entries/file-1/chunk_0001.jsonl",
+    );
+    await fixture.receiverStorage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      {
+        ...localEntry!,
+        target: "Pre-upgrade local translation",
+        updated_by: "member-2",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    await ensureWorkspaceBaseline(
+      fixture.receiverStorage,
+      fixture.receiverProject,
+      "member-2",
+    );
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.receiverStorage.readJsonl<Entry>(
+        "entries/file-1/chunk_0001.jsonl",
+      ),
+    ).resolves.toMatchObject([
+      { target: "Pre-upgrade local translation" },
+    ]);
+  });
+
+  it("removes stale authoritative comments but preserves comments created locally", async () => {
+    const staleFixture = await createProjectUpdateFixture();
+    const staleComment: Comment = {
+      id: "stale-comment",
+      entry_id: "file-1:1",
+      file_id: "file-1",
+      user_id: "member-2",
+      body: "Already part of the old authoritative snapshot",
+      reply_to: null,
+      status: "open",
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+    await staleFixture.receiverStorage.writeJsonl(
+      "comments/file-1/000001.jsonl",
+      [staleComment],
+    );
+    await ensureWorkspaceBaseline(
+      staleFixture.receiverStorage,
+      staleFixture.receiverProject,
+    );
+    setChangesProjectStorage(staleFixture.receiverStorage);
+    await applyChangePackage(staleFixture.changePackage, [], {
+      actor: staleFixture.receiverOwner,
+    });
+    await expect(
+      staleFixture.receiverStorage.fileExists("comments/file-1/000001.jsonl"),
+    ).resolves.toBe(false);
+
+    const localFixture = await createProjectUpdateFixture();
+    const localComment: Comment = {
+      ...staleComment,
+      id: "local-comment",
+      body: "Created after the local baseline",
+      created_at: "2026-02-01T00:00:00.000Z",
+    };
+    await ensureWorkspaceBaseline(
+      localFixture.receiverStorage,
+      localFixture.receiverProject,
+    );
+    await localFixture.receiverStorage.writeJsonl(
+      "comments/file-1/000001.jsonl",
+      [localComment],
+    );
+    setChangesProjectStorage(localFixture.receiverStorage);
+    await applyChangePackage(localFixture.changePackage, [], {
+      actor: localFixture.receiverOwner,
+    });
+    await expect(
+      localFixture.receiverStorage.readJsonl<Comment>(
+        "comments/file-1/000001.jsonl",
+      ),
+    ).resolves.toEqual([localComment]);
+  });
+
+  it("requires a choice when local and project update change the same entry field", async () => {
+    const fixture = await createProjectUpdateFixture();
+
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    const [localEntry] = await fixture.receiverStorage.readJsonl<Entry>(
+      "entries/file-1/chunk_0001.jsonl",
+    );
+    await fixture.receiverStorage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      {
+        ...localEntry!,
+        target: "Local translation",
+        updated_by: "member-2",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    const conflicts = await detectConflicts(fixture.changePackage);
+
+    expect(conflicts).toMatchObject([
+      {
+        kind: "entry",
+        conflictId: "workspace:entry:file-1:1",
+        reasons: expect.arrayContaining(["target"]),
+      },
+    ]);
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            conflictId: "workspace:entry:file-1:1",
+            action: "use_package",
+          },
+        ],
+        { actor: fixture.receiverOwner },
+      ),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.receiverStorage.readJsonl<Entry>(
+        "entries/file-1/chunk_0001.jsonl",
+      ),
+    ).resolves.toMatchObject([{ target: "Local translation" }]);
   });
 
   it("restores project update writes when a later write fails", async () => {
