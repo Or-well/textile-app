@@ -1028,12 +1028,20 @@ async function scrollToLastViewedFile() {
 
 watch(
   () => props.project,
-  (project) => {
+  (project, previousProject) => {
+    const projectChanged =
+      project.project_id !== previousProject?.project_id;
+
     currentProject.value = project;
     const validIds = new Set(project.files.map((file) => file.id));
     replaceSelection(
       Array.from(selectedFileIds.value).filter((fileId) => validIds.has(fileId)),
     );
+
+    if (!projectChanged) {
+      return;
+    }
+
     lastAutoScrolledFileId.value = "";
     void loadFileSummaries();
   },

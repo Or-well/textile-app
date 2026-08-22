@@ -2297,7 +2297,7 @@ store: projectHandles
 
 `workspacePosition.ts` 使用 LocalStorage key `textile.workspacePositions.v1`，按 `projectId + userId` 保存最近文件 ID、各文件最近词条 ID 和更新时间，最多保留 50 组项目成员位置。该记录是本机 UI 状态，不写入项目数据、修改包或 `.hproj`。所有 LocalStorage 访问继续通过 `utils/browserStorage.ts` 容错；不可写时功能降级为仅当前运行期间记忆。
 
-`App.vue` 打开项目并恢复或完成成员登录后读取该位置，过滤项目中已不存在的文件，再进入最近文件；明确 URL、任务或批注目标优先于本机位置。最近文件 ID 传给 `FilesPage` 用于“最近查看”标注和第三行定位；每文件最近词条 ID 传给 `EntryPage`，词条不存在时由页面回退到第一条。点击文件或实际选中词条时同步更新内存与本机记录。移除项目最后一条最近记录、删除项目记录或清理“最近项目记录”时同时清除对应位置。
+`App.vue` 打开项目并恢复或完成成员登录后读取该位置，过滤项目中已不存在的文件，再进入最近文件；明确 URL、任务或批注目标优先于本机位置。最近文件 ID 传给 `FilesPage` 用于“最近查看”标注和第三行定位；该定位只在进入文件页、切换项目或最近文件 ID 真正变化时触发，同一项目内调整分组或更新文件配置不会重复定位。每文件最近词条 ID 传给 `EntryPage`，词条不存在时由页面回退到第一条。点击文件或实际选中词条时同步更新内存与本机记录。移除项目最后一条最近记录、删除项目记录或清理“最近项目记录”时同时清除对应位置。
 
 工作台侧边栏的“使用手册”入口经由 `App.vue` 调用 `helpManual.ts`。Web/PWA 直接在新标签页打开 `public/manual.pdf`；Tauri 桌面版调用 `open_manual_pdf` 命令，解析打包资源后通过官方 `tauri-plugin-opener` 交给系统默认 PDF 阅读器，不再手写 `cmd`、`open` 或 `xdg-open` 平台命令。`src-tauri/tauri.conf.json` 必须把 `../public/manual.pdf` 映射到资源根目录的 `manual.pdf`，与 `BaseDirectory::Resource` 查找路径保持一致。`docs/MANUAL.md` 是手册维护源，`public/manual.pdf` 是发布成品，避免在前端组件中复制手册文本。
 
