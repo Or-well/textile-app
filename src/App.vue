@@ -34,6 +34,7 @@ import {
 } from "./services/appUpdate";
 import {
   importProjectFile,
+  importProjectFileToDirectory,
   inspectProjectFile,
   openProject,
   openProjectRoot,
@@ -41,6 +42,7 @@ import {
 } from "./services/project";
 import {
   createNativeProjectDirectory,
+  openProjectDirectory,
   type ProjectDirectoryHandle,
 } from "./services/projectFs";
 import { openUserManual } from "./services/helpManual";
@@ -521,7 +523,9 @@ async function handleImportProjectFile(file: File) {
   appNoticeMessage.value = "";
 
   try {
-    const project = await importProjectFile(file);
+    const project = isTauriRuntime()
+      ? await importProjectFile(file)
+      : await importProjectFileToDirectory(file, await openProjectDirectory());
 
     projectFilePreview.value = null;
     previewedProjectFile.value = null;
@@ -1077,7 +1081,6 @@ onBeforeUnmount(() => {
       :recent-projects="recentProjects"
       @create-project="navigate('/projects/create')"
       @open-local-project="handleOpenLocalProject"
-      @import-project-file="handleImportProjectFile"
       @preview-project-file="handlePreviewProjectFile"
       @import-previewed-project-file="handleImportPreviewedProjectFile"
       @clear-project-file-preview="handleClearProjectFilePreview"

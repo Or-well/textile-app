@@ -545,9 +545,9 @@ changes/
 
 导入为本地项目：
 
-1. 读取并规范化 `.hproj` 内容。
-2. 必须包含 `project.json`、`members.json`、`entries/`、`terms/` 和 `tasks/`。
-3. 要求用户选择导入位置。
+1. Web/PWA 先读取并展示 `.hproj` 预览，再由用户点击“选择导入位置并导入”；该点击仍有效时立即取得导入位置句柄。Tauri 可在预检后调用原生目录选择器。
+2. 读取并规范化 `.hproj` 内容。
+3. 必须包含 `project.json`、`members.json`、`entries/`、`terms/` 和 `tasks/`。
 4. 使用项目名称和项目 ID 生成目标子目录名。
 5. 目标子目录已存在时停止导入，不覆盖已有文件。
 6. 创建目标目录前解析 `project.json`、`members.json` 和项目数据 JSONL，格式错误时不写入。
@@ -558,6 +558,8 @@ changes/
 11. 导入失败时先执行写入计划回滚，再尝试删除目标目录；递归删除失败时按文件、深层目录、目标目录顺序继续清理。
 12. 清理后递归扫描目标目录，错误信息报告具体残留路径，而不只报告顶层目录。
 13. 调用普通项目打开流程，后续写入都落到本地项目文件夹。
+
+浏览器的 `showDirectoryPicker()` 必须在用户手势调用链中同步发起；文件输入框关闭后的 `change` 事件不能可靠地继续使用同一次临时用户激活。启动页因此把导入统一为两次明确点击：第一次选择并预览 `.hproj`，第二次选择导入位置。第二次点击由 `App.vue` 立即调用 `openProjectDirectory()`，再把句柄传给 `importProjectFileToDirectory()`；包内容仍会在创建目标子目录前完成校验。
 
 兼容的临时打开：
 
@@ -795,6 +797,8 @@ assigned -> in_progress -> submitted -> completed
 `target` 和 `submit_method` 继续作为兼容字段读写，旧任务原值不会在编辑时丢失；常规创建和编辑任务 UI 不再单独暴露目标和提交方式选择。`TaskPanel` 显示说明时优先使用 `description`，仅在说明为空时用旧 `target` 兜底。
 
 任务范围优先使用 `entry_ids`，其次使用 `file_ids` 表示多个整文件，最后兼容 `file_id` 和起止 index；没有 `file_id` 但包含 `entry_ids` 或 `file_ids` 的任务可以正常计算进度。
+
+`getTaskFilesEntrySummary` 可以按任务类型和工作流设置返回逐文件的 `completedEntries`、`progressPercent` 与 `progressAvailable`。`TaskEditDialog` 一次读取项目文件汇总，在界面内派生已选文件统计；选择顺序不会改变任务范围，保存时始终恢复为项目文件顺序。新建任务不默认选择首个文件，翻译、校对和审核任务在没有文件且没有显式 `entry_ids` 时不可保存。
 
 `tasks/tasks.jsonl` 不存在时按空任务列表处理；文件存在但读取或 JSONL 解析失败时必须向上报错，不得缓存为空列表，以免后续任务写入覆盖可恢复的数据。
 

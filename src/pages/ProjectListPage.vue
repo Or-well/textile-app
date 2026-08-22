@@ -32,7 +32,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   createProject: [];
   openLocalProject: [];
-  importProjectFile: [file: File];
   previewProjectFile: [file: File];
   importPreviewedProjectFile: [];
   clearProjectFilePreview: [];
@@ -43,7 +42,6 @@ const emit = defineEmits<{
 
 const hasRecentProjects = computed(() => props.recentProjects.length > 0);
 const importProjectFileInput = ref<HTMLInputElement | null>(null);
-const previewProjectFileInput = ref<HTMLInputElement | null>(null);
 const isProjectDescriptionExpanded = ref(false);
 const previewBadgeText = computed(() => {
   if (!props.projectFilePreview) {
@@ -122,17 +120,6 @@ function handleSelectImportProjectFile(event: Event) {
   const file = input.files?.[0];
 
   if (file) {
-    emit("importProjectFile", file);
-  }
-
-  input.value = "";
-}
-
-function handleSelectPreviewProjectFile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-
-  if (file) {
     emit("previewProjectFile", file);
   }
 
@@ -184,9 +171,15 @@ watch(
           />
 
           <LauncherActionCard
-            :title="isOpeningFile ? '正在导入...' : '导入 Textile 项目文件'"
-            description="选择 .hproj，再选择导入位置，生成本地项目文件夹"
-            :busy="isOpeningFile"
+            :title="
+              isPreviewingFile
+                ? '正在检查项目文件...'
+                : isOpeningFile
+                  ? '正在导入...'
+                  : '导入 Textile 项目文件'
+            "
+            description="选择 .hproj，确认内容后再选择导入位置"
+            :busy="isPreviewingFile || isOpeningFile"
             @activate="importProjectFileInput?.click()"
           />
           <input
@@ -195,20 +188,6 @@ watch(
             type="file"
             accept=".hproj,application/zip"
             @change="handleSelectImportProjectFile"
-          />
-
-          <LauncherActionCard
-            :title="isPreviewingFile ? '正在预览...' : '预览 Textile 项目文件'"
-            description="只读取 .hproj 摘要，不写入本地项目"
-            :busy="isPreviewingFile"
-            @activate="previewProjectFileInput?.click()"
-          />
-          <input
-            ref="previewProjectFileInput"
-            class="hidden-file-input"
-            type="file"
-            accept=".hproj,application/zip"
-            @change="handleSelectPreviewProjectFile"
           />
 
           <section v-if="projectFilePreview" class="project-file-preview">
@@ -304,7 +283,7 @@ watch(
               :disabled="!projectFilePreview.valid || isOpeningFile"
               @click="emit('importPreviewedProjectFile')"
             >
-              {{ isOpeningFile ? "正在导入..." : "导入为本地项目" }}
+              {{ isOpeningFile ? "正在导入..." : "选择导入位置并导入" }}
             </button>
           </section>
 

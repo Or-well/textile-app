@@ -33,6 +33,7 @@ import {
 import {
   createProjectRootFromPackage,
   importProjectPackageToDirectory,
+  importProjectPackageToParentDirectory,
   inspectProjectPackage,
   type ProjectPackagePreview,
 } from "./projectPackage";
@@ -1349,6 +1350,15 @@ export async function inspectProjectFile(
 
 export async function importProjectFile(file: File): Promise<OpenedProject> {
   const imported = await importProjectPackageToDirectory(file);
+
+  return openProjectRoot(imported.root);
+}
+
+export async function importProjectFileToDirectory(
+  file: File,
+  parentRoot: ProjectDirectoryHandle,
+): Promise<OpenedProject> {
+  const imported = await importProjectPackageToParentDirectory(file, parentRoot);
 
   return openProjectRoot(imported.root);
 }
