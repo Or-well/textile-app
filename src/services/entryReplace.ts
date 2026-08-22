@@ -11,7 +11,7 @@ import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import {
   cacheEntriesForFile,
-  loadAllEntries,
+  loadAllEntriesFresh,
   prepareEntriesWrite,
 } from "./entries";
 import { can, canManageTask } from "./permissions";
@@ -21,6 +21,7 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import { planAppendProjectEvents } from "./eventLog";
 import { isEntryInTask, loadTasks } from "./tasks";
 
 export interface EntryReplaceRequest {
@@ -203,12 +204,6 @@ function getReplaceBlockReason(
   return "";
 }
 
-async function loadEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
-  return (await storage.fileExists("logs/events.jsonl"))
-    ? storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
-}
-
 function createReplaceEvent(
   before: Entry,
   after: Entry,
@@ -256,7 +251,7 @@ async function prepareReplace(request: EntryReplaceRequest): Promise<PreparedRep
   }
 
   const [allEntries, tasks] = await Promise.all([
-    loadAllEntries(),
+    loadAllEntriesFresh(),
     storedProject.settings.workflow?.enable_tasks === false
       ? Promise.resolve([])
       : loadTasks(),
@@ -410,7 +405,6 @@ export async function executeEntryReplace(
       ),
     ),
   );
-  const existingEvents = await loadEvents(storage);
   const writePlan = createProjectWritePlan(storage);
 
   for (const preparedWrite of writes) {
@@ -423,10 +417,7 @@ export async function executeEntryReplace(
     }
   }
 
-  writePlan.writeJsonl("logs/events.jsonl", [
-    ...existingEvents,
-    ...prepared.events,
-  ]);
+  await planAppendProjectEvents(writePlan, storage, prepared.events);
 
   await writePlan.execute();
 

@@ -13,6 +13,7 @@ import {
   type TaskStatusAction,
 } from "../model/taskStatus";
 import { createId } from "../utils/id";
+import { mapWithConcurrency } from "../utils/async";
 import {
   compareInstants,
   isValidTimeZone,
@@ -42,6 +43,7 @@ import {
   createProjectStorage,
   type ProjectStorage,
 } from "./projectStorage";
+import { loadSharedEntriesForFile } from "./entries";
 
 export interface TaskProgress {
   taskId: string;
@@ -386,6 +388,12 @@ async function saveTasks(tasks: Task[]): Promise<Task[]> {
 
 async function loadEntriesForFile(fileId: string): Promise<Entry[]> {
   const storage = getProjectStorage();
+  const sharedEntries = await loadSharedEntriesForFile(fileId, storage);
+
+  if (sharedEntries) {
+    return sharedEntries;
+  }
+
   const entryDirectory = `entries/${fileId}`;
   const fileNames = await storage.listFiles(entryDirectory);
   const chunkFiles = fileNames
@@ -412,14 +420,16 @@ async function loadAllEntries(): Promise<Entry[]> {
     return [];
   }
 
-  const entryGroups = await Promise.all(
-    fileIds.map(async (fileId) => {
+  const entryGroups = await mapWithConcurrency(
+    fileIds,
+    8,
+    async (fileId) => {
       try {
         return await loadEntriesForFile(fileId);
       } catch {
         return [];
       }
-    }),
+    },
   );
 
   return entryGroups.flat();
@@ -433,8 +443,10 @@ async function loadEntriesForTask(task: Task): Promise<Entry[]> {
   }
 
   if (task.file_ids?.length) {
-    const entryGroups = await Promise.all(
-      task.file_ids.map((fileId) => loadEntriesForFile(fileId)),
+    const entryGroups = await mapWithConcurrency(
+      task.file_ids,
+      8,
+      (fileId) => loadEntriesForFile(fileId),
     );
 
     return entryGroups.flat();
@@ -556,8 +568,10 @@ export async function getTaskFilesEntrySummary(
   const uniqueFileIds = Array.from(
     new Set(fileIds.map((fileId) => fileId.trim()).filter(Boolean)),
   );
-  const files = await Promise.all(
-    uniqueFileIds.map(async (fileId) => {
+  const files = await mapWithConcurrency(
+    uniqueFileIds,
+    8,
+    async (fileId) => {
       const entries = await loadEntriesForFile(fileId);
       const indexes = entries.map((entry) => entry.index);
       const progress = taskType
@@ -575,7 +589,7 @@ export async function getTaskFilesEntrySummary(
         lastIndex: indexes.length > 0 ? Math.max(...indexes) : 0,
         ...progress,
       };
-    }),
+    },
   );
 
   return {
@@ -596,8 +610,10 @@ export async function resolveTaskRangeEntryIds(
   const uniqueFileIds = Array.from(
     new Set(fileIds.map((fileId) => fileId.trim()).filter(Boolean)),
   );
-  const entryGroups = await Promise.all(
-    uniqueFileIds.map((fileId) => loadEntriesForFile(fileId)),
+  const entryGroups = await mapWithConcurrency(
+    uniqueFileIds,
+    8,
+    (fileId) => loadEntriesForFile(fileId),
   );
   const entries = entryGroups.flat();
   const start = Math.max(1, Math.floor(rangeStart));

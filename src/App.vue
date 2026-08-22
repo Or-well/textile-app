@@ -147,6 +147,7 @@ const loginErrorMessage = ref("");
 const packedProjectNotice = ref("");
 const projectFilePreview = ref<ProjectPackagePreview | null>(null);
 const previewedProjectFile = ref<File | null>(null);
+let projectSummaryRequestId = 0;
 
 const route = computed(() => parseRoute(routePath.value));
 const currentProjectSummary = computed<ProjectSummary | null>(() => {
@@ -392,7 +393,9 @@ async function enterOpenedProject(
   lastViewedFileId.value = "";
   lastViewedEntryByFileId.value = {};
   configureProjectServices(project);
-  await refreshProjectSummary();
+  currentStats.value = null;
+  taskCount.value = 0;
+  void refreshProjectSummary();
 
   const loginMember = options.loginAs ?? restoreUserFromSession(project);
 
@@ -507,16 +510,47 @@ function buildProjectSummary(
 }
 
 async function refreshProjectSummary() {
-  currentStats.value = await getProjectStats(
-    undefined,
-    currentProject.value?.config.settings.progress_weights,
-    currentProject.value?.config.settings.workflow,
-  );
+  const project = currentProject.value;
+  const requestId = ++projectSummaryRequestId;
+
+  if (!project) {
+    currentStats.value = null;
+    taskCount.value = 0;
+    return;
+  }
 
   try {
-    taskCount.value = (await loadTasks()).length;
+    const stats = await getProjectStats(
+      undefined,
+      project.config.settings.progress_weights,
+      project.config.settings.workflow,
+    );
+
+    if (
+      requestId === projectSummaryRequestId &&
+      currentProject.value?.config.project_id === project.config.project_id
+    ) {
+      currentStats.value = stats;
+    }
   } catch {
-    taskCount.value = 0;
+    if (requestId === projectSummaryRequestId) {
+      currentStats.value = null;
+    }
+  }
+
+  try {
+    const nextTaskCount = (await loadTasks()).length;
+
+    if (
+      requestId === projectSummaryRequestId &&
+      currentProject.value?.config.project_id === project.config.project_id
+    ) {
+      taskCount.value = nextTaskCount;
+    }
+  } catch {
+    if (requestId === projectSummaryRequestId) {
+      taskCount.value = 0;
+    }
   }
 }
 
@@ -816,8 +850,14 @@ function handleMembersUpdated(members: Member[]) {
   } else {
     handleLogout();
   }
+}
 
-  void refreshProjectSummary();
+async function handleTasksChanged() {
+  try {
+    taskCount.value = (await loadTasks()).length;
+  } catch {
+    taskCount.value = 0;
+  }
 }
 
 function handleOpenProjectSection(section: ProjectSection) {
@@ -1205,7 +1245,7 @@ onBeforeUnmount(() => {
         :members="currentProject.members"
         :current-user="currentUser"
         @open-task-target="handleOpenTaskTarget"
-        @tasks-changed="refreshProjectSummary"
+        @tasks-changed="handleTasksChanged"
       />
 
       <TermsPage

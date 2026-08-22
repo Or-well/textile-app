@@ -121,8 +121,10 @@ src/
     entries.ts
     entryAccess.ts
     entryBatch.ts
+    entryReadModel.ts
     entryExchange.ts
     entryReplace.ts
+    eventLog.ts
     exporter.ts
     fileBatch.ts
     exporters/
@@ -155,6 +157,7 @@ src/
     workspaceBaseline.ts
     workspacePosition.ts
   utils/
+    async.ts
     appVersion.ts
     browserStorage.ts
     csv.ts
@@ -494,6 +497,7 @@ terms/terms.jsonl
 tasks/tasks.jsonl
 comments/
 logs/events.jsonl
+logs/events/chunk_000001.jsonl
 exports/releases/
 changes/
 ```
@@ -832,7 +836,19 @@ comments/<file_id>/<6位entry index>.jsonl
 - 删除父批注时级联删除回复，并在 service 中逐条校验整棵删除树的权限；普通成员不能借由删除自己的父批注删除其他成员的回复。
 - 与争议标记联动。
 
-## 16. `logs/events.jsonl`
+## 16. 操作日志
+
+项目操作日志是一个有顺序的逻辑事件流，物理存储为：
+
+```text
+logs/events/chunk_000001.jsonl  # 已封存的旧事件，每片 1000 条
+logs/events/chunk_000002.jsonl
+logs/events.jsonl               # 当前活动片，最多 1000 条
+```
+
+旧项目只有 `logs/events.jsonl` 时无需迁移，仍可直接读取。活动片追加后超过 1000 条时，最早的 1000 条会在同一个 `ProjectWritePlan` 中写入下一个归档片，剩余事件继续保存在活动片。普通追加只列出归档文件并读取活动片，不读取或重写已经封存的 chunk。
+
+`eventLog.ts` 是项目日志的统一存储入口：读取时按归档片编号拼接，最后读取活动片；单事件查询从活动片开始向旧分片倒序查找；追加、批量追加和完整替换分别使用统一的写入计划辅助函数。业务 service 不得直接拼接和重写完整项目日志。修改包内部仍使用单个 `logs/events.jsonl` 表示该包携带的事件集合，它不是项目日志的物理分片格式。
 
 示例：
 
@@ -871,7 +887,7 @@ comments/<file_id>/<6位entry index>.jsonl
 
 `history.ts` 的 `getFileHistory(fileId)` 会按 `event.file_id`、旧日志中的 `entry_id` 文件前缀和 `detail.file_id` 聚合文件相关事件，并映射为只读 `FileHistoryRow`。文件页“更多 > 查看历史”只展示历史，不做恢复或回滚。源文件更新、文件元数据更新和文件删除会把文件事件与业务写入放入同一个 `ProjectWritePlan`；添加源文件也通过写入计划提交 source、entries、`project.json` 和文件事件。
 
-当前日志追加实现会读取整个 JSONL、加入新事件后重写文件。日志很大时会有性能和并发风险。
+日志分片只解决随历史增长而增加的追加成本，不改变事件结构、排序、筛选、历史恢复或修改包语义。日志读取仍会在确实需要完整历史时合并全部分片。
 
 ## 17. `source/`
 
@@ -1162,7 +1178,7 @@ Web/PWA：
 - 校对增加 proofread user/count。
 - 审核写 `reviewed_by`。
 - 译文、状态或工作流审计真正变化时创建 `entry.updated` 版本事件；无变化保存不写事件。
-- entries chunk 与追加后的 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交，任一写入失败都会恢复两者。
+- entries chunk 与日志活动片（必要时包括新归档片）通过同一个 `ProjectWritePlan` 提交，任一写入失败都会恢复两者。
 - 保存前若当前 `updated_at` 对应完整版本事件，译者、校对和审核审计以该事件投影为准；旧项目或旧事件缺少完整快照时回退到 Entry 字段。
 - 批量译文导入同样通过一个写入计划提交全部 entries chunk 和版本事件。
 - `updateEntryAccess()` 使用 `entry.lock` / `entry.hide` 权限修改词条管理状态，并将 entries chunk 与 `entry.access_updated` 事件通过同一写入计划提交。
@@ -1232,7 +1248,7 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 1. 按受影响文件生成完整 entries chunk 写入。
 2. 为工作流变化生成带同一 `batch_id` 的独立词条版本事件。
 3. 争议说明按词条写入批注文件，并生成批注和争议事件。
-4. 全部 entries、comments 和 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交。
+4. 全部 entries、comments 和日志活动片通过同一个 `ProjectWritePlan` 提交。
 5. 计划成功后才更新 entries 缓存。
 
 该写入计划提供进程内补偿回滚，但不宣称具备断电事务能力。
@@ -1258,7 +1274,7 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 1. 只更新命中词条的 `target`、`updated_at` 和 `updated_by`。
 2. 保留 `status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by` 和 `disputed`。
 3. 为每个成功替换的词条追加 `entry.target_replaced` 事件，记录 `find_text`、`replace_text`、替换前后译文、替换前后状态、匹配数量、大小写选项和 `preserve_workflow: true`。
-4. 按受影响文件生成 entries chunk 写入，并与 `logs/events.jsonl` 通过同一个 `ProjectWritePlan` 提交。
+4. 按受影响文件生成 entries chunk 写入，并与日志活动片通过同一个 `ProjectWritePlan` 提交。
 5. 计划成功后同步更新 entries 缓存。
 
 词条管理页的浮动替换栏只负责编排用户输入、查找定位和调用该 service。页面侧的匹配高亮、上一处/下一处和自动翻页滚动是展示行为，不作为写入依据。
@@ -2044,7 +2060,7 @@ const privateKeys = new Map<string, LoadedSigningPrivateKey>();
 
 - `commitSignedTrustTransition()` 要求输入已由当前可信发布者签名的 `project_update`。
 - `commitProjectUpdateTransition()` 可由调用方声明是否要求签名；负责人转让在非强制签名项目中用 `{ requireSignature: false }`，其他密钥信任过渡仍走强制签名入口。
-- 同一个 `ProjectWritePlan` 写入 `changes/transitions/<package_id>.zip`、`members.json`、`logs/events.jsonl` 和 `project.json`，其中 `project.json` 最后写入。
+- 同一个 `ProjectWritePlan` 写入 `changes/transitions/<package_id>.zip`、`members.json`、日志活动片和 `project.json`，其中 `project.json` 最后写入。
 - 过渡提交前重新检查项目 ID 和 base revision，写入开启逐字节校验；失败时按写入计划恢复。
 - 页面先保存新私钥文件，再保存外部过渡包，最后调用提交；提交成功后才切换内存私钥。
 - `loadLatestTrustTransitionArchive()` 用于重新保存最近归档的过渡包。
@@ -2605,7 +2621,7 @@ GitHub Release 应上传：
 - 回滚阶段再次发生文件系统错误时，错误信息会列出需要人工检查的路径。
 - 项目更新包仍以 `project.json` 最后写入降低风险，不具备完整回滚。
 - 批注和争议跨文件写入不是事务。
-- 日志、任务、术语、chunk 都是全文件重写。
+- 日志只重写最多 1,000 条的活动片；任务、术语和单个数据 chunk 仍是全文件重写。
 - 多标签页同时编辑同一项目没有锁和合并。
 - 直接磁盘修改无法被权限系统阻止。
 
@@ -2769,3 +2785,38 @@ npm run build
 
 1. 发布前复核 Tauri Updater 公钥、HTTPS 更新端点和更新清单。
 2. 增加端到端手动测试清单或 Playwright 流程。
+
+## 57. 大型项目读取模型与性能边界
+
+`entryReadModel.ts` 保存当前已打开项目的运行期词条快照、Entry ID 到 chunk 的位置索引和正在进行的文件读取。它是从 JSONL 派生的内存状态，不写入项目文件，不进入 `.hproj` 或修改包，也不替代磁盘权威数据。
+
+读取规则：
+
+- `setEntriesProjectStorage()` 在打开或切换项目时清空全部词条快照，并推进读取代次，旧项目尚未完成的异步读取不能写入新项目缓存。
+- 同一文件的并发读取由同一个 Promise 合并；后续页面读取直接复用已经完成的快照。
+- 全项目加载、文件摘要、任务文件摘要、成品摘要、项目结构检查和协作基线捕获使用 `utils/async.ts` 的有上限并发，不直接对全部项目文件创建无限 `Promise.all`。
+- 需要重新执行权限、任务范围或批量写入预检的 service 使用 fresh 入口重新读取磁盘，不把页面缓存当作安全校验依据。
+
+写入规则：
+
+- 单条译文保存、上下文更新、历史恢复和词条访问状态更新优先使用 Entry ID 对应的 chunk 位置；磁盘中仍会再次确认目标 Entry ID。
+- 写入成功后只更新受影响文件的运行期快照；写入失败时不推进缓存。
+- 新增、更新、删除源文件和译文导入继续通过原有 service 更新或清除对应文件快照。
+- 项目更新包等可能替换大量权威数据的流程必须按实际影响范围清除缓存；不能让页面直接修改读取模型。
+
+页面规则：
+
+- 项目打开只等待结构、配置和成员读取，全项目统计异步加载。
+- 文件页、统计页、词条管理页和任务页复用相同词条快照。
+- 批注页先读取批注，再只加载批注实际引用的文件词条。
+- 历史数据只在历史页签激活时读取。
+- 成品摘要只计算数量，不运行格式适配器或生成文件内容；实际导出时才转换文件并生成 ZIP。
+
+当前实现仍是单项目运行期状态，不提供磁盘外部修改监听、多标签页并发合并或持久化派生索引。直接修改项目磁盘文件后应重新打开项目；关键写入预检仍以磁盘内容为准。
+
+性能回归测试位于 `tests/unit/entryReadModel.test.ts`，至少验证并发读取合并、热缓存复用和单条保存直接命中 chunk。最低检查仍为：
+
+```bash
+npm run test:unit
+npm run build
+```

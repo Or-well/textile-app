@@ -12,6 +12,7 @@ import { can, isOwnerMember, setPermissionProject } from "./permissions";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import { createProjectStorage } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import { planAppendProjectEvents } from "./eventLog";
 
 export interface SignedTrustTransitionCommit {
   project: ProjectConfig;
@@ -124,9 +125,6 @@ export async function commitProjectUpdateTransition(
   const nextProject = JSON.parse(
     exported.completion.projectJson,
   ) as ProjectConfig;
-  const events = await storage.fileExists("logs/events.jsonl")
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
   const transitionEvent = createTransitionEvent(actor, eventType, {
     ...detail,
     signed: Boolean(exported.signature),
@@ -147,9 +145,9 @@ export async function commitProjectUpdateTransition(
     .writeJson("members.json", {
       schema_version: 1,
       members,
-    })
-    .writeJsonl("logs/events.jsonl", [...events, transitionEvent])
-    .writeText("project.json", exported.completion.projectJson);
+    });
+  await planAppendProjectEvents(plan, storage, [transitionEvent]);
+  plan.writeText("project.json", exported.completion.projectJson);
 
   await plan.execute({ verifyWrites: true });
   setPermissionProject(nextProject);
@@ -272,9 +270,6 @@ export async function commitOfflineTrustRebuild(
     throw new Error("项目版本已变化，项目信任没有重建。请重新操作。");
   }
 
-  const events = await storage.fileExists("logs/events.jsonl")
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
   const event = createTransitionEvent(actor, "project.trust_rebuilt", {
     previous_trust_epoch: currentProject.trust_epoch ?? 0,
     trust_epoch: nextProject.trust_epoch ?? 0,
@@ -290,9 +285,9 @@ export async function commitOfflineTrustRebuild(
     .writeJson("members.json", {
       schema_version: 1,
       members,
-    })
-    .writeJsonl("logs/events.jsonl", [...events, event])
-    .writeJson("project.json", nextProject);
+    });
+  await planAppendProjectEvents(plan, storage, [event]);
+  plan.writeJson("project.json", nextProject);
 
   await plan.execute({ verifyWrites: true });
   setPermissionProject(nextProject);

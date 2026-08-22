@@ -15,6 +15,11 @@ import {
   createProjectStorage,
   type ProjectStorage,
 } from "./projectStorage";
+import {
+  loadProjectEventsFromStorage,
+  planAppendProjectEvents,
+} from "./eventLog";
+import { createProjectWritePlan } from "./projectWritePlan";
 
 type ProjectEventInput = Omit<ProjectEvent, "id" | "created_at"> &
   Partial<Pick<ProjectEvent, "id" | "created_at">>;
@@ -103,11 +108,7 @@ export async function loadEvents(
 ): Promise<ProjectEvent[]> {
   const storage = getProjectStorage();
 
-  if (!(await storage.fileExists("logs/events.jsonl"))) {
-    return [];
-  }
-
-  const events = await storage.readJsonl<ProjectEvent>("logs/events.jsonl");
+  const events = await loadProjectEventsFromStorage(storage);
 
   return events.filter((event) => {
     if (filter.entryId && event.entry_id !== filter.entryId) {
@@ -172,9 +173,6 @@ export async function appendEventToStorage(
   storage: ProjectStorage,
   event: ProjectEventInput,
 ): Promise<ProjectEvent> {
-  const events = (await storage.fileExists("logs/events.jsonl"))
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
   const nextEvent: ProjectEvent = {
     ...event,
     id: event.id ?? createId("event"),
@@ -182,7 +180,9 @@ export async function appendEventToStorage(
   };
 
   await storage.ensureDirectory("logs");
-  await storage.writeJsonl("logs/events.jsonl", [...events, nextEvent]);
+  const writePlan = createProjectWritePlan(storage);
+  await planAppendProjectEvents(writePlan, storage, [nextEvent]);
+  await writePlan.execute();
 
   return nextEvent;
 }

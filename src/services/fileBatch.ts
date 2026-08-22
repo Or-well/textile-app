@@ -16,6 +16,7 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import { planAppendProjectEvents } from "./eventLog";
 
 export type FileBatchOperation =
   | "hide"
@@ -397,15 +398,12 @@ async function executePreparedFileBatch(
     }
   }
 
-  const existingEvents = (await storage.fileExists("logs/events.jsonl"))
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
   const events = prepared.applicableFiles.map((file) =>
     createFileEvent(prepared, file),
   );
 
   writePlan.writeJson("project.json", prepared.nextProject);
-  writePlan.writeJsonl("logs/events.jsonl", [...existingEvents, ...events]);
+  await planAppendProjectEvents(writePlan, storage, events);
   await writePlan.execute();
 }
 

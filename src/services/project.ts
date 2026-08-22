@@ -10,8 +10,10 @@ import type { RolePermissions } from "../model/types";
 import { PERMISSION_ACTIONS, type PermissionAction } from "../model/permissions";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
+import { mapWithConcurrency } from "../utils/async";
 import { createPasswordFields } from "./auth";
 import { appendEventToStorage } from "./history";
+import { planAppendProjectEvents } from "./eventLog";
 import {
   assertCan,
   can,
@@ -336,12 +338,6 @@ export async function saveProjectToStorage(
   setPermissionProject(config);
 }
 
-async function readProjectEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
-  return (await storage.fileExists("logs/events.jsonl"))
-    ? storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
-}
-
 function createFileProjectEvent(
   type: string,
   userId: string,
@@ -361,12 +357,12 @@ function createFileProjectEvent(
   };
 }
 
-function appendFileEventToPlan(
+async function appendFileEventToPlan(
   writePlan: ReturnType<typeof createProjectWritePlan>,
-  existingEvents: ProjectEvent[],
+  storage: ProjectStorage,
   event: ProjectEvent,
-): void {
-  writePlan.writeJsonl("logs/events.jsonl", [...existingEvents, event]);
+): Promise<void> {
+  await planAppendProjectEvents(writePlan, storage, [event]);
 }
 
 function getFileUpdateEventType(
@@ -739,7 +735,6 @@ export async function addSourceFileToStorage(
     },
   );
   const writePlan = createProjectWritePlan(storage);
-  const existingEvents = await readProjectEvents(storage);
 
   writePlan.ensureDirectory("source");
   writePlan.writeText(addedFile.source_path, sourceText);
@@ -753,9 +748,9 @@ export async function addSourceFileToStorage(
   }
 
   writePlan.writeJson("project.json", nextConfig);
-  appendFileEventToPlan(
+  await appendFileEventToPlan(
     writePlan,
-    existingEvents,
+    storage,
     createFileProjectEvent("file.added", writeActor.id, addedFile.id, {
       file_name: addedFile.name,
       folder: addedFile.folder ?? "",
@@ -870,7 +865,6 @@ export async function updateSourceFileInStorage(
     ),
   };
   const writePlan = createProjectWritePlan(storage);
-  const existingEvents = await readProjectEvents(storage);
 
   for (const write of preparedEntries.writes) {
     writePlan.writeJsonl(write.path, write.rows);
@@ -882,9 +876,9 @@ export async function updateSourceFileInStorage(
 
   writePlan.writeText(projectFile.source_path, sourceText);
   writePlan.writeJson("project.json", nextConfig);
-  appendFileEventToPlan(
+  await appendFileEventToPlan(
     writePlan,
-    existingEvents,
+    storage,
     createFileProjectEvent("file.source_updated", writeActor.id, fileId, {
       file_name: projectFile.name,
       source_file_name: sourceFile.name,
@@ -1003,12 +997,11 @@ export async function updateProjectFile(
   }
 
   const writePlan = createProjectWritePlan(storage);
-  const existingEvents = await readProjectEvents(storage);
 
   writePlan.writeJson("project.json", nextConfig);
-  appendFileEventToPlan(
+  await appendFileEventToPlan(
     writePlan,
-    existingEvents,
+    storage,
     createFileProjectEvent(
       getFileUpdateEventType(previousFile, updatedFile, action),
       writeActor.id,
@@ -1073,9 +1066,9 @@ export async function deleteProjectFileFromStorage(
     writePlan.deleteFile(file.source_path);
   }
   writePlan.writeJson("project.json", nextConfig);
-  appendFileEventToPlan(
+  await appendFileEventToPlan(
     writePlan,
-    await readProjectEvents(storage),
+    storage,
     createFileProjectEvent("file.deleted", writeActor.id, fileId, {
       file_name: file.name,
       folder: file.folder ?? "",
@@ -1109,9 +1102,18 @@ export async function validateProjectStructure(
 
   const config = await loadProjectFromStorage(storage);
 
-  for (const file of config.files) {
-    if (!(await storage.fileExists(file.entries_path))) {
-      missing.push(file.entries_path);
+  const entryPathChecks = await mapWithConcurrency(
+    config.files,
+    8,
+    async (file) => ({
+      path: file.entries_path,
+      exists: await storage.fileExists(file.entries_path),
+    }),
+  );
+
+  for (const check of entryPathChecks) {
+    if (!check.exists) {
+      missing.push(check.path);
     }
   }
 

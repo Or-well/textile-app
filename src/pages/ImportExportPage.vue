@@ -1204,12 +1204,7 @@ watch(
 );
 
 watch(
-  () => [
-    releaseFormat.value,
-    releaseOnlyReviewed.value,
-    releaseIncludeSource.value,
-    releaseIncludeKey.value,
-  ],
+  () => releaseOnlyReviewed.value,
   () => {
     void refreshReleaseSummary();
   },

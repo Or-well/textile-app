@@ -11,6 +11,7 @@ import {
 } from "../model/status";
 import { nowIso, utcDateKey } from "../utils/time";
 import { sanitizeFileNamePart } from "../utils/fileNames";
+import { mapWithConcurrency } from "../utils/async";
 import { createZip, type ZipContent } from "../utils/zip";
 import { exportCsvFile } from "./exporters/csvExporter";
 import { exportJsonFile } from "./exporters/jsonExporter";
@@ -26,6 +27,7 @@ import {
   canExportRelease,
   getCurrentUser,
 } from "./permissions";
+import { getCachedEntriesForFile } from "./entries";
 
 export interface ReleaseExportOptions {
   format: ReleaseExportFormat;
@@ -153,6 +155,14 @@ async function loadProjectConfig(): Promise<ProjectConfig> {
 
 async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
   const storage = getProjectStorage();
+  const cachedEntries = getCachedEntriesForFile(projectFile.id, storage);
+
+  if (cachedEntries) {
+    return cachedEntries
+      .filter((entry) => !entry.hidden)
+      .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+  }
+
   const fileNames = await storage.listFiles(projectFile.entries_path);
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
@@ -336,8 +346,15 @@ export async function getReleaseExportSummary(
 
   const config = await loadProjectConfig();
   const releaseOptions = normalizeReleaseExportOptions(config, options);
-  const { allEntries, exportEntries } = await collectReleaseFiles(
+  const entryGroups = await mapWithConcurrency(
+    config.files.filter((file) => !file.hidden),
+    8,
+    (file) => loadEntryChunks(file),
+  );
+  const allEntries = entryGroups.flat();
+  const exportEntries = filterReleaseEntries(
     config,
+    allEntries,
     releaseOptions,
   );
 

@@ -9,8 +9,9 @@ import {
 import { getFileDisplayName } from "../model/displayNames";
 import type { Comment, Entry, Member, ProjectConfig } from "../model/types";
 import { loadAllComments } from "../services/comments";
-import { loadAllEntries } from "../services/entries";
+import { loadEntries } from "../services/entries";
 import { canViewComment, getCurrentUser } from "../services/permissions";
+import { mapWithConcurrency } from "../utils/async";
 import { compareInstants } from "../utils/time";
 
 type CommentFilter = "all" | "recent" | "open" | "resolved" | "disputed";
@@ -181,12 +182,21 @@ async function refreshComments() {
   errorMessage.value = "";
 
   try {
-    const [loadedEntries, loadedComments] = await Promise.all([
-      loadAllEntries(),
-      loadAllComments(),
-    ]);
+    const loadedComments = await loadAllComments();
+    const fileIds = Array.from(
+      new Set(
+        loadedComments
+          .map((comment) => comment.file_id)
+          .filter((fileId): fileId is string => Boolean(fileId)),
+      ),
+    );
+    const loadedEntries = await mapWithConcurrency(
+      fileIds,
+      8,
+      (fileId) => loadEntries(fileId),
+    );
 
-    entries.value = loadedEntries;
+    entries.value = loadedEntries.flat();
     comments.value = loadedComments;
   } catch (error) {
     comments.value = [];

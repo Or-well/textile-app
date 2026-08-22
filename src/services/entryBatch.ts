@@ -17,7 +17,7 @@ import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import {
   cacheEntriesForFile,
-  loadAllEntries,
+  loadAllEntriesFresh,
   prepareEntriesWrite,
 } from "./entries";
 import {
@@ -42,6 +42,10 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
+import {
+  loadProjectEventsFromStorage,
+  planAppendProjectEvents,
+} from "./eventLog";
 import { isEntryInTask, loadTasks } from "./tasks";
 
 export type EntryBatchOperation =
@@ -357,12 +361,6 @@ function applyOperation(
   });
 }
 
-async function loadEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
-  return (await storage.fileExists("logs/events.jsonl"))
-    ? storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
-}
-
 async function appendBatchComment(
   storage: ProjectStorage,
   entry: Entry,
@@ -430,11 +428,11 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
   }
 
   const [allEntries, tasks, existingEvents] = await Promise.all([
-    loadAllEntries(),
+    loadAllEntriesFresh(),
     storedProject.settings.workflow?.enable_tasks === false
       ? Promise.resolve([])
       : loadTasks(),
-    loadEvents(storage),
+    loadProjectEventsFromStorage(storage),
   ]);
   const entriesById = new Map(allEntries.map((entry) => [entry.id, entry]));
   const skipped: EntryBatchSkippedItem[] = [];
@@ -599,7 +597,6 @@ export async function executeEntryBatch(
       ),
     ),
   );
-  const existingEvents = await loadEvents(storage);
   const writePlan = createProjectWritePlan(storage);
 
   for (const preparedWrite of writes) {
@@ -616,8 +613,7 @@ export async function executeEntryBatch(
     writePlan.writeJsonl(path, comments);
   }
 
-  writePlan.writeJsonl("logs/events.jsonl", [
-    ...existingEvents,
+  await planAppendProjectEvents(writePlan, storage, [
     ...prepared.versionEvents,
     ...prepared.otherEvents,
   ]);

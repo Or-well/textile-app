@@ -105,6 +105,7 @@ const entries = ref<Entry[]>([]);
 const tasks = ref<Task[]>([]);
 const selectedEntryIds = ref(new Set<string>());
 const searchText = ref("");
+const debouncedSearchText = ref("");
 const fileFilter = ref(props.initialFileId ?? "all");
 const taskFilter = ref("all");
 const assigneeFilter = ref("all");
@@ -159,7 +160,7 @@ const selectedTask = computed(() =>
 );
 
 const filteredEntries = computed(() => {
-  const keyword = searchText.value.trim().toLowerCase();
+  const keyword = debouncedSearchText.value.trim().toLowerCase();
   const rows = entries.value.filter((entry) => {
     if (fileFilter.value !== "all" && entry.file_id !== fileFilter.value) {
       return false;
@@ -872,7 +873,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 watch(
   [
-    searchText,
+    debouncedSearchText,
     fileFilter,
     taskFilter,
     assigneeFilter,
@@ -886,6 +887,18 @@ watch(
     clearReplacePreview();
   },
 );
+
+let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+watch(searchText, (value) => {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+  }
+
+  searchDebounceTimer = setTimeout(() => {
+    debouncedSearchText.value = value;
+  }, 150);
+});
 
 watch(
   [
@@ -922,6 +935,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+  }
+
   window.removeEventListener("keydown", handleGlobalKeydown);
 });
 </script>

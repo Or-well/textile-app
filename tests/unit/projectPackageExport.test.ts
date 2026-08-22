@@ -20,6 +20,7 @@ function createProjectRoot(): ProjectDirectoryHandle {
       "entries/file-1/chunk_0001.jsonl": "\n",
       "terms/terms.jsonl": "\n",
       "tasks/tasks.jsonl": "\n",
+      "logs/events/chunk_000001.jsonl": '{"id":"event-1"}\n',
       "logs/events.jsonl": "\n",
       "exports/old-release.zip": new Uint8Array([1, 2, 3]),
       "changes/workspace/baseline.json": "{}\n",
@@ -93,6 +94,9 @@ describe(".hproj project export", () => {
     expect(Object.keys(files).some((path) => path.startsWith("exports/"))).toBe(false);
     expect(files["changes/workspace/baseline.json"]).toBe("{}\n");
     expect(files["changes/transitions/transition.zip"]).toBeDefined();
+    expect(files["logs/events/chunk_000001.jsonl"]).toBe(
+      '{"id":"event-1"}\n',
+    );
   });
 
   it("rejects nested project backups", async () => {

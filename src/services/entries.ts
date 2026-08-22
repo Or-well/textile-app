@@ -24,6 +24,7 @@ import { parseJsonl } from "../utils/jsonl";
 import { parseCsvRecords } from "../utils/csv";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
+import { mapWithConcurrency } from "../utils/async";
 import {
   createEntryVersionEvent,
   deriveEntryWorkflowAudit,
@@ -38,6 +39,10 @@ import {
 import { createProjectWritePlan } from "./projectWritePlan";
 import { assertEntryContentWritable } from "./entryAccess";
 import {
+  findProjectEventFromNewest,
+  planAppendProjectEvents,
+} from "./eventLog";
+import {
   assertCan,
   canEditEntry,
   canProofreadEntry,
@@ -48,9 +53,20 @@ import {
   getReviewBlockMessage,
   getReviewBlockReason,
 } from "./permissions";
+import {
+  cacheFileEntries,
+  cacheFileEntryChunks,
+  getCachedEntry,
+  getCachedEntryLocation,
+  getCachedFileEntries,
+  getEntryReadModelGeneration,
+  getOrLoadFileEntries,
+  invalidateCachedFile,
+  resetEntryReadModel,
+  updateCachedEntry,
+} from "./entryReadModel";
 
 let currentProjectStorage: ProjectStorage | null = null;
-let cachedEntries: Entry[] = [];
 
 const DEFAULT_ENTRY_CHUNK_SIZE = 500;
 const MIN_ENTRY_CHUNK_SIZE = 1;
@@ -115,7 +131,7 @@ export function setEntriesProjectRoot(root: ProjectDirectoryHandle): void {
 
 export function setEntriesProjectStorage(storage: ProjectStorage): void {
   currentProjectStorage = storage;
-  cachedEntries = [];
+  resetEntryReadModel();
 }
 
 function getProjectStorage(): ProjectStorage {
@@ -599,20 +615,11 @@ export async function prepareEntriesWrite(
 }
 
 export function cacheEntriesForFile(fileId: string, entries: Entry[]): void {
-  cachedEntries = [
-    ...cachedEntries.filter((entry) => entry.file_id !== fileId),
-    ...entries,
-  ];
+  cacheFileEntries(fileId, entries);
 }
 
 function cacheEntry(savedEntry: Entry): void {
-  cachedEntries = cachedEntries.map((entry) =>
-    entry.id === savedEntry.id ? savedEntry : entry,
-  );
-
-  if (!cachedEntries.some((entry) => entry.id === savedEntry.id)) {
-    cachedEntries.push(savedEntry);
-  }
+  updateCachedEntry(savedEntry);
 }
 
 export function parseEntriesFromSourceFile(
@@ -632,7 +639,7 @@ export async function writeEntriesForFile(
 }
 
 export function clearCachedEntriesForFile(fileId: string): void {
-  cachedEntries = cachedEntries.filter((entry) => entry.file_id !== fileId);
+  invalidateCachedFile(fileId);
 }
 
 function resolveActor(actor?: Member | null): Member {
@@ -795,12 +802,6 @@ function entryVersionChanged(before: Entry, after: Entry): boolean {
   );
 }
 
-async function loadProjectEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
-  return (await storage.fileExists("logs/events.jsonl"))
-    ? storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
-}
-
 async function commitEntryAndVersionEvent(
   storage: ProjectStorage,
   chunkPath: string,
@@ -812,9 +813,7 @@ async function commitEntryAndVersionEvent(
   writePlan.writeJsonl(chunkPath, entries);
 
   if (event) {
-    const events = await loadProjectEvents(storage);
-
-    writePlan.writeJsonl("logs/events.jsonl", [...events, event]);
+    await planAppendProjectEvents(writePlan, storage, [event]);
   }
 
   await writePlan.execute();
@@ -843,32 +842,94 @@ async function listEntryChunkFiles(
 
 export async function loadEntries(fileId: string): Promise<Entry[]> {
   const storage = getProjectStorage();
+  const generation = getEntryReadModelGeneration();
 
-  try {
-    const entries = await loadEntriesFromStorage(storage, fileId);
+  return getOrLoadFileEntries(fileId, async () => {
+    try {
+      return await loadEntriesFromStorage(storage, fileId, generation);
+    } catch {
+      throw new Error("词条数据无法读取。请确认项目文件夹和词条文件没有损坏。");
+    }
+  });
+}
 
-    cacheEntriesForFile(fileId, entries);
-
-    return entries;
-  } catch {
-    throw new Error("词条数据无法读取。请确认项目文件夹和词条文件没有损坏。");
-  }
+export async function loadEntriesFresh(fileId: string): Promise<Entry[]> {
+  invalidateCachedFile(fileId);
+  return loadEntries(fileId);
 }
 
 async function loadEntriesFromStorage(
   storage: ProjectStorage,
   fileId: string,
+  generation = getEntryReadModelGeneration(),
 ): Promise<Entry[]> {
   const entryDirectory = `entries/${fileId}`;
   const chunkFiles = await listEntryChunkFiles(storage, fileId);
   const entryGroups = await Promise.all(
-    chunkFiles.map((fileName) =>
-      storage.readJsonl<Entry>(`${entryDirectory}/${fileName}`),
-    ),
-  );
+    chunkFiles.map(async (fileName) => {
+      const path = `${entryDirectory}/${fileName}`;
 
-  return normalizeEntries(entryGroups.flat())
+      return {
+        path,
+        entries: normalizeEntries(await storage.readJsonl<Entry>(path)),
+      };
+    }),
+  );
+  const sortedEntries = entryGroups
+    .flatMap((group) => group.entries)
     .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+  const entryById = new Map(sortedEntries.map((entry) => [entry.id, entry]));
+  const normalizedGroups = entryGroups.map((group) => ({
+    path: group.path,
+    entries: group.entries.map((entry) => entryById.get(entry.id) ?? entry),
+  }));
+
+  return cacheFileEntryChunks(fileId, normalizedGroups, generation);
+}
+
+async function loadChunkContainingEntry(
+  storage: ProjectStorage,
+  fileId: string,
+  entryId: string,
+): Promise<{ chunkPath: string; entries: Entry[]; entryIndex: number } | null> {
+  const cachedLocation = getCachedEntryLocation(entryId);
+
+  if (cachedLocation) {
+    try {
+      const entries = normalizeEntries(
+        await storage.readJsonl<Entry>(cachedLocation.chunkPath),
+      );
+      const entryIndex = entries[cachedLocation.rowIndex]?.id === entryId
+        ? cachedLocation.rowIndex
+        : entries.findIndex((entry) => entry.id === entryId);
+
+      if (entryIndex >= 0) {
+        return { chunkPath: cachedLocation.chunkPath, entries, entryIndex };
+      }
+    } catch {
+      invalidateCachedFile(fileId);
+    }
+  }
+
+  const entryDirectory = `entries/${fileId}`;
+  const chunkFiles = await listEntryChunkFiles(storage, fileId);
+
+  for (const chunkFile of chunkFiles) {
+    const chunkPath = `${entryDirectory}/${chunkFile}`;
+
+    if (chunkPath === cachedLocation?.chunkPath) {
+      continue;
+    }
+
+    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
+    const entryIndex = entries.findIndex((entry) => entry.id === entryId);
+
+    if (entryIndex >= 0) {
+      return { chunkPath, entries, entryIndex };
+    }
+  }
+
+  return null;
 }
 
 export async function createEntriesFromSourceFile(
@@ -920,7 +981,12 @@ export async function importEntryTranslations(
         : "当前文件已隐藏，不能导入译文。",
     );
   }
-  const entries = await loadEntries(fileId);
+  const entries = (await loadEntriesFresh(fileId)).map((entry) =>
+    normalizeEntry({
+      ...entry,
+      proofread_by: [...normalizeProofreadUsers(entry.proofread_by)],
+    }),
+  );
   const rows = parseTranslationRows(text, fileName);
   const entriesByKey = new Map(entries.map((entry) => [entry.key, entry]));
   const entriesByIndex = new Map(entries.map((entry) => [entry.index, entry]));
@@ -968,7 +1034,6 @@ export async function importEntryTranslations(
 
   if (versionEvents.length > 0) {
     const prepared = await prepareEntriesWrite(storage, fileId, entries, options);
-    const existingEvents = await loadProjectEvents(storage);
     const writePlan = createProjectWritePlan(storage);
 
     for (const write of prepared.writes) {
@@ -979,10 +1044,7 @@ export async function importEntryTranslations(
       writePlan.deleteFile(path);
     }
 
-    writePlan.writeJsonl("logs/events.jsonl", [
-      ...existingEvents,
-      ...versionEvents,
-    ]);
+    await planAppendProjectEvents(writePlan, storage, versionEvents);
     await writePlan.execute();
     cacheEntriesForFile(fileId, entries);
   }
@@ -999,22 +1061,20 @@ export async function loadAllEntries(): Promise<Entry[]> {
 
   try {
     const fileIds = await storage.listFiles("entries");
-    const entryGroups = await Promise.all(
-      fileIds.map((fileId) => loadEntries(fileId)),
+    const entryGroups = await mapWithConcurrency(
+      fileIds,
+      8,
+      (fileId) => loadEntries(fileId),
     );
-    const entries = normalizeEntries(entryGroups.flat())
+    return normalizeEntries(entryGroups.flat())
       .sort((a, b) => a.file_id.localeCompare(b.file_id) || a.index - b.index);
-
-    cachedEntries = entries;
-
-    return entries;
   } catch {
     throw new Error("词条列表无法读取。请确认项目里包含 entries 文件夹。");
   }
 }
 
 export async function getEntryById(entryId: string): Promise<Entry | undefined> {
-  const cachedEntry = cachedEntries.find((entry) => entry.id === entryId);
+  const cachedEntry = getCachedEntry(entryId);
 
   if (cachedEntry) {
     return cachedEntry;
@@ -1033,18 +1093,11 @@ export async function updateEntryContext(
 ): Promise<Entry> {
   const storage = getProjectStorage();
   const fileId = getFileIdFromEntryId(entryId);
-  const entryDirectory = `entries/${fileId}`;
-  const chunkFiles = await listEntryChunkFiles(storage, fileId);
   const nextContext = context.trim();
+  const storedChunk = await loadChunkContainingEntry(storage, fileId, entryId);
 
-  for (const chunkFile of chunkFiles) {
-    const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
-    const entryIndex = entries.findIndex((row) => row.id === entryId);
-
-    if (entryIndex < 0) {
-      continue;
-    }
+  if (storedChunk) {
+    const { chunkPath, entries, entryIndex } = storedChunk;
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
     const actor = resolveActor(getCurrentUser()?.id === userId ? getCurrentUser() : undefined);
@@ -1083,21 +1136,27 @@ export async function saveEntry(
   const storage = getProjectStorage();
   const actor = resolveActor(options.actor);
   const fileId = getFileIdFromEntryId(entry.id);
-  const entryDirectory = `entries/${fileId}`;
-  const chunkFiles = await listEntryChunkFiles(storage, fileId);
+  const storedChunk = await loadChunkContainingEntry(
+    storage,
+    fileId,
+    entry.id,
+  );
 
-  for (const chunkFile of chunkFiles) {
-    const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
-    const entryIndex = entries.findIndex((row) => row.id === entry.id);
-
-    if (entryIndex < 0) {
-      continue;
-    }
+  if (storedChunk) {
+    const { chunkPath, entries, entryIndex } = storedChunk;
 
     const storedEntry = normalizeEntry(entries[entryIndex]);
-    const existingEvents = await loadProjectEvents(storage);
-    const historyAudit = deriveEntryWorkflowAudit(storedEntry, existingEvents);
+    const auditEvent = await findProjectEventFromNewest(
+      storage,
+      (event) =>
+        isEntryVersionEvent(event) &&
+        event.entry_id === storedEntry.id &&
+        event.created_at === storedEntry.updated_at,
+    );
+    const historyAudit = deriveEntryWorkflowAudit(
+      storedEntry,
+      auditEvent ? [auditEvent] : [],
+    );
     const originalEntry = normalizeEntry({
       ...storedEntry,
       translated_by: historyAudit.translatedBy,
@@ -1161,6 +1220,24 @@ export async function saveEntry(
   throw new Error("没有找到要保存的词条。请重新打开项目后再试。");
 }
 
+export async function loadAllEntriesFresh(): Promise<Entry[]> {
+  const storage = getProjectStorage();
+  const fileIds = await storage.listFiles("entries");
+
+  for (const fileId of fileIds) {
+    invalidateCachedFile(fileId);
+  }
+
+  const entryGroups = await mapWithConcurrency(
+    fileIds,
+    8,
+    (fileId) => loadEntries(fileId),
+  );
+
+  return normalizeEntries(entryGroups.flat())
+    .sort((a, b) => a.file_id.localeCompare(b.file_id) || a.index - b.index);
+}
+
 export async function restoreEntryVersion(
   entryId: string,
   versionEventId: string,
@@ -1169,9 +1246,10 @@ export async function restoreEntryVersion(
   const storage = getProjectStorage();
   const actor = resolveActor(options.actor);
   const fileId = getFileIdFromEntryId(entryId);
-  const entryDirectory = `entries/${fileId}`;
-  const events = await loadProjectEvents(storage);
-  const versionEvent = events.find((event) => event.id === versionEventId);
+  const versionEvent = await findProjectEventFromNewest(
+    storage,
+    (event) => event.id === versionEventId,
+  );
 
   if (
     !versionEvent ||
@@ -1181,16 +1259,10 @@ export async function restoreEntryVersion(
     throw new Error("没有找到可恢复的译文历史版本。");
   }
 
-  const chunkFiles = await listEntryChunkFiles(storage, fileId);
+  const storedChunk = await loadChunkContainingEntry(storage, fileId, entryId);
 
-  for (const chunkFile of chunkFiles) {
-    const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
-    const entryIndex = entries.findIndex((row) => row.id === entryId);
-
-    if (entryIndex < 0) {
-      continue;
-    }
+  if (storedChunk) {
+    const { chunkPath, entries, entryIndex } = storedChunk;
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
 
@@ -1252,6 +1324,35 @@ export async function restoreEntryVersion(
   throw new Error("没有找到要恢复的词条。请重新打开项目后再试。");
 }
 
+export function getCachedEntriesForFile(
+  fileId: string,
+  expectedStorage?: ProjectStorage,
+): Entry[] | undefined {
+  if (expectedStorage && expectedStorage !== currentProjectStorage) {
+    return undefined;
+  }
+
+  return getCachedFileEntries(fileId);
+}
+
+export function loadSharedEntriesForFile(
+  fileId: string,
+  expectedStorage: ProjectStorage,
+): Promise<Entry[] | undefined> {
+  return expectedStorage === currentProjectStorage
+    ? loadEntries(fileId)
+    : Promise.resolve(undefined);
+}
+
+export function updateSharedCachedEntry(
+  entry: Entry,
+  expectedStorage: ProjectStorage,
+): void {
+  if (expectedStorage === currentProjectStorage) {
+    updateCachedEntry(entry);
+  }
+}
+
 export interface EntryAccessUpdate {
   locked?: boolean;
   hidden?: boolean;
@@ -1265,8 +1366,6 @@ export async function updateEntryAccess(
   const storage = getProjectStorage();
   const writeActor = resolveActor(actor);
   const fileId = getFileIdFromEntryId(entryId);
-  const entryDirectory = `entries/${fileId}`;
-  const chunkFiles = await listEntryChunkFiles(storage, fileId);
   const project = await storage.readJson<ProjectConfig>("project.json");
 
   if (!project.files.some((file) => file.id === fileId)) {
@@ -1285,14 +1384,10 @@ export async function updateEntryAccess(
     assertCan(writeActor, PERMISSION_ACTIONS.ENTRY_HIDE, project);
   }
 
-  for (const chunkFile of chunkFiles) {
-    const chunkPath = `${entryDirectory}/${chunkFile}`;
-    const entries = normalizeEntries(await storage.readJsonl<Entry>(chunkPath));
-    const entryIndex = entries.findIndex((entry) => entry.id === entryId);
+  const storedChunk = await loadChunkContainingEntry(storage, fileId, entryId);
 
-    if (entryIndex < 0) {
-      continue;
-    }
+  if (storedChunk) {
+    const { chunkPath, entries, entryIndex } = storedChunk;
 
     const originalEntry = normalizeEntry(entries[entryIndex]);
     const updatedEntry: Entry = {
@@ -1301,7 +1396,6 @@ export async function updateEntryAccess(
       updated_at: nowIso(),
       updated_by: writeActor.id,
     };
-    const events = await loadProjectEvents(storage);
     const changedFields = Object.entries(patch)
       .filter(([key, value]) => originalEntry[key as keyof Entry] !== value)
       .map(([key]) => key);
@@ -1314,8 +1408,7 @@ export async function updateEntryAccess(
     const writePlan = createProjectWritePlan(storage);
 
     writePlan.writeJsonl(chunkPath, entries);
-    writePlan.writeJsonl("logs/events.jsonl", [
-      ...events,
+    await planAppendProjectEvents(writePlan, storage, [
       {
         id: createId("event"),
         type: "entry.access_updated",

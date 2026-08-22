@@ -2,13 +2,14 @@ import type {
   Comment,
   Entry,
   ProjectConfig,
-  ProjectEvent,
   Task,
   Term,
   TermDeletion,
 } from "../model/types";
 import { stableStringify } from "./crypto";
 import type { ProjectStorage } from "./projectStorage";
+import { mapWithConcurrency } from "../utils/async";
+import { loadProjectEventsFromStorage } from "./eventLog";
 
 export const WORKSPACE_BASELINE_PATH = "changes/workspace/baseline.json";
 const LOCAL_TERM_DELETIONS_PATH = "changes/term-deletions.jsonl";
@@ -58,19 +59,23 @@ async function readEntries(
 ): Promise<Record<string, Entry[]>> {
   const result: Record<string, Entry[]> = {};
 
-  for (const file of project.files) {
+  const groups = await mapWithConcurrency(project.files, 8, async (file) => {
     if (!(await storage.fileExists(file.entries_path))) {
-      continue;
+      return [] as Array<[string, Entry[]]>;
     }
 
     const names = (await storage.listFiles(file.entries_path))
       .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
       .sort((left, right) => left.localeCompare(right));
 
-    for (const name of names) {
+    return mapWithConcurrency(names, 4, async (name) => {
       const path = `${file.entries_path}/${name}`;
-      result[path] = await storage.readJsonl<Entry>(path);
-    }
+      return [path, await storage.readJsonl<Entry>(path)] as [string, Entry[]];
+    });
+  });
+
+  for (const [path, entries] of groups.flat()) {
+    result[path] = entries;
   }
 
   return result;
@@ -85,17 +90,21 @@ async function readComments(
     return result;
   }
 
-  for (const fileId of await storage.listFiles("comments")) {
+  const fileIds = await storage.listFiles("comments");
+  const groups = await mapWithConcurrency(fileIds, 8, async (fileId) => {
     const directory = `comments/${fileId}`;
+    const names = (await storage.listFiles(directory)).filter((name) =>
+      name.endsWith(".jsonl"),
+    );
 
-    for (const name of await storage.listFiles(directory)) {
-      if (!name.endsWith(".jsonl")) {
-        continue;
-      }
-
+    return mapWithConcurrency(names, 4, async (name) => {
       const path = `${directory}/${name}`;
-      result[path] = await storage.readJsonl<Comment>(path);
-    }
+      return [path, await storage.readJsonl<Comment>(path)] as [string, Comment[]];
+    });
+  });
+
+  for (const [path, comments] of groups.flat()) {
+    result[path] = comments;
   }
 
   return result;
@@ -120,9 +129,7 @@ export async function captureWorkspaceSnapshot(
       storage.fileExists("tasks/tasks.jsonl").then((exists) =>
         exists ? storage.readJsonl<Task>("tasks/tasks.jsonl") : [],
       ),
-      storage.fileExists("logs/events.jsonl").then((exists) =>
-        exists ? storage.readJsonl<ProjectEvent>("logs/events.jsonl") : [],
-      ),
+      loadProjectEventsFromStorage(storage),
     ]);
 
   return {

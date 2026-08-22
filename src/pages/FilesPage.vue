@@ -57,6 +57,7 @@ import {
   UNGROUPED_FILE_FILTER,
 } from "../utils/fileGroups";
 import { saveGeneratedFile } from "../utils/saveBlob";
+import { mapWithConcurrency } from "../utils/async";
 
 type SortKey = "name" | "updated" | "translated" | "proofread" | "reviewed";
 type FileFilter = "visible" | "all" | "hidden" | "locked" | "disputed";
@@ -648,8 +649,10 @@ async function loadFileSummaries() {
   errorMessage.value = "";
 
   try {
-    const summaries = await Promise.all(
-      currentProject.value.files.map(async (file) => {
+    const summaries = await mapWithConcurrency(
+      currentProject.value.files,
+      8,
+      async (file) => {
         const entries = await loadEntries(file.id);
         const visibleEntries = entries.map((entry) => ({
           ...entry,
@@ -677,7 +680,7 @@ async function loadFileSummaries() {
             : "暂无记录",
           updatedAtValue,
         };
-      }),
+      },
     );
 
     fileSummaries.value = summaries;

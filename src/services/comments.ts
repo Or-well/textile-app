@@ -1,5 +1,6 @@
 import type { Comment, Entry } from "../model/types";
 import { normalizeEntries, normalizeEntry } from "../model/status";
+import { mapWithConcurrency } from "../utils/async";
 import { createId } from "../utils/id";
 import { compareInstants, nowIso } from "../utils/time";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./projectStorage";
 import { appendEvent } from "./history";
 import { assertEntryContentWritable } from "./entryAccess";
+import { updateSharedCachedEntry } from "./entries";
 
 let currentProjectStorage: ProjectStorage | null = null;
 
@@ -139,6 +141,7 @@ async function updateEntry(
 
     chunk.entries[entryIndex] = updatedEntry;
     await storage.writeJsonl(chunk.path, chunk.entries);
+    updateSharedCachedEntry(updatedEntry, storage);
 
     return updatedEntry;
   }
@@ -435,21 +438,22 @@ export async function loadAllComments(): Promise<Comment[]> {
   }
 
   const fileIds = await storage.listFiles("comments");
-  const groups = await Promise.all(
-    fileIds.map(async (fileId) => {
+  const groups = await mapWithConcurrency(
+    fileIds,
+    8,
+    async (fileId) => {
       const commentFiles = await storage.listFiles(`comments/${fileId}`);
-      const comments = await Promise.all(
-        commentFiles
-          .filter((name) => name.endsWith(".jsonl"))
-          .map(async (name) =>
-            (await storage.readJsonl<Comment>(`comments/${fileId}/${name}`)).map(
-              (comment) => normalizeComment(comment, { fileId }),
-            ),
+      const comments = await mapWithConcurrency(
+        commentFiles.filter((name) => name.endsWith(".jsonl")),
+        4,
+        async (name) =>
+          (await storage.readJsonl<Comment>(`comments/${fileId}/${name}`)).map(
+            (comment) => normalizeComment(comment, { fileId }),
           ),
       );
 
       return comments.flat();
-    }),
+    },
   );
 
   return groups

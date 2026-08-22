@@ -178,6 +178,10 @@ const tabs: Array<{ id: AssistTab; label: string }> = [
 function setActiveTab(tab: AssistTab) {
   activeTab.value = tab;
   emit("updateActiveTab", tab);
+
+  if (tab === "history") {
+    void refreshEntryHistory(props.entry?.id);
+  }
 }
 
 function describeEvent(event: ProjectEvent): string {
@@ -413,6 +417,10 @@ watch(
   (tab) => {
     if (tab) {
       activeTab.value = tab;
+
+      if (tab === "history") {
+        void refreshEntryHistory(props.entry?.id);
+      }
     }
   },
 );
@@ -432,7 +440,9 @@ watch(termSearchText, () => {
 watch(
   [() => props.entry?.id, () => props.entry?.updated_at],
   ([entryId]) => {
-    void refreshEntryHistory(entryId);
+    if (activeTab.value === "history") {
+      void refreshEntryHistory(entryId);
+    }
   },
   { immediate: true },
 );

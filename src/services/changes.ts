@@ -40,6 +40,11 @@ import {
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
 import {
+  loadProjectEventsFromStorage,
+  planAppendProjectEvents,
+  planReplaceProjectEvents,
+} from "./eventLog";
+import {
   createEntryVersionEvent,
   isEntryVersionEvent,
   type EntryVersionEvent,
@@ -1539,13 +1544,9 @@ async function collectEventsByUsers(
   taskEntries: Entry[],
   userIds: Set<string>,
 ): Promise<ProjectEvent[]> {
-  if (!(await storage.fileExists("logs/events.jsonl"))) {
-    return [];
-  }
-
   const taskEntryIds = new Set(taskEntries.map((entry) => entry.id));
 
-  return (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
+  return (await loadProjectEventsFromStorage(storage)).filter(
     (event) =>
       userIds.has(event.user_id) &&
       (!event.entry_id || taskEntryIds.has(event.entry_id)),
@@ -1556,11 +1557,7 @@ async function collectUserEvents(
   storage: ProjectStorage,
   userId: string,
 ): Promise<ProjectEvent[]> {
-  if (!(await storage.fileExists("logs/events.jsonl"))) {
-    return [];
-  }
-
-  return (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
+  return (await loadProjectEventsFromStorage(storage)).filter(
     (event) => event.user_id === userId,
   );
 }
@@ -1640,8 +1637,7 @@ async function buildWorkspaceMemberChangePayload(
   const entryAllowed = (entryId: string) =>
     !allowedEntryIds || allowedEntryIds.has(entryId);
   const baselineEventIds = new Set(baseline.event_ids);
-  const events = (await storage.fileExists("logs/events.jsonl"))
-    ? (await storage.readJsonl<ProjectEvent>("logs/events.jsonl")).filter(
+  const events = (await loadProjectEventsFromStorage(storage)).filter(
         (event) =>
           !baselineEventIds.has(event.id) &&
           allowedUserIds.has(event.user_id) &&
@@ -1654,8 +1650,7 @@ async function buildWorkspaceMemberChangePayload(
               : event.task_id
                 ? selectedTaskIds?.has(event.task_id)
                 : false)),
-      )
-    : [];
+      );
   const deletedCommentIds = new Set(
     events
       .filter((event) => event.type === "comment.deleted")
@@ -1750,11 +1745,7 @@ async function buildWorkspaceMemberChangePayload(
 }
 
 async function collectAllEvents(storage: ProjectStorage): Promise<ProjectEvent[]> {
-  if (!(await storage.fileExists("logs/events.jsonl"))) {
-    return [];
-  }
-
-  return storage.readJsonl<ProjectEvent>("logs/events.jsonl");
+  return loadProjectEventsFromStorage(storage);
 }
 
 async function calculateProjectUpdateSourceSnapshotHash(
@@ -4675,9 +4666,7 @@ async function prepareProjectUpdateRebase(
     (await captureWorkspaceSnapshot(storage, currentProject));
 
   const current = await captureWorkspaceSnapshot(storage, currentProject);
-  const currentEvents = (await storage.fileExists("logs/events.jsonl"))
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
+  const currentEvents = await loadProjectEventsFromStorage(storage);
   if (baseline.legacy_user_id) {
     baseline = buildLegacyMigrationBaseline(
       current,
@@ -5854,7 +5843,7 @@ async function applyProjectUpdatePackage(
     writePlan.deleteFile(LOCAL_TERM_DELETIONS_PATH);
   }
 
-  writePlan.writeJsonl("logs/events.jsonl", [
+  await planReplaceProjectEvents(writePlan, storage, [
     ...changePackage.events,
     ...preservedLocalEvents,
     importEvent,
@@ -6529,9 +6518,7 @@ export async function applyChangePackage(
     }
   }
 
-  const existingEvents = (await storage.fileExists("logs/events.jsonl"))
-    ? await storage.readJsonl<ProjectEvent>("logs/events.jsonl")
-    : [];
+  const existingEvents = await loadProjectEventsFromStorage(storage);
   const existingIds = new Set(existingEvents.map((event) => event.id));
   const sourceEvents = useOrdinarySafeguards
     ? changePackage.events.filter((event) => {
@@ -6580,8 +6567,7 @@ export async function applyChangePackage(
     options,
   );
 
-  writePlan.writeJsonl("logs/events.jsonl", [
-    ...existingEvents,
+  await planAppendProjectEvents(writePlan, storage, [
     ...newEvents,
     ...localEntryEvents,
     importEvent,

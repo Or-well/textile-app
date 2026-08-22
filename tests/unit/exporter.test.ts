@@ -5,6 +5,7 @@ import { createProjectStorage } from "../../src/services/projectStorage";
 import {
   exportFile,
   exportProject,
+  getReleaseExportSummary,
   setExporterProjectStorage,
 } from "../../src/services/exporter";
 import { readZip } from "../../src/utils/zip";
@@ -139,5 +140,19 @@ describe("release exporter", () => {
     await expect(exportProject({ format: "json" })).rejects.toThrow(
       "导出后会产生同名文件“chapter.json”",
     );
+  });
+
+  it("builds the release summary without running output path conversion", async () => {
+    await prepareExporter([
+      createProjectFile("file-1", "chapter.ks", "ks"),
+      createProjectFile("file-2", "chapter.txt", "txt"),
+    ]);
+
+    await expect(
+      getReleaseExportSummary({ format: "json" }),
+    ).resolves.toMatchObject({
+      totalEntries: 2,
+      exportEntries: 2,
+    });
   });
 });
