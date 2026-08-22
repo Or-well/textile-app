@@ -538,14 +538,18 @@ describe("ordinary change-package write plan", () => {
     setChangesProjectStorage(fixture.storage);
 
     await expect(
-      applyChangePackage(fixture.changePackage, [], {
-        actor: fixture.actor,
-      }),
+      applyChangePackage(
+        fixture.changePackage,
+        [{ entryId: fixture.originalEntry.id, action: "use_package" }],
+        { actor: fixture.actor },
+      ),
     ).rejects.toThrow("有效成员签名");
   });
 
   it("keeps accepting unsigned package import when signatures are optional", async () => {
-    const fixture = await createChangePackageFixture();
+    const fixture = await createChangePackageFixture({
+      packageEntry: { target: "Package changed" },
+    });
 
     setChangesProjectStorage(fixture.storage);
 
@@ -612,6 +616,16 @@ describe("ordinary change-package write plan", () => {
       },
     });
 
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      fixture.originalEntry,
+      {
+        ...fixture.originalEntry,
+        id: "file-1:2",
+        index: 2,
+        target: "Outside scope",
+      },
+    ]);
+
     setChangesProjectStorage(fixture.storage);
 
     await expect(
@@ -619,6 +633,24 @@ describe("ordinary change-package write plan", () => {
         actor: fixture.actor,
       }),
     ).rejects.toThrow("任务范围外");
+  });
+
+  it("rejects package entries that are missing from the declared target file", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        id: "file-1:missing",
+        index: 2,
+        target: "Missing",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).rejects.toThrow("不能静默跳过");
   });
 
   it("does not let unsigned packages forge a manager to bypass task scope", async () => {
@@ -896,15 +928,19 @@ describe("ordinary change-package write plan", () => {
     ).rejects.toThrow("普通成员只能导出分配给自己的任务修改");
   });
 
-  it("commits merged content and one import log entry", async () => {
-    const fixture = await createChangePackageFixture();
+  it("commits merged content and authoritative import logs", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: { target: "Package changed" },
+    });
 
     setChangesProjectStorage(fixture.storage);
 
     await expect(
-      applyChangePackage(fixture.changePackage, [], {
-        actor: fixture.actor,
-      }),
+      applyChangePackage(
+        fixture.changePackage,
+        [{ entryId: fixture.originalEntry.id, action: "use_package" }],
+        { actor: fixture.actor },
+      ),
     ).resolves.toMatchObject({
       appliedEntries: 1,
       importedComments: 1,
@@ -919,7 +955,10 @@ describe("ordinary change-package write plan", () => {
     ).resolves.toMatchObject([{ id: "comment-1" }]);
     await expect(
       fixture.storage.readJsonl("logs/events.jsonl"),
-    ).resolves.toMatchObject([{ type: "change_package.applied" }]);
+    ).resolves.toMatchObject([
+      { type: "entry.updated" },
+      { type: "change_package.applied" },
+    ]);
   });
 
   it("imports ordinary comment status updates", async () => {
@@ -1009,9 +1048,11 @@ describe("ordinary change-package write plan", () => {
     setChangesProjectStorage(fixture.storage);
 
     await expect(
-      applyChangePackage(fixture.changePackage, [], {
-        actor: fixture.actor,
-      }),
+      applyChangePackage(
+        fixture.changePackage,
+        [{ entryId: fixture.originalEntry.id, action: "use_package" }],
+        { actor: fixture.actor },
+      ),
     ).resolves.toMatchObject({
       importedComments: 2,
       importedEvents: 1,
@@ -1197,19 +1238,12 @@ describe("ordinary change-package write plan", () => {
 
     setChangesProjectStorage(fixture.storage);
 
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+
     await expect(
-      applyChangePackage(
-        fixture.changePackage,
-        [
-          {
-            entryId: fixture.originalEntry.id,
-            action: "use_package",
-          },
-        ],
-        {
-          actor: fixture.actor,
-        },
-      ),
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
     ).resolves.toMatchObject({ appliedEntries: 1 });
     await expect(
       fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
@@ -1244,6 +1278,206 @@ describe("ordinary change-package write plan", () => {
       },
     });
     expect(events.filter((event) => event.id === "source-entry-event")).toHaveLength(0);
+  });
+
+  it("auto-applies a continuous translation and proofread event chain", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        target: "Proofread final",
+        status: "proofread",
+        translated_by: "member-2",
+        proofread_by: ["member-2"],
+        proofread_count: 1,
+        reviewed_by: "",
+      },
+    });
+    const packageEntry = Object.values(fixture.changePackage.entries)[0]![0]!;
+    const draftEntry: Entry = {
+      ...fixture.originalEntry,
+      target: "Translation draft",
+      status: "translated",
+      translated_by: "member-2",
+      proofread_by: [],
+      proofread_count: 0,
+      reviewed_by: "",
+    };
+
+    fixture.changePackage.events = [
+      {
+        id: "translation-event",
+        type: "entry.updated",
+        user_id: "member-2",
+        entry_id: fixture.originalEntry.id,
+        file_id: fixture.originalEntry.file_id,
+        created_at: "2026-01-15T00:00:00.000Z",
+        detail: {
+          before_target: fixture.originalEntry.target,
+          after_target: draftEntry.target,
+          before_status: fixture.originalEntry.status,
+          after_status: draftEntry.status,
+          before_translated_by: fixture.originalEntry.translated_by,
+          after_translated_by: draftEntry.translated_by,
+          before_proofread_by: fixture.originalEntry.proofread_by ?? [],
+          after_proofread_by: draftEntry.proofread_by,
+          before_proofread_count: fixture.originalEntry.proofread_count ?? 0,
+          after_proofread_count: draftEntry.proofread_count,
+          before_reviewed_by: fixture.originalEntry.reviewed_by,
+          after_reviewed_by: draftEntry.reviewed_by,
+          operation: "translation_edit",
+        },
+      },
+      {
+        id: "proofread-event",
+        type: "entry.updated",
+        user_id: "member-2",
+        entry_id: fixture.originalEntry.id,
+        file_id: fixture.originalEntry.file_id,
+        created_at: packageEntry.updated_at,
+        detail: {
+          before_target: draftEntry.target,
+          after_target: packageEntry.target,
+          before_status: draftEntry.status,
+          after_status: packageEntry.status,
+          before_translated_by: draftEntry.translated_by,
+          after_translated_by: packageEntry.translated_by,
+          before_proofread_by: draftEntry.proofread_by,
+          after_proofread_by: packageEntry.proofread_by,
+          before_proofread_count: draftEntry.proofread_count,
+          after_proofread_count: packageEntry.proofread_count,
+          before_reviewed_by: draftEntry.reviewed_by,
+          after_reviewed_by: packageEntry.reviewed_by,
+          operation: "proofread",
+        },
+      },
+    ];
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor,
+      }),
+    ).resolves.toMatchObject({ appliedEntries: 1, keptEntries: 0 });
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        target: "Proofread final",
+        status: "proofread",
+        proofread_by: ["member-2"],
+        proofread_count: 1,
+      },
+    ]);
+  });
+
+  it("keeps a real divergence as an explicit conflict", async () => {
+    const fixture = await createChangePackageFixture({
+      packageOperation: "proofread",
+      packageEntry: {
+        target: "Proofread package edit",
+        status: "proofread",
+        translated_by: "translator-1",
+        proofread_by: ["member-2"],
+        proofread_count: 1,
+      },
+    });
+
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      {
+        ...fixture.originalEntry,
+        target: "Independent main edit",
+      },
+    ]);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([
+      expect.objectContaining({
+        kind: "entry",
+        entryId: fixture.originalEntry.id,
+      }),
+    ]);
+  });
+
+  it("does not submit a task when its entry changes are kept or skipped", async () => {
+    const originalTask: Task = {
+      id: "task-1",
+      type: "proofread",
+      title: "Proofread chapter",
+      description: "",
+      file_id: "file-1",
+      range_start: 1,
+      range_end: 1,
+      entry_ids: [],
+      assignee: "member-2",
+      status: "in_progress",
+      target: "",
+      submit_method: "change_package",
+      proofread_round: 1,
+      created_by: "owner-1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "",
+    };
+    const fixture = await createChangePackageFixture({
+      originalTask,
+      packageTask: { ...originalTask, status: "submitted" },
+      packageEntry: { target: "Package changed" },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [{ entryId: fixture.originalEntry.id, action: "keep_main" }],
+        { actor: fixture.actor },
+      ),
+    ).rejects.toThrow("不能同时标记为已提交");
+    await expect(
+      fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
+    ).resolves.toMatchObject([{ status: "in_progress" }]);
+  });
+
+  it("resets workflow safely when an entry conflict is manually merged", async () => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: {
+        target: "Reviewed package target",
+        status: "reviewed",
+        translated_by: "member-2",
+        proofread_by: ["proofreader-1"],
+        proofread_count: 1,
+        reviewed_by: "reviewer-1",
+      },
+    });
+
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(
+      applyChangePackage(
+        fixture.changePackage,
+        [
+          {
+            entryId: fixture.originalEntry.id,
+            action: "manual_merge",
+            target: "Manual target",
+            status: "reviewed",
+          },
+        ],
+        { actor: fixture.actor },
+      ),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"),
+    ).resolves.toMatchObject([
+      {
+        target: "Manual target",
+        status: "translated",
+        proofread_by: [],
+        proofread_count: 0,
+        reviewed_by: "",
+      },
+    ]);
   });
 
   it("rejects protected entry field changes in ordinary packages", async () => {

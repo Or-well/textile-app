@@ -1051,13 +1051,26 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
     }
 
     conflicts.value = [];
-    const detail = `应用 ${result.appliedEntries} 条词条，处理 ${result.importedComments} 条批注、导入 ${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
-    message.value =
-      packageValidation.value?.packageType === "project_update"
-        ? `项目更新完成：${detail}`
-        : needsDangerousImport.value
-          ? `危险导入完成：${detail}`
-          : `导入完成：${detail}`;
+    const entryDetail = result.packageEntries > 0
+      ? `修改包包含 ${result.packageEntries} 条词条，实际应用 ${result.appliedEntries} 条、已一致 ${result.unchangedEntries} 条、保留或跳过 ${result.keptEntries} 条；`
+      : "";
+    const detail = `${entryDetail}处理 ${result.importedComments} 条批注、导入 ${result.importedTerms} 条术语、${result.importedTasks} 条任务。`;
+    const isPartial = result.keptEntries > 0;
+    const appliedNothing =
+      result.packageEntries > 0 &&
+      result.appliedEntries === 0 &&
+      result.unchangedEntries === 0;
+    const outcome = appliedNothing
+      ? "未应用任何词条修改"
+      : isPartial
+        ? "部分导入完成"
+        : packageValidation.value?.packageType === "project_update"
+          ? "项目更新完成"
+          : needsDangerousImport.value
+            ? "危险导入完成"
+            : "导入完成";
+
+    message.value = `${outcome}：${detail}`;
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "导入修改包失败。请检查冲突处理。";

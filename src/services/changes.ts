@@ -259,7 +259,10 @@ export interface ConflictResolution {
 }
 
 export interface ApplyChangePackageResult {
+  packageEntries: number;
   appliedEntries: number;
+  unchangedEntries: number;
+  keptEntries: number;
   importedComments: number;
   importedTerms: number;
   importedContexts: number;
@@ -352,6 +355,14 @@ const ENTRY_CONFLICT_FIELDS = [
   "dispute_resolved_by",
   "context",
 ] as const satisfies readonly EntryConflictReason[];
+const ENTRY_VERSION_CONFLICT_FIELDS = new Set<EntryConflictReason>([
+  "target",
+  "status",
+  "translated_by",
+  "proofread_by",
+  "proofread_count",
+  "reviewed_by",
+]);
 const ENTRY_PROTECTED_FIELDS = [
   "id",
   "file_id",
@@ -1725,10 +1736,119 @@ function assertOrdinaryTaskPackageFields(
   }
 }
 
+interface EntryWorkflowSnapshot {
+  target: string;
+  status: Entry["status"];
+  translated_by: string;
+  proofread_by: string[];
+  proofread_count: number;
+  reviewed_by: string;
+}
+
+function getEntryWorkflowSnapshot(entry: Entry): EntryWorkflowSnapshot {
+  const normalized = normalizeEntry(entry);
+
+  return {
+    target: normalized.target,
+    status: normalized.status,
+    translated_by: normalized.translated_by,
+    proofread_by: normalized.proofread_by ?? [],
+    proofread_count: normalized.proofread_count ?? 0,
+    reviewed_by: normalized.reviewed_by,
+  };
+}
+
+function getEventWorkflowSnapshot(
+  event: EntryVersionEvent,
+  side: "before" | "after",
+): EntryWorkflowSnapshot | undefined {
+  const detail = event.detail;
+  const translatedBy = detail[`${side}_translated_by`];
+  const proofreadBy = detail[`${side}_proofread_by`];
+  const proofreadCount = detail[`${side}_proofread_count`];
+  const reviewedBy = detail[`${side}_reviewed_by`];
+
+  if (
+    translatedBy === undefined ||
+    proofreadBy === undefined ||
+    proofreadCount === undefined ||
+    reviewedBy === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    target: detail[`${side}_target`],
+    status: detail[`${side}_status`],
+    translated_by: translatedBy,
+    proofread_by: proofreadBy,
+    proofread_count: proofreadCount,
+    reviewed_by: reviewedBy,
+  };
+}
+
+function sameEntryWorkflowSnapshot(
+  left: EntryWorkflowSnapshot,
+  right: EntryWorkflowSnapshot,
+): boolean {
+  return samePackageValue(left, right);
+}
+
+function canApplyEntryFromVersionChain(
+  mainEntry: Entry,
+  packageEntry: Entry,
+  events: ProjectEvent[],
+): boolean {
+  const versions = events.filter(
+    (event): event is EntryVersionEvent =>
+      isEntryVersionEvent(event) && event.entry_id === packageEntry.id,
+  );
+  const mainSnapshot = getEntryWorkflowSnapshot(mainEntry);
+  const packageSnapshot = getEntryWorkflowSnapshot(packageEntry);
+  let cursor = -1;
+
+  for (let index = versions.length - 1; index >= 0; index -= 1) {
+    const after = getEventWorkflowSnapshot(versions[index]!, "after");
+
+    if (after && sameEntryWorkflowSnapshot(after, packageSnapshot)) {
+      cursor = index;
+      break;
+    }
+  }
+
+  while (cursor >= 0) {
+    const before = getEventWorkflowSnapshot(versions[cursor]!, "before");
+
+    if (!before) {
+      return false;
+    }
+
+    if (sameEntryWorkflowSnapshot(before, mainSnapshot)) {
+      return true;
+    }
+
+    let previous = -1;
+
+    for (let index = cursor - 1; index >= 0; index -= 1) {
+      const after = getEventWorkflowSnapshot(versions[index]!, "after");
+
+      if (after && sameEntryWorkflowSnapshot(after, before)) {
+        previous = index;
+        break;
+      }
+    }
+
+    cursor = previous;
+  }
+
+  return false;
+}
+
 function hasEntryConflict(
   mainEntry: Entry,
   packageEntry: Entry,
   useOrdinarySafeguards: boolean,
+  events: ProjectEvent[] = [],
 ): EntryConflictReason[] {
   if (useOrdinarySafeguards) {
     assertOrdinaryEntryPackageFields(mainEntry, packageEntry);
@@ -1736,9 +1856,20 @@ function hasEntryConflict(
 
   const normalizedPackageEntry = normalizeEntry(packageEntry);
 
-  return ENTRY_CONFLICT_FIELDS.filter(
+  const reasons = ENTRY_CONFLICT_FIELDS.filter(
     (field) => !samePackageValue(mainEntry[field], normalizedPackageEntry[field]),
   );
+
+  if (
+    useOrdinarySafeguards &&
+    reasons.length > 0 &&
+    reasons.every((reason) => ENTRY_VERSION_CONFLICT_FIELDS.has(reason)) &&
+    canApplyEntryFromVersionChain(mainEntry, normalizedPackageEntry, events)
+  ) {
+    return [];
+  }
+
+  return reasons;
 }
 
 function mergeOrdinaryPackageEntry(
@@ -2548,7 +2679,10 @@ function createImportLogEvent(
     detail: {
       package_id: manifest.package_id ?? "",
       package_type: validation.packageType,
+      package_entries: result.packageEntries,
       applied_entries: result.appliedEntries,
+      unchanged_entries: result.unchangedEntries,
+      kept_entries: result.keptEntries,
       imported_comments: result.importedComments,
       imported_terms: result.importedTerms,
       imported_contexts: result.importedContexts,
@@ -3269,21 +3403,30 @@ export async function detectConflicts(
   const useOrdinarySafeguards = isMemberChangePackage(
     getPackageType(changePackage.manifest),
   );
+  const packageEntryIds = new Set<string>();
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
     const currentEntries = await loadCurrentEntries(path);
 
     for (const packageEntry of packageEntries) {
+      if (packageEntryIds.has(packageEntry.id)) {
+        throw new Error(`修改包包含重复词条 ID：${packageEntry.id}。`);
+      }
+
+      packageEntryIds.add(packageEntry.id);
       const mainEntry = currentEntries.find((entry) => entry.id === packageEntry.id);
 
       if (!mainEntry) {
-        continue;
+        throw new Error(
+          `修改包词条 ${packageEntry.id} 在当前项目的 ${path} 中不存在，不能静默跳过。`,
+        );
       }
 
       const reasons = hasEntryConflict(
         mainEntry,
         packageEntry,
         useOrdinarySafeguards,
+        changePackage.events,
       );
 
       if (reasons.length > 0) {
@@ -3685,6 +3828,7 @@ async function applyProjectUpdatePackage(
   await assertNoUnexportedMemberChanges(storage, currentProject, options.actor);
   await precheckChangePackageImport(changePackage, validation, []);
 
+  const packageEntries = flattenEntries(changePackage.entries).length;
   let appliedEntries = 0;
   let importedComments = 0;
   let importedTerms = 0;
@@ -3742,7 +3886,10 @@ async function applyProjectUpdatePackage(
   importedEvents = changePackage.events.length;
 
   const result: ApplyChangePackageResult = {
+    packageEntries,
     appliedEntries,
+    unchangedEntries: 0,
+    keptEntries: 0,
     importedComments,
     importedTerms,
     importedContexts,
@@ -3903,7 +4050,10 @@ export async function applyChangePackage(
     throw new Error("仍有冲突未处理，不能应用修改包。");
   }
 
+  const packageEntries = flattenEntries(changePackage.entries).length;
   let appliedEntries = 0;
+  let unchangedEntries = 0;
+  let keptEntries = 0;
   let importedComments = 0;
   let importedTerms = 0;
   let importedContexts = 0;
@@ -3920,6 +4070,9 @@ export async function applyChangePackage(
     entries: Entry[];
   }> = [];
   const localEntryEvents: ProjectEvent[] = [];
+  const rejectedEntryIds = new Set<string>();
+  const rejectedCommentIds = new Set<string>();
+  const rejectedTermIds = new Set<string>();
 
   for (const [path, packageEntries] of Object.entries(changePackage.entries)) {
     const currentEntries = await loadCurrentEntries(path);
@@ -3931,7 +4084,9 @@ export async function applyChangePackage(
       );
 
       if (entryIndex < 0) {
-        continue;
+        throw new Error(
+          `修改包词条 ${packageEntry.id} 在当前项目的 ${path} 中不存在，导入已停止。`,
+        );
       }
 
       const conflict = conflicts.find(
@@ -3943,6 +4098,8 @@ export async function applyChangePackage(
         : undefined;
 
       if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+        keptEntries += 1;
+        rejectedEntryIds.add(packageEntry.id);
         continue;
       }
 
@@ -3966,7 +4123,6 @@ export async function applyChangePackage(
 
         nextEntry = normalizeEntry({
           ...baseEntry,
-          status: resolution.status ?? baseEntry.status,
           context: resolution.context ?? baseEntry.context,
           updated_at: updatedAt,
           updated_by: changePackage.manifest.user_id,
@@ -3990,12 +4146,14 @@ export async function applyChangePackage(
         throw new Error("校对或审核记录不能把空译文标记为流程通过。");
       }
 
+      if (!entryWorkflowChanged(currentEntry, nextEntry)) {
+        unchangedEntries += 1;
+        continue;
+      }
+
       currentEntries[entryIndex] = nextEntry;
 
-      if (
-        useOrdinarySafeguards &&
-        entryWorkflowChanged(currentEntry, nextEntry)
-      ) {
+      if (useOrdinarySafeguards) {
         localEntryEvents.push(
           createEntryVersionEvent(
             currentEntry,
@@ -4064,6 +4222,7 @@ export async function applyChangePackage(
           resolution?.action === "keep_main" ||
           resolution?.action === "skip"
         ) {
+          rejectedCommentIds.add(packageComment.id);
           continue;
         }
 
@@ -4179,6 +4338,7 @@ export async function applyChangePackage(
         : undefined;
 
       if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+        rejectedTermIds.add(packageTerm.id);
         continue;
       }
 
@@ -4222,6 +4382,7 @@ export async function applyChangePackage(
         : undefined;
 
       if (resolution?.action === "keep_main" || resolution?.action === "skip") {
+        rejectedTermIds.add(normalizedDeletion.term_id);
         continue;
       }
 
@@ -4272,6 +4433,31 @@ export async function applyChangePackage(
           ),
         );
 
+    if (useOrdinarySafeguards && rejectedEntryIds.size > 0) {
+      for (const packageTask of normalizedPackageTasks) {
+        const currentTask = existingTasks.find((task) => task.id === packageTask.id);
+
+        if (
+          !currentTask ||
+          currentTask.status === packageTask.status ||
+          packageTask.status !== "submitted"
+        ) {
+          continue;
+        }
+
+        const taskEntryIds = await getTaskScopeEntryIds(storage, [packageTask]);
+        const rejectedCount = Array.from(rejectedEntryIds).filter((entryId) =>
+          taskEntryIds.has(entryId),
+        ).length;
+
+        if (rejectedCount > 0) {
+          throw new Error(
+            `任务“${packageTask.title}”有 ${rejectedCount} 条修改选择了保留或跳过，不能同时标记为已提交。请先处理全部词条。`,
+          );
+        }
+      }
+    }
+
     const result = useOrdinarySafeguards
       ? mergeOrdinaryPackageTasks(existingTasks, normalizedPackageTasks)
       : mergeRowsById(existingTasks, normalizedPackageTasks);
@@ -4321,14 +4507,36 @@ export async function applyChangePackage(
     : [];
   const existingIds = new Set(existingEvents.map((event) => event.id));
   const sourceEvents = useOrdinarySafeguards
-    ? changePackage.events.filter((event) => !isEntryVersionEvent(event))
+    ? changePackage.events.filter((event) => {
+        if (isEntryVersionEvent(event)) {
+          return false;
+        }
+
+        const commentId = getCommentIdFromEvent(event);
+        const termId = typeof event.detail?.term_id === "string"
+          ? event.detail.term_id
+          : "";
+
+        if (event.type.startsWith("comment.")) {
+          return !commentId || !rejectedCommentIds.has(commentId);
+        }
+
+        if (event.type.startsWith("term.")) {
+          return !termId || !rejectedTermIds.has(termId);
+        }
+
+        return !event.entry_id || !rejectedEntryIds.has(event.entry_id);
+      })
     : changePackage.events;
   const newEvents = sourceEvents.filter((event) => !existingIds.has(event.id));
 
   importedEvents = newEvents.length;
 
   const result: ApplyChangePackageResult = {
+    packageEntries,
     appliedEntries,
+    unchangedEntries,
+    keptEntries,
     importedComments,
     importedTerms,
     importedContexts,

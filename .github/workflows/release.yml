@@ -63,6 +63,23 @@ jobs:
       - name: Check Tauri release configuration
         run: npm run tauri:release:check
 
+      - name: Read release notes from CHANGELOG
+        id: release_notes
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $changelog = Get-Content CHANGELOG.md -Raw
+          $pattern = "(?ms)^## \[$([regex]::Escape($version))\](?: - [^\r\n]+)?\r?\n(?<body>.*?)(?=^## \[|\z)"
+          $match = [regex]::Match($changelog, $pattern)
+
+          if (-not $match.Success) {
+            throw "CHANGELOG.md 中没有找到版本 $version。"
+          }
+
+          "body<<TEXTILE_RELEASE_NOTES" | Add-Content -Path $env:GITHUB_OUTPUT
+          $match.Groups["body"].Value.Trim() | Add-Content -Path $env:GITHUB_OUTPUT
+          "TEXTILE_RELEASE_NOTES" | Add-Content -Path $env:GITHUB_OUTPUT
+
       - name: Build signed installers and create draft release
         uses: tauri-apps/tauri-action@v0.6.2
         env:
@@ -73,10 +90,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Textile v__VERSION__"
-          releaseBody: |
-            ## Added
-
-            - 词条管理页新增“文本替换”，支持在当前筛选结果或已选词条中查找译文、逐条替换或全部替换；替换只修改译文并保留原有工作流状态。
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true

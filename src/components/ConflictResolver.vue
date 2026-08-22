@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import type {
   ChangeConflict,
   ConflictResolution,
   ConflictResolutionAction,
 } from "../services/changes";
-import type { Comment, Entry, EntryStatus, Term } from "../model/types";
+import type { Comment, Entry, Term } from "../model/types";
 import {
-  ENTRY_STATUSES,
   hasVisibleText,
   hasWorkflowTarget,
 } from "../model/status";
@@ -15,9 +14,8 @@ import {
 interface ConflictDraft {
   conflictId: string;
   entryId?: string;
-  action: ConflictResolutionAction;
+  action: ConflictResolutionAction | "";
   target?: string;
-  status?: EntryStatus;
   context?: string;
   term?: Term;
   variantsText?: string;
@@ -44,9 +42,8 @@ watch(
         return {
           conflictId: conflict.conflictId,
           entryId: conflict.entryId,
-          action: "keep_main",
+          action: "",
           target: conflict.mainEntry.target,
-          status: conflict.mainEntry.status,
           context: conflict.mainEntry.context,
         };
       }
@@ -59,7 +56,7 @@ watch(
 
         return {
           conflictId: conflict.conflictId,
-          action: "keep_main",
+          action: "",
           term: term ? cloneTerm(term) : undefined,
           variantsText: term?.variants.join("\n") ?? "",
         };
@@ -68,12 +65,25 @@ watch(
       return {
         conflictId: conflict.conflictId,
         entryId: conflict.entryId,
-        action: "keep_main",
+        action: "",
       };
     });
   },
   { immediate: true },
 );
+
+const unresolvedCount = computed(
+  () => drafts.value.filter((draft) => !draft.action).length,
+);
+const canSubmit = computed(
+  () => Boolean(props.canApply) && unresolvedCount.value === 0,
+);
+
+function applyBulkAction(action: "keep_main" | "use_package") {
+  for (const conflict of props.conflicts) {
+    updateAction(conflict, action);
+  }
+}
 
 function updateAction(
   conflict: ChangeConflict,
@@ -106,26 +116,27 @@ function updateAction(
 
   if (action === "use_package") {
     draft.target = conflict.packageEntry.target;
-    draft.status = conflict.packageEntry.status;
     draft.context = conflict.packageEntry.context;
   }
 
   if (action === "keep_main" || action === "skip") {
     draft.target = conflict.mainEntry.target;
-    draft.status = conflict.mainEntry.status;
     draft.context = conflict.mainEntry.context;
   }
 }
 
 function handleApply() {
+  if (unresolvedCount.value > 0) {
+    return;
+  }
+
   emit(
     "apply",
     drafts.value.map((draft) => ({
       conflictId: draft.conflictId,
       entryId: draft.entryId,
-      action: draft.action,
+      action: draft.action as ConflictResolutionAction,
       target: draft.target,
-      status: draft.status,
       context: draft.context,
       term: draft.term
         ? {
@@ -260,14 +271,27 @@ function formatTermMeta(term: Term | undefined): string {
 <template>
   <section v-if="conflicts.length > 0" class="conflict-resolver">
     <div class="header-row">
-      <h2>发现内容冲突</h2>
-      <button
-        type="button"
-        :disabled="isApplying || !canApply"
-        @click="handleApply"
-      >
-        {{ isApplying ? "正在应用..." : "应用处理结果" }}
-      </button>
+      <div>
+        <h2>发现内容冲突</h2>
+        <p class="resolution-summary">
+          共 {{ conflicts.length }} 项，仍有 {{ unresolvedCount }} 项未选择。
+        </p>
+      </div>
+      <div class="header-actions">
+        <button type="button" class="secondary" @click="applyBulkAction('use_package')">
+          全部使用修改包
+        </button>
+        <button type="button" class="secondary" @click="applyBulkAction('keep_main')">
+          全部保留当前项目
+        </button>
+        <button
+          type="button"
+          :disabled="isApplying || !canSubmit"
+          @click="handleApply"
+        >
+          {{ isApplying ? "正在应用..." : "应用处理结果" }}
+        </button>
+      </div>
     </div>
 
     <p v-if="!canApply && disabledReason" class="disabled-reason">
@@ -342,8 +366,9 @@ function formatTermMeta(term: Term | undefined): string {
           <span>处理方式</span>
           <select
             v-model="draft.action"
-            @change="updateAction(conflict, draft.action)"
+            @change="draft.action && updateAction(conflict, draft.action)"
           >
+            <option disabled value="">请选择处理方式</option>
             <option value="keep_main">保留当前项目</option>
             <option value="use_package">使用修改包版本</option>
             <option
@@ -362,22 +387,12 @@ function formatTermMeta(term: Term | undefined): string {
         </label>
 
         <label v-if="conflict.kind === 'entry' && draft.action === 'manual_merge'">
-          <span>处理后的状态</span>
-          <select v-model="draft.status">
-            <option
-              v-for="status in ENTRY_STATUSES"
-              :key="status"
-              :value="status"
-            >
-              {{ status }}
-            </option>
-          </select>
-        </label>
-
-        <label v-if="conflict.kind === 'entry' && draft.action === 'manual_merge'">
           <span>处理后的上下文</span>
           <textarea v-model="draft.context" rows="3" />
         </label>
+        <p v-if="conflict.kind === 'entry' && draft.action === 'manual_merge'" class="manual-note">
+          手动修改译文后，词条会按现有工作流安全地回到已翻译或未翻译状态。
+        </p>
 
         <template v-if="conflict.kind === 'term' && draft.action === 'manual_merge' && draft.term">
           <label>
@@ -432,6 +447,21 @@ function formatTermMeta(term: Term | undefined): string {
   justify-content: space-between;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.resolution-summary,
+.manual-note {
+  margin-top: 6px;
+  color: #5b6472;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 h2,
 h3,
 p {
@@ -461,6 +491,12 @@ button {
 button:disabled {
   cursor: wait;
   opacity: 0.68;
+}
+
+button.secondary {
+  border: 1px solid #c8d0dc;
+  background: #ffffff;
+  color: #334155;
 }
 
 .conflict-card {
@@ -554,6 +590,10 @@ textarea {
   .header-row,
   .compare-grid {
     flex-direction: column;
+  }
+
+  .header-actions {
+    justify-content: stretch;
   }
 }
 </style>
