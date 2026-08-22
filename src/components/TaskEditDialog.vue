@@ -16,6 +16,7 @@ import {
   getTaskFilesEntrySummary,
   resolveTaskRangeEntryIds,
   type TaskDraft,
+  type TaskFileEntryProgress,
   type TaskFilesEntrySummary,
 } from "../services/tasks";
 import {
@@ -68,8 +69,10 @@ const form = reactive({
   due_disambiguation: "earlier" as Exclude<DateTimeDisambiguation, "reject">,
 });
 const timeZoneOptions = getSupportedTimeZones();
-const filesEntrySummary = ref<TaskFilesEntrySummary>();
+const allFilesEntrySummary = ref<TaskFilesEntrySummary>();
 const isLoadingFileSummary = ref(false);
+const fileSearch = ref("");
+const showIncompleteOnly = ref(false);
 const boundsErrorMessage = ref("");
 const scopeErrorMessage = ref("");
 const dueErrorMessage = ref("");
@@ -88,6 +91,49 @@ const proofreadRoundOptions = computed(() => {
   const maxRound = Math.min(Math.max(required, 1), 3) as ProofreadRequired;
 
   return [1, 2, 3].filter((round) => round <= maxRound) as ProofreadRequired[];
+});
+const selectedFileIds = computed(() => {
+  const selected = new Set(form.file_ids);
+  return props.project.files
+    .map((file) => file.id)
+    .filter((fileId) => selected.has(fileId));
+});
+const fileProgressById = computed(
+  () => new Map(
+    (allFilesEntrySummary.value?.files ?? []).map((file) => [file.fileId, file]),
+  ),
+);
+const filesEntrySummary = computed<TaskFilesEntrySummary | undefined>(() => {
+  if (!allFilesEntrySummary.value) {
+    return undefined;
+  }
+
+  const files = selectedFileIds.value
+    .map((fileId) => fileProgressById.value.get(fileId))
+    .filter((file): file is TaskFileEntryProgress => Boolean(file));
+
+  return {
+    fileCount: files.length,
+    totalEntries: files.reduce((total, file) => total + file.totalEntries, 0),
+    files,
+  };
+});
+const visibleFiles = computed(() => {
+  const query = fileSearch.value.trim().toLocaleLowerCase();
+  const selected = new Set(form.file_ids);
+
+  return props.project.files.filter((file) => {
+    if (query && !file.name.toLocaleLowerCase().includes(query)) {
+      return false;
+    }
+
+    if (!showIncompleteOnly.value || selected.has(file.id)) {
+      return true;
+    }
+
+    const progress = fileProgressById.value.get(file.id);
+    return !progress?.progressAvailable || progress.completedEntries < progress.totalEntries;
+  });
 });
 const selectedFilesLabel = computed(() => {
   if (form.file_ids.length === 0) {
@@ -108,7 +154,15 @@ const selectedFilesLabel = computed(() => {
     return `已选 ${form.file_ids.length} 个文件，共 0 条`;
   }
 
-  return `已选 ${summary.fileCount} 个文件，共 ${summary.totalEntries} 条`;
+  const pendingEntries = summary.files.reduce(
+    (total, file) => total + Math.max(0, file.totalEntries - file.completedEntries),
+    0,
+  );
+  const pendingLabel = summary.files.every((file) => file.progressAvailable)
+    ? `，待处理 ${pendingEntries} 条`
+    : "";
+
+  return `已选 ${summary.fileCount} 个文件，共 ${summary.totalEntries} 条${pendingLabel}`;
 });
 const explicitEntryIds = computed(() =>
   form.entry_ids_text
@@ -121,8 +175,12 @@ const canSaveTask = computed(() => {
     return false;
   }
 
-  if (explicitEntryIds.value.length > 0 || form.file_ids.length === 0) {
+  if (explicitEntryIds.value.length > 0) {
     return true;
+  }
+
+  if (form.file_ids.length === 0) {
+    return form.type === "term" || form.type === "custom";
   }
 
   return Boolean(filesEntrySummary.value?.totalEntries);
@@ -147,13 +205,12 @@ useAppDraft("任务", hasUnsavedTask);
 
 function syncForm() {
   const task = props.task;
-  const firstFileId = props.project.files[0]?.id ?? "";
 
   form.title = task?.title ?? "";
   form.description = task?.description ?? "";
   form.type = task?.type ?? "translate";
-  form.file_id = task?.file_id ?? firstFileId;
-  form.file_ids = task?.file_ids ?? (task?.file_id ? [task.file_id] : firstFileId ? [firstFileId] : []);
+  form.file_id = task?.file_id ?? "";
+  form.file_ids = task?.file_ids ?? (task?.file_id ? [task.file_id] : []);
   form.range_start = task?.range_start ?? 1;
   form.range_end = task?.range_end ?? 1;
   form.entry_ids_text = task?.entry_ids.join("\n") ?? "";
@@ -177,13 +234,15 @@ function syncForm() {
       : formatDateTimeLocalInput(task.due_at, form.due_time_zone)
     : "";
   form.due_disambiguation = "earlier";
+  fileSearch.value = "";
+  showIncompleteOnly.value = false;
   dueErrorMessage.value = "";
 }
 
 async function initializeForm() {
   isInitializingForm.value = true;
   syncForm();
-  await refreshFilesEntrySummary(false);
+  await refreshFilesEntrySummary();
   if (
     props.mode === "create" ||
     (props.task?.file_ids?.length && props.task.entry_ids.length === 0)
@@ -203,10 +262,19 @@ function setFullSelectedRange() {
   }
 }
 
-async function refreshFilesEntrySummary(resetRange: boolean) {
-  const fileIds = [...form.file_ids];
+let fileSummaryRequestId = 0;
 
-  filesEntrySummary.value = undefined;
+async function refreshFilesEntrySummary() {
+  const requestId = ++fileSummaryRequestId;
+  const fileIds = props.project.files.map((file) => file.id);
+  const workflow = form.type === "proofread"
+    ? {
+        ...props.project.settings.workflow,
+        proofread_required: form.proofread_round,
+      }
+    : props.project.settings.workflow;
+
+  allFilesEntrySummary.value = undefined;
   boundsErrorMessage.value = "";
 
   if (fileIds.length === 0) {
@@ -216,25 +284,40 @@ async function refreshFilesEntrySummary(resetRange: boolean) {
   isLoadingFileSummary.value = true;
 
   try {
-    const summary = await getTaskFilesEntrySummary(fileIds);
+    const summary = await getTaskFilesEntrySummary(fileIds, form.type, workflow);
 
-    if (form.file_ids.join("\0") !== fileIds.join("\0")) {
+    if (requestId !== fileSummaryRequestId) {
       return;
     }
 
-    filesEntrySummary.value = summary;
-    if (resetRange) {
-      setFullSelectedRange();
-    }
+    allFilesEntrySummary.value = summary;
   } catch {
-    if (form.file_ids.join("\0") === fileIds.join("\0")) {
-      boundsErrorMessage.value = "无法读取所选文件词条";
+    if (requestId === fileSummaryRequestId) {
+      boundsErrorMessage.value = "无法读取文件词条进度";
     }
   } finally {
-    if (form.file_ids.join("\0") === fileIds.join("\0")) {
+    if (requestId === fileSummaryRequestId) {
       isLoadingFileSummary.value = false;
     }
   }
+}
+
+function getFileProgressLabel(progress?: TaskFileEntryProgress): string {
+  if (!progress) {
+    return isLoadingFileSummary.value ? "正在统计..." : "无法读取进度";
+  }
+
+  if (!progress.progressAvailable) {
+    return `共 ${progress.totalEntries} 条`;
+  }
+
+  const typeLabel = form.type === "translate"
+    ? "已翻译"
+    : form.type === "proofread"
+      ? `第 ${form.proofread_round} 轮完成`
+      : "已审核";
+
+  return `${typeLabel} ${progress.completedEntries}/${progress.totalEntries} · ${progress.progressPercent}%`;
 }
 
 async function handleSubmit() {
@@ -276,13 +359,13 @@ async function handleSubmit() {
 
   if (
     entryIds.length === 0 &&
-    form.file_ids.length > 0 &&
+    selectedFileIds.value.length > 0 &&
     totalEntries > 0 &&
     (rangeStart !== 1 || rangeEnd !== totalEntries)
   ) {
     try {
       entryIds = await resolveTaskRangeEntryIds(
-        form.file_ids,
+        selectedFileIds.value,
         rangeStart,
         rangeEnd,
       );
@@ -300,8 +383,8 @@ async function handleSubmit() {
     title,
     description: form.description.trim(),
     type: form.type,
-    file_id: form.file_ids.length === 1 ? form.file_ids[0] : "",
-    file_ids: form.file_ids,
+    file_id: selectedFileIds.value.length === 1 ? selectedFileIds.value[0] : "",
+    file_ids: selectedFileIds.value,
     range_start: rangeStart,
     range_end: rangeEnd || rangeStart,
     entry_ids: entryIds,
@@ -329,12 +412,21 @@ watch(
 watch(
   () => form.file_ids,
   () => {
-    form.file_id = form.file_ids.length === 1 ? form.file_ids[0] : "";
+    form.file_id = selectedFileIds.value.length === 1 ? selectedFileIds.value[0] : "";
     if (props.open && !isInitializingForm.value) {
-      void refreshFilesEntrySummary(true);
+      setFullSelectedRange();
     }
   },
   { deep: true },
+);
+
+watch(
+  () => [form.type, form.proofread_round],
+  () => {
+    if (props.open && !isInitializingForm.value) {
+      void refreshFilesEntrySummary();
+    }
+  },
 );
 </script>
 
@@ -386,12 +478,52 @@ watch(
               <span>文件</span>
               <small>{{ selectedFilesLabel }}</small>
             </legend>
-            <div class="file-options">
-              <label v-for="file in project.files" :key="file.id" class="file-option">
-                <input v-model="form.file_ids" type="checkbox" :value="file.id" />
-                <span>{{ file.name }}</span>
+            <div class="file-tools">
+              <input
+                v-model="fileSearch"
+                type="search"
+                placeholder="搜索文件名"
+                aria-label="搜索文件名"
+              />
+              <label class="incomplete-filter">
+                <input v-model="showIncompleteOnly" type="checkbox" />
+                <span>只看未完成</span>
               </label>
             </div>
+            <div class="file-options">
+              <label v-for="file in visibleFiles" :key="file.id" class="file-option">
+                <input v-model="form.file_ids" type="checkbox" :value="file.id" />
+                <span class="file-option-content">
+                  <span class="file-name">{{ file.name }}</span>
+                  <small>{{ getFileProgressLabel(fileProgressById.get(file.id)) }}</small>
+                  <span
+                    v-if="fileProgressById.get(file.id)?.progressAvailable"
+                    class="file-progress-track"
+                    aria-hidden="true"
+                  >
+                    <span
+                      :style="{
+                        width: `${fileProgressById.get(file.id)?.progressPercent ?? 0}%`,
+                      }"
+                    ></span>
+                  </span>
+                </span>
+              </label>
+              <p v-if="visibleFiles.length === 0" class="empty-file-result">
+                没有符合条件的文件
+              </p>
+            </div>
+            <small
+              v-if="
+                form.file_ids.length === 0 &&
+                explicitEntryIds.length === 0 &&
+                form.type !== 'term' &&
+                form.type !== 'custom'
+              "
+              class="file-scope-hint"
+            >
+              请选择至少一个文件，或在下方指定词条编号。
+            </small>
           </fieldset>
 
           <label v-if="mode === 'edit'">
@@ -600,12 +732,41 @@ label span {
   white-space: nowrap;
 }
 
+.file-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.file-tools input[type="search"] {
+  height: 34px;
+  min-height: 34px;
+}
+
+.incomplete-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid #ccd4df;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.incomplete-filter input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+
 .file-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: start;
-  gap: 2px 12px;
-  height: 132px;
+  gap: 4px 12px;
+  height: 220px;
   padding: 8px 10px;
   overflow: auto;
   border: 1px solid #c8d0dc;
@@ -618,7 +779,8 @@ label span {
   grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
-  min-height: 30px;
+  min-height: 52px;
+  padding: 3px 0;
 }
 
 .file-option input {
@@ -628,12 +790,56 @@ label span {
   margin: 0;
 }
 
-.file-option span {
+.file-option-content {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.file-option .file-name {
   overflow: hidden;
   color: #172033;
   font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-option-content small {
+  overflow: hidden;
+  color: #667085;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-option .file-progress-track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8edf2;
+}
+
+.file-option .file-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2f6f73;
+}
+
+.empty-file-result {
+  grid-column: 1 / -1;
+  margin: 12px 0;
+  color: #667085;
+  font-size: 13px;
+  text-align: center;
+}
+
+.file-scope-hint {
+  display: block;
+  margin-top: 5px;
+  color: #8a4b08;
+  font-size: 12px;
 }
 
 .wide-field {
@@ -734,6 +940,14 @@ textarea {
 
   .file-options {
     grid-template-columns: 1fr;
+  }
+
+  .file-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .incomplete-filter {
+    justify-self: start;
   }
 }
 </style>

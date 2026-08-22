@@ -269,6 +269,31 @@ describe("task storage integrity", () => {
       range_start: 1,
       range_end: 3,
     };
+
+    await expect(
+      getTaskFilesEntrySummary(["file-1"], "proofread", {
+        enable_tasks: true,
+        enable_proofread: true,
+        enable_review: true,
+        proofread_required: 2,
+        review_required: true,
+        allow_self_proofread: false,
+        allow_self_review: false,
+        allow_same_user_multi_proofread: false,
+      }),
+    ).resolves.toMatchObject({
+      fileCount: 1,
+      totalEntries: 3,
+      files: [
+        {
+          fileId: "file-1",
+          totalEntries: 3,
+          progressAvailable: true,
+          completedEntries: 1,
+          progressPercent: 33,
+        },
+      ],
+    });
     const translateTask = await createTask(
       {
         ...baseDraft,

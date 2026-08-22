@@ -23,6 +23,7 @@ import {
   calculateEntryProgress,
   calculateTaskTypeProgress,
   type ProgressWeights,
+  type TaskTypeProgress,
 } from "./stats";
 import {
   canAssignTask,
@@ -71,7 +72,12 @@ export interface TaskFileEntryBounds {
 export interface TaskFilesEntrySummary {
   fileCount: number;
   totalEntries: number;
-  files: TaskFileEntryBounds[];
+  files: TaskFileEntryProgress[];
+}
+
+export interface TaskFileEntryProgress
+  extends TaskFileEntryBounds,
+    TaskTypeProgress {
 }
 
 export interface TaskOpenTarget {
@@ -544,12 +550,32 @@ export async function getTaskFileEntryBounds(
 
 export async function getTaskFilesEntrySummary(
   fileIds: string[],
+  taskType?: TaskType,
+  workflow?: ProjectConfig["settings"]["workflow"],
 ): Promise<TaskFilesEntrySummary> {
   const uniqueFileIds = Array.from(
     new Set(fileIds.map((fileId) => fileId.trim()).filter(Boolean)),
   );
   const files = await Promise.all(
-    uniqueFileIds.map((fileId) => getTaskFileEntryBounds(fileId)),
+    uniqueFileIds.map(async (fileId) => {
+      const entries = await loadEntriesForFile(fileId);
+      const indexes = entries.map((entry) => entry.index);
+      const progress = taskType
+        ? calculateTaskTypeProgress(entries, taskType, workflow)
+        : {
+            progressAvailable: false,
+            completedEntries: 0,
+            progressPercent: 0,
+          };
+
+      return {
+        fileId,
+        totalEntries: entries.length,
+        firstIndex: indexes.length > 0 ? Math.min(...indexes) : 0,
+        lastIndex: indexes.length > 0 ? Math.max(...indexes) : 0,
+        ...progress,
+      };
+    }),
   );
 
   return {
