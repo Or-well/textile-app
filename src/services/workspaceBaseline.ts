@@ -18,6 +18,8 @@ export interface WorkspaceSnapshot {
   project_id: string;
   revision: string;
   captured_at: string;
+  /** 负责人权威快照的发布时间；旧基线缺失时由 project.updated_at 兼容。 */
+  authority_updated_at?: string;
   entries: Record<string, Entry[]>;
   comments: Record<string, Comment[]>;
   terms: Term[];

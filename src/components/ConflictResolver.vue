@@ -5,7 +5,9 @@ import type {
   ConflictResolution,
   ConflictResolutionAction,
 } from "../services/changes";
-import type { Comment, Entry, Task, Term } from "../model/types";
+import type { Comment, Entry, Member, ProjectFile, Task, Term } from "../model/types";
+import { getEntryDisplayName, getFileDisplayName } from "../model/displayNames";
+import { getMemberDisplayName } from "../model/memberOptions";
 import {
   hasVisibleText,
   hasWorkflowTarget,
@@ -28,6 +30,8 @@ const props = defineProps<{
   canApply?: boolean;
   disabledReason?: string;
   isProjectUpdate?: boolean;
+  members?: Member[];
+  files?: ProjectFile[];
 }>();
 
 const emit = defineEmits<{
@@ -196,8 +200,19 @@ function formatConflictReasons(conflict: ChangeConflict): string {
     deleted: "删除状态",
   };
   const taskLabels: Record<string, string> = {
+    title: "任务名",
+    description: "说明",
+    type: "任务类型",
+    scope: "任务范围",
+    assignee: "负责人",
     status: "任务状态",
-    details: "任务内容",
+    target: "目标",
+    submit_method: "提交方式",
+    proofread_round: "校对轮次",
+    created_by: "创建人",
+    created_at: "创建时间",
+    due_at: "截止时间",
+    due_time_zone: "截止时区",
   };
   const labels =
     conflict.kind === "entry"
@@ -209,22 +224,28 @@ function formatConflictReasons(conflict: ChangeConflict): string {
           : taskLabels;
 
   return conflict.reasons
-    .map((reason) => labels[reason] ?? reason)
+    .map((reason) => labels[reason] ?? "其他字段")
     .join("、");
 }
 
 function formatConflictTitle(conflict: ChangeConflict): string {
   if (conflict.kind === "entry") {
-    return `词条 ${conflict.entryId}`;
+    return `词条 ${getEntryDisplayName(conflict.mainEntry, props.files)}`;
   }
 
   if (conflict.kind === "comment") {
-    return `批注 ${conflict.commentId}（词条 ${conflict.entryId}）`;
+    const body = conflict.mainComment?.body ?? conflict.packageComment?.body ?? "";
+    const summary = body.trim().replace(/\s+/g, " ").slice(0, 24);
+    return summary ? `批注“${summary}${body.length > 24 ? "…" : ""}”` : "批注";
   }
 
-  return conflict.kind === "term"
-    ? `术语 ${conflict.termId}`
-    : `任务 ${conflict.taskId}`;
+  if (conflict.kind === "term") {
+    const term = conflict.mainTerm ?? conflict.packageTerm ?? conflict.deletion?.term;
+    return term?.source ? `术语 ${term.source}` : "术语";
+  }
+
+  const title = conflict.mainTask.title || conflict.packageTask.title;
+  return title ? `任务 ${title}` : "未命名任务";
 }
 
 function formatTarget(entry: Entry): string {
@@ -253,7 +274,9 @@ function formatCommentResolution(comment: Comment): string {
   }
 
   const parts = [
-    comment.resolved_by ? `解决人：${comment.resolved_by}` : "",
+    comment.resolved_by
+      ? `解决人：${getMemberDisplayName(props.members ?? [], comment.resolved_by)}`
+      : "",
     comment.resolved_at ? `时间：${comment.resolved_at}` : "",
   ].filter(Boolean);
 
@@ -281,13 +304,26 @@ function formatTermMeta(term: Term | undefined): string {
 }
 
 function formatTaskMeta(task: Task): string {
+  const fileIds = task.file_ids?.length
+    ? task.file_ids
+    : task.file_id
+      ? [task.file_id]
+      : [];
   const scope = task.entry_ids.length > 0
     ? `${task.entry_ids.length} 个指定词条`
-    : `${task.file_id || task.file_ids?.join("、") || "未指定文件"}，${task.range_start}-${task.range_end}`;
+    : `${
+        fileIds.length > 0
+          ? fileIds
+              .map((fileId) => getFileDisplayName(props.files ?? [], fileId))
+              .join("、")
+          : "未指定文件"
+      }，${task.range_start}-${task.range_end}`;
 
   return [
     task.description ? `说明：${task.description}` : "",
-    task.assignee ? `负责人：${task.assignee}` : "",
+    task.assignee
+      ? `负责人：${getMemberDisplayName(props.members ?? [], task.assignee)}`
+      : "",
     `范围：${scope}`,
     task.due_at ? `截止：${task.due_at}` : "",
   ].filter(Boolean).join("；");

@@ -60,11 +60,9 @@ const emit = defineEmits<{
   >
     <header class="comment-header">
       <div class="comment-title">
-        <strong :title="props.comment.user_id || undefined">
-          {{ commentAuthorName }}
-        </strong>
+        <strong>{{ commentAuthorName }}</strong>
         <span v-if="props.fileName || props.entry">
-          {{ props.fileName || props.comment.file_id }}
+          {{ props.fileName || "未知文件" }}
           <template v-if="props.entry"> #{{ props.entry.index }}</template>
         </span>
       </div>

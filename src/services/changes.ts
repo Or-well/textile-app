@@ -31,6 +31,7 @@ import { createId } from "../utils/id";
 import { createZip, readZip } from "../utils/zip";
 import { parseJsonl, stringifyJsonl } from "../utils/jsonl";
 import { APP_VERSION } from "../utils/appVersion";
+import { sanitizeFileNamePart } from "../utils/fileNames";
 import type { ZipContent } from "../utils/zip";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import {
@@ -65,6 +66,7 @@ import {
 } from "../model/permissions";
 import {
   assertCan,
+  can,
   canDangerousImportChangePackage,
   canCreateTerm,
   canDeleteTerm,
@@ -120,6 +122,7 @@ export interface ExportedChangePackage {
         baseRevision: string;
         targetRevision: string;
         projectJson: string;
+        exportedAt: string;
         sourceSnapshotHash?: string;
       };
 }
@@ -205,6 +208,8 @@ export interface ChangePackageValidation {
   deletedCommentCount: number;
   changedEntryContextCount: number;
   changedDisputeCount: number;
+  projectUpdateMode?: "fast_forward" | "rebase" | "already_applied";
+  projectUpdateError?: string;
 }
 
 export interface EntryChangeConflict {
@@ -244,8 +249,23 @@ export interface TaskChangeConflict {
   taskId: string;
   mainTask: Task;
   packageTask: Task;
-  reasons: Array<"status" | "details">;
+  reasons: TaskConflictReason[];
 }
+
+export type TaskConflictReason =
+  | "title"
+  | "description"
+  | "type"
+  | "scope"
+  | "assignee"
+  | "status"
+  | "target"
+  | "submit_method"
+  | "proofread_round"
+  | "created_by"
+  | "created_at"
+  | "due_at"
+  | "due_time_zone";
 
 export type ChangeConflict =
   | EntryChangeConflict
@@ -283,6 +303,7 @@ export interface ApplyChangePackageResult {
   importedMembers: number;
   importedProjectSettings: number;
   importedEvents: number;
+  alreadyApplied?: boolean;
 }
 
 export interface ApplyChangePackageOptions {
@@ -824,6 +845,149 @@ function detectOwnerCredentialChange(
   });
 }
 
+function isProjectUpdateTrustTransition(
+  currentProject: ProjectConfig,
+  packageProject: ProjectConfig,
+  currentMembers: Member[],
+  packageMembers: Member[],
+): boolean {
+  const currentOwnerIds = currentMembers
+    .filter((member) => member.roles.includes("owner"))
+    .map((member) => member.id)
+    .sort();
+  const packageOwnerIds = packageMembers
+    .filter((member) => member.roles.includes("owner"))
+    .map((member) => member.id)
+    .sort();
+
+  if (!samePackageValue(currentOwnerIds, packageOwnerIds)) {
+    return true;
+  }
+
+  const ids = new Set([
+    ...currentMembers.map((member) => member.id),
+    ...packageMembers.map((member) => member.id),
+  ]);
+
+  for (const id of ids) {
+    const current = currentMembers.find((member) => member.id === id);
+    const incoming = packageMembers.find((member) => member.id === id);
+    if (
+      !can(
+        current,
+        PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+        currentProject,
+      ) &&
+      !can(
+        incoming,
+        PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+        packageProject,
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      current?.public_key !== incoming?.public_key ||
+      current?.key_id !== incoming?.key_id ||
+      current?.key_revoked_at !== incoming?.key_revoked_at
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function parseTimestamp(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+async function getProjectUpdateRevisionValidation(
+  storage: ProjectStorage,
+  project: ProjectConfig,
+  currentMembers: Member[],
+  changePackage: ReadChangePackage,
+  packageProject: ProjectConfig | null,
+  packageMembers: Member[],
+  signatureStatus: SignatureStatus,
+): Promise<
+  Pick<ChangePackageValidation, "projectUpdateMode" | "projectUpdateError">
+> {
+  const currentRevision = getProjectRevision(project);
+  const baseRevision = changePackage.manifest.base_revision;
+  const targetRevision = changePackage.manifest.target_revision;
+
+  if (!baseRevision) {
+    return { projectUpdateError: "项目更新包缺少来源版本信息，不能导入。" };
+  }
+  if (!targetRevision) {
+    return { projectUpdateError: "项目更新包缺少目标版本信息，不能导入。" };
+  }
+  if (!packageProject) {
+    return { projectUpdateError: "项目更新包缺少 project.json，不能导入。" };
+  }
+  if (getProjectRevision(packageProject) !== targetRevision) {
+    return { projectUpdateError: "项目更新包目标版本与 project.json 不一致，不能导入。" };
+  }
+  if ((packageProject.trust_epoch ?? 0) !== (project.trust_epoch ?? 0)) {
+    return {
+      projectUpdateError:
+        "项目更新包属于不同的项目信任代次，不能通过普通更新跨代接收。请获取负责人重新分发的可信 .hproj 项目备份。",
+    };
+  }
+  if (targetRevision === currentRevision) {
+    return { projectUpdateMode: "already_applied" };
+  }
+  if (baseRevision === currentRevision) {
+    return { projectUpdateMode: "fast_forward" };
+  }
+  if (signatureStatus !== "valid") {
+    return {
+      projectUpdateError:
+        "项目版本不连续时，只能接收当前项目可信发布者签名的完整项目更新包。",
+    };
+  }
+  if (
+    isProjectUpdateTrustTransition(
+      project,
+      packageProject,
+      currentMembers,
+      packageMembers,
+    )
+  ) {
+    return {
+      projectUpdateError:
+        "这个更新包含负责人或发布密钥变更，必须按顺序接收。请先导入此前由负责人发布的更新包。",
+    };
+  }
+
+  const baseline = await readWorkspaceBaseline(storage, project);
+  const currentAuthorityTime = parseTimestamp(
+    baseline?.authority_updated_at ?? project.updated_at,
+  );
+  const incomingAuthorityTime = parseTimestamp(
+    changePackage.manifest.exported_at ?? changePackage.manifest.created_at,
+  );
+
+  if (
+    currentAuthorityTime !== null &&
+    (incomingAuthorityTime === null || incomingAuthorityTime <= currentAuthorityTime)
+  ) {
+    return {
+      projectUpdateError:
+        "这个项目更新早于或不晚于当前已接收的负责人版本，为避免回滚已拒绝导入。",
+    };
+  }
+
+  return { projectUpdateMode: "rebase" };
+}
+
 function detectOwnerRolePromotion(
   currentMembers: Member[],
   packageMembers: Member[],
@@ -900,6 +1064,15 @@ function buildRiskMessages(
 
   if (validation.packageType === "project_update") {
     messages.push("这是负责人发布的项目更新包，会同步项目进度、成员公开信息和合并后的内容，不会覆盖本机密码或私钥。");
+    if (validation.projectUpdateMode === "rebase") {
+      messages.push("当前副本跳过了中间普通更新；Textile 将直接采用最新负责人快照，并保留尚未提交的本地工作。");
+    }
+    if (validation.projectUpdateMode === "already_applied") {
+      messages.push("这个项目更新已经应用，无需重复处理。");
+    }
+    if (validation.projectUpdateError) {
+      messages.push(validation.projectUpdateError);
+    }
   }
 
   if (validation.summary.changed_project_settings > 0) {
@@ -1034,7 +1207,7 @@ async function loadTasksByIds(
     const task = tasks.find((row) => row.id === taskId);
 
     if (!task) {
-      throw new Error(`没有找到要导出的任务：${taskId}。`);
+      throw new Error("没有找到要导出的任务。请刷新任务列表后再试。");
     }
 
     return task;
@@ -1728,27 +1901,37 @@ function collectPublicMemberFilesFromMembers(
 }
 
 function buildFileName(
-  userId: string,
+  submitterName: string,
   packageType: ChangePackageType,
   createdAt: string,
-  taskId?: string,
 ): string {
-  const date = utcDateKey(createdAt).replace(/-/g, "");
+  const timestamp = new Date(createdAt)
+    .toISOString()
+    .replace(/\D/g, "")
+    .slice(0, 17);
 
-  const scope = taskId ? taskId : packageType;
+  const typeLabels: Record<ChangePackageType, string> = {
+    member_changes: "成员修改",
+    user_changes: "成员修改",
+    task_changes: "任务修改",
+    maintenance_changes: "项目维护",
+    project_update: "项目更新",
+    legacy: "修改包",
+  };
+  const safeSubmitterName = sanitizeFileNamePart(submitterName, "成员");
 
-  return `changes-${userId}-${scope}-${date}.zip`;
+  return `Textile-${typeLabels[packageType]}-${safeSubmitterName}-${timestamp}.zip`;
 }
 
 export function getChangePackageSuggestedFileName(
-  userId: string,
+  submitterName: string,
   options: Pick<ExportChangePackageOptions, "mode" | "taskId">,
   createdAt = nowIso(),
 ): string {
   const packageType: ChangePackageType =
     options.mode === "task_changes" ? "member_changes" : options.mode;
 
-  return buildFileName(userId, packageType, createdAt, options.taskId);
+  return buildFileName(submitterName, packageType, createdAt);
 }
 
 function getDirectoryPath(path: string): string {
@@ -1777,6 +1960,65 @@ function flattenEntries(entries: Record<string, Entry[]>): Entry[] {
 
 function samePackageValue(left: unknown, right: unknown): boolean {
   return stableStringify(left ?? null) === stableStringify(right ?? null);
+}
+
+function taskValueForComparison(task: Task): Record<string, unknown> {
+  const { updated_at: _updatedAt, ...value } = task;
+  return {
+    ...value,
+    file_ids: value.file_ids ?? [],
+    due_at: value.due_at ?? "",
+    due_time_zone: value.due_time_zone ?? "",
+  };
+}
+
+function sameTaskValue(left: Task, right: Task): boolean {
+  return samePackageValue(
+    taskValueForComparison(left),
+    taskValueForComparison(right),
+  );
+}
+
+function getTaskConflictReasons(left: Task, right: Task): TaskConflictReason[] {
+  const reasons: TaskConflictReason[] = [];
+  const add = (reason: TaskConflictReason, changed: boolean) => {
+    if (changed) {
+      reasons.push(reason);
+    }
+  };
+
+  add("title", left.title !== right.title);
+  add("description", left.description !== right.description);
+  add("type", left.type !== right.type);
+  add(
+    "scope",
+    !samePackageValue(
+      {
+        file_id: left.file_id,
+        file_ids: left.file_ids ?? [],
+        range_start: left.range_start,
+        range_end: left.range_end,
+        entry_ids: left.entry_ids,
+      },
+      {
+        file_id: right.file_id,
+        file_ids: right.file_ids ?? [],
+        range_start: right.range_start,
+        range_end: right.range_end,
+        entry_ids: right.entry_ids,
+      },
+    ),
+  );
+  add("assignee", left.assignee !== right.assignee);
+  add("status", left.status !== right.status);
+  add("target", left.target !== right.target);
+  add("submit_method", left.submit_method !== right.submit_method);
+  add("proofread_round", left.proofread_round !== right.proofread_round);
+  add("created_by", left.created_by !== right.created_by);
+  add("created_at", left.created_at !== right.created_at);
+  add("due_at", left.due_at !== right.due_at);
+  add("due_time_zone", left.due_time_zone !== right.due_time_zone);
+  return reasons;
 }
 
 function normalizeCollaborationEntry(entry: Entry): Entry {
@@ -2532,7 +2774,7 @@ async function assertOrdinaryPackageComments(
     );
 
     if (packageById.size !== packageComments.length) {
-      throw new Error("普通修改包包含重复批注 ID，不能导入。");
+      throw new Error("普通修改包包含重复批注，不能导入。");
     }
 
     for (const packageComment of packageComments) {
@@ -2547,7 +2789,7 @@ async function assertOrdinaryPackageComments(
           !canSubmitOtherMembersComments
         ) {
           throw new Error(
-            `批注 ${packageComment.id} 的状态修改人不是修改包提交者，不能导入。`,
+          "修改包中有一条批注的状态修改人不是提交者，不能导入。",
           );
         }
       } else if (
@@ -2555,7 +2797,7 @@ async function assertOrdinaryPackageComments(
         !canSubmitOtherMembersComments
       ) {
         throw new Error(
-          `新增批注 ${packageComment.id} 的作者不是修改包提交者，不能导入。`,
+          "修改包中有一条新增批注的作者不是提交者，不能导入。",
         );
       }
 
@@ -2565,7 +2807,7 @@ async function assertOrdinaryPackageComments(
         !packageById.has(packageComment.reply_to)
       ) {
         throw new Error(
-          `批注 ${packageComment.id} 引用的父批注不存在，不能导入。`,
+          "修改包中有一条回复引用了不存在的批注，不能导入。",
         );
       }
     }
@@ -2579,7 +2821,7 @@ async function assertOrdinaryPackageComments(
     const commentId = getCommentIdFromEvent(event);
 
     if (!event.entry_id || !event.file_id || !commentId) {
-      throw new Error("批注删除事件缺少词条、文件或批注 ID，不能导入。");
+      throw new Error("批注删除记录缺少必要的关联信息，不能导入。");
     }
 
     if (
@@ -2776,13 +3018,13 @@ function normalizeImportedTaskDeadline(
 
   if (!dueAt) {
     throw new Error(
-      `任务 ${packageTask.id} 的截止时间未记录明确时区，不能导入。请先在来源项目中确认时区。`,
+      "修改包中有一个任务的截止时间未记录明确时区，不能导入。请先在来源项目中确认时区。",
     );
   }
 
   if (!isValidTimeZone(packageTask.due_time_zone ?? "")) {
     throw new Error(
-      `任务 ${packageTask.id} 的截止时间缺少有效 IANA 时区，不能导入。`,
+      "修改包中有一个任务的截止时间缺少有效时区，不能导入。",
     );
   }
 
@@ -2830,11 +3072,11 @@ function assertChangePackageManifestForImport(
   }
 
   if (!manifest.project_id) {
-    throw new Error("修改包 manifest 缺少 project_id，无法导入。");
+    throw new Error("修改包缺少项目标识，无法导入。");
   }
 
   if (!manifest.user_id) {
-    throw new Error("修改包 manifest 缺少 user_id，无法导入。");
+    throw new Error("修改包缺少提交者信息，无法导入。");
   }
 
   const schemaVersion = getSupportedManifestSchemaVersion(manifest);
@@ -3518,7 +3760,7 @@ export async function exportChangePackage(
       : "";
 
   return {
-    fileName: buildFileName(userId, manifestPackageType, createdAt, options.taskId),
+    fileName: buildFileName(actor.name, manifestPackageType, createdAt),
     blob,
     manifest,
     signature,
@@ -3530,6 +3772,7 @@ export async function exportChangePackage(
               baseRevision,
               targetRevision,
               projectJson: projectUpdateJson,
+              exportedAt: createdAt,
               sourceSnapshotHash,
             }
           : { kind: "none" },
@@ -3578,6 +3821,7 @@ export async function completeChangePackageExport(
   const nextBaseline = await captureWorkspaceSnapshot(storage, project);
   nextBaseline.revision = completion.targetRevision;
   nextBaseline.captured_at = nowIso();
+  nextBaseline.authority_updated_at = completion.exportedAt;
   const writePlan = createProjectWritePlan(storage);
   writePlan.writeText("project.json", completion.projectJson);
   writePlan.writeJson(WORKSPACE_BASELINE_PATH, nextBaseline);
@@ -3868,6 +4112,17 @@ export async function validateChangePackage(
     !projectUpdateSignerAllowed
       ? "invalid"
       : signatureResult.signatureStatus;
+  const projectUpdateRevisionValidation = isProjectUpdate
+    ? await getProjectUpdateRevisionValidation(
+        storage,
+        project,
+        members,
+        changePackage,
+        packageProject,
+        packageMembers,
+        signatureStatus,
+      )
+    : {};
   const normalizedSummary: ChangePackageSummary = {
     ...summary,
     changed_members: Math.max(summary.changed_members, changedMemberRecords),
@@ -3912,6 +4167,7 @@ export async function validateChangePackage(
     canImportNormally:
       packageProjectId === project.project_id &&
       contentIntegrity !== "failed" &&
+      !projectUpdateRevisionValidation.projectUpdateError &&
       (!isProjectUpdate ||
         !requiresSignedPackage ||
         signatureStatus === "valid") &&
@@ -3921,6 +4177,7 @@ export async function validateChangePackage(
     requiresMaintenanceConfirmation,
     requiresOwnerCredentialConfirmation,
     requiresSignedPackage,
+    ...projectUpdateRevisionValidation,
     ...collaborationSummary,
   };
   const validation: ChangePackageValidation = {
@@ -4301,15 +4558,15 @@ function mergeRebasedTask(
   resolutions: ConflictResolution[],
   conflicts: ChangeConflict[],
 ): Task {
-  if (samePackageValue(local, baseline)) {
+  if (sameTaskValue(local, baseline)) {
     return incoming;
   }
 
-  if (samePackageValue(incoming, baseline)) {
+  if (sameTaskValue(incoming, baseline)) {
     return { ...local, entry_ids: [...local.entry_ids], file_ids: local.file_ids ? [...local.file_ids] : undefined };
   }
 
-  if (samePackageValue(incoming, local)) {
+  if (sameTaskValue(incoming, local)) {
     return incoming;
   }
 
@@ -4323,8 +4580,7 @@ function mergeRebasedTask(
       taskId: local.id,
       mainTask: incoming,
       packageTask: local,
-      reasons:
-        incoming.status !== local.status ? ["status"] : ["details"],
+      reasons: getTaskConflictReasons(incoming, local),
     });
     return incoming;
   }
@@ -4448,13 +4704,13 @@ async function prepareProjectUpdateRebase(
 
   for (const change of diff.entries) {
     if (!change.before || !change.after) {
-      throw new Error(`本地词条 ${change.id} 被新增或删除，无法安全接收项目更新。`);
+      throw new Error("本地有词条被新增或删除，无法安全接收项目更新。请先导出修改包备份。");
     }
 
     const incoming = findRowById(entries, change.id);
 
     if (!incoming) {
-      throw new Error(`项目更新删除了本地正在修改的词条 ${change.id}，请先人工处理。`);
+      throw new Error("项目更新删除了本地正在修改的词条，请先导出修改包备份后再处理。");
     }
 
     const merged = mergeRebasedEntry(
@@ -4720,7 +4976,7 @@ async function prepareProjectUpdateRebase(
     if (!change.before && change.after) {
       if (!incoming) {
         upsertRow(tasks, "tasks/tasks.jsonl", change.after);
-      } else if (!samePackageValue(incoming.row, change.after)) {
+      } else if (!sameTaskValue(incoming.row, change.after)) {
         const conflictId = `workspace:task:${change.id}`;
         const resolution = findConflictResolution(resolutions, conflictId);
         if (!resolution) {
@@ -4730,7 +4986,7 @@ async function prepareProjectUpdateRebase(
             taskId: change.id,
             mainTask: incoming.row,
             packageTask: change.after,
-            reasons: ["details"],
+            reasons: getTaskConflictReasons(incoming.row, change.after),
           });
         } else if (resolution.action === "use_package") {
           upsertRow(tasks, "tasks/tasks.jsonl", change.after);
@@ -4744,8 +5000,8 @@ async function prepareProjectUpdateRebase(
       if (!incoming) {
         continue;
       }
-      if (!samePackageValue(incoming.row, change.before)) {
-        throw new Error(`项目更新同时修改了本地已删除的任务 ${change.id}，请先人工处理。`);
+      if (!sameTaskValue(incoming.row, change.before)) {
+        throw new Error("项目更新同时修改了本地已删除的任务，请先人工处理。");
       }
       removeRowById(tasks, change.id);
       preservedChanges += 1;
@@ -4753,7 +5009,7 @@ async function prepareProjectUpdateRebase(
     }
 
     if (change.before && change.after && !incoming) {
-      throw new Error(`项目更新删除了本地正在修改的任务 ${change.id}，请先人工处理。`);
+      throw new Error("项目更新删除了本地正在修改的任务，请先人工处理。");
     }
 
     if (change.before && change.after && incoming) {
@@ -4837,7 +5093,7 @@ function assertOrdinaryChangeBase(
       (changedFromTrusted ??
         (!incoming || !samePackageValue(incoming, trusted)))
     ) {
-      throw new Error(`修改包缺少${label} ${id} 的共同基线，不能自动合并。`);
+      throw new Error(`修改包中的${label}缺少共同基线，不能自动合并。`);
     }
   };
   const localTerms = { "terms/terms.jsonl": localBaseline.terms };
@@ -4941,7 +5197,7 @@ function assertOrdinaryChangeBase(
     const baseTerm = findRowById(base.terms, normalized.term_id)?.row;
     if (!baseTerm) {
       throw new Error(
-        `修改包缺少术语 ${normalized.term_id} 的共同基线，不能自动合并。`,
+        "修改包中的术语删除记录缺少共同基线，不能自动合并。",
       );
     }
     if (!samePackageValue(normalized.term, baseTerm)) {
@@ -4956,6 +5212,16 @@ export async function detectConflicts(
   if (isProjectUpdatePackage(getPackageType(changePackage.manifest))) {
     const storage = getProjectStorage();
     const currentProject = await storage.readJson<ProjectConfig>("project.json");
+    const validation =
+      changePackage.validation ?? await validateChangePackage(changePackage);
+
+    if (validation.projectUpdateError) {
+      throw new Error(validation.projectUpdateError);
+    }
+    if (validation.projectUpdateMode === "already_applied") {
+      return [];
+    }
+
     const nextProject = parseProjectFromPackage(changePackage.projectFiles);
 
     if (!nextProject) {
@@ -4996,7 +5262,7 @@ export async function detectConflicts(
 
     for (const packageEntry of packageEntries) {
       if (packageEntryIds.has(packageEntry.id)) {
-        throw new Error(`修改包包含重复词条 ID：${packageEntry.id}。`);
+        throw new Error("修改包包含重复词条，不能导入。");
       }
 
       packageEntryIds.add(packageEntry.id);
@@ -5004,7 +5270,7 @@ export async function detectConflicts(
 
       if (!mainEntry) {
         throw new Error(
-          `修改包词条 ${packageEntry.id} 在当前项目的 ${path} 中不存在，不能静默跳过。`,
+          "修改包中的词条在当前项目中不存在，不能静默跳过。",
         );
       }
 
@@ -5257,18 +5523,16 @@ function assertProjectUpdateCanApply(
 
   const currentRevision = getProjectRevision(currentProject);
 
-  if (!changePackage.manifest.base_revision) {
-    throw new Error("项目更新包缺少 base_revision，不能导入。");
+  if (validation.projectUpdateError) {
+    throw new Error(validation.projectUpdateError);
   }
 
-  if (changePackage.manifest.base_revision !== currentRevision) {
-    throw new Error(
-      `项目更新包基线不匹配。当前项目版本：${currentRevision}，更新包基线：${changePackage.manifest.base_revision}。`,
-    );
+  if (!changePackage.manifest.base_revision) {
+    throw new Error("项目更新包缺少来源版本信息，不能导入。");
   }
 
   if (!changePackage.manifest.target_revision) {
-    throw new Error("项目更新包缺少 target_revision，不能导入。");
+    throw new Error("项目更新包缺少目标版本信息，不能导入。");
   }
 
   const nextProject = parseProjectFromPackage(changePackage.projectFiles);
@@ -5292,6 +5556,13 @@ function assertProjectUpdateCanApply(
 
   if (getProjectRevision(nextProject) !== changePackage.manifest.target_revision) {
     throw new Error("项目更新包目标版本与 project.json 不一致，不能导入。");
+  }
+
+  if (
+    validation.projectUpdateMode !== "already_applied" &&
+    changePackage.manifest.target_revision === currentRevision
+  ) {
+    throw new Error("项目更新状态校验不一致，请重新选择更新包。");
   }
 
   return nextProject;
@@ -5394,7 +5665,7 @@ async function findCommentPathForDeletion(
   const commentId = getCommentIdFromEvent(event);
 
   if (!event.file_id || !event.entry_id || !commentId) {
-    throw new Error("批注删除事件缺少词条、文件或批注 ID，不能导入。");
+    throw new Error("批注删除记录缺少必要的关联信息，不能导入。");
   }
 
   const directory = `comments/${event.file_id}`;
@@ -5444,6 +5715,24 @@ async function applyProjectUpdatePackage(
   );
 
   await precheckChangePackageImport(changePackage, validation, []);
+  if (validation.projectUpdateMode === "already_applied") {
+    const packageEntries = flattenEntries(changePackage.entries).length;
+    return {
+      packageEntries,
+      appliedEntries: 0,
+      unchangedEntries: packageEntries,
+      keptEntries: 0,
+      importedComments: 0,
+      importedTerms: 0,
+      importedContexts: 0,
+      importedSourceFiles: 0,
+      importedTasks: 0,
+      importedMembers: 0,
+      importedProjectSettings: 0,
+      importedEvents: 0,
+      alreadyApplied: true,
+    };
+  }
   const rebased = await prepareProjectUpdateRebase(
     storage,
     currentProject,
@@ -5582,6 +5871,8 @@ async function applyProjectUpdatePackage(
     project_id: nextProject.project_id,
     revision: getProjectRevision(nextProject),
     captured_at: nowIso(),
+    authority_updated_at:
+      changePackage.manifest.exported_at ?? changePackage.manifest.created_at,
     entries: cloneRowsByPath(changePackage.entries),
     comments: cloneRowsByPath(changePackage.comments),
     terms: Object.values(changePackage.terms).flat(),
@@ -5741,7 +6032,7 @@ export async function applyChangePackage(
 
       if (entryIndex < 0) {
         throw new Error(
-          `修改包词条 ${packageEntry.id} 在当前项目的 ${path} 中不存在，导入已停止。`,
+          "修改包中的词条在当前项目中不存在，导入已停止。",
         );
       }
 

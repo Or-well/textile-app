@@ -25,6 +25,7 @@ import {
   completeChangePackageExport,
   detectConflicts,
   exportChangePackage,
+  getChangePackageSuggestedFileName,
   readChangePackage,
   setChangesProjectStorage,
   type ReadChangePackage,
@@ -276,6 +277,7 @@ function createTermDeletion(
 async function createProjectUpdateFixture(options: {
   requireSignedChangePackages?: boolean;
   sign?: boolean;
+  projectUpdateMembers?: (owner: Member) => Member[];
 } = {}) {
   const baseProject = createProject({
     revision: "base-revision",
@@ -349,6 +351,7 @@ async function createProjectUpdateFixture(options: {
     mode: "project_update",
     sign: options.sign !== false,
     actor: signingOwner,
+    projectUpdateMembers: options.projectUpdateMembers?.(signingOwner),
   });
   const packageBytes = new Uint8Array(await exported.blob.arrayBuffer());
   const changePackage = await readChangePackage(packageBytes as unknown as Blob);
@@ -1283,7 +1286,7 @@ describe("ordinary change-package write plan", () => {
     setChangesProjectStorage(fixture.storage);
 
     await expect(detectConflicts(fixture.changePackage)).rejects.toThrow(
-      "缺少词条 file-1:1 的共同基线",
+      "词条缺少共同基线",
     );
   });
 
@@ -2258,6 +2261,122 @@ describe("project update package write plan", () => {
     });
   });
 
+  it("rebases directly onto a newer signed snapshot when intermediate updates were skipped", async () => {
+    const fixture = await createProjectUpdateFixture();
+    const receiverProject = {
+      ...fixture.receiverProject,
+      revision: "skipped-intermediate-revision",
+      revision_hash: "skipped-intermediate-revision",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    await fixture.receiverStorage.writeJson("project.json", receiverProject);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, receiverProject);
+    const path = "entries/file-1/chunk_0001.jsonl";
+    const [entry] = await fixture.receiverStorage.readJsonl<Entry>(path);
+    await fixture.receiverStorage.writeJsonl(path, [
+      {
+        ...entry!,
+        context: "Unsubmitted local context",
+        updated_at: "2026-02-01T00:00:00.000Z",
+      },
+    ]);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({ appliedEntries: 1 });
+    await expect(
+      fixture.receiverStorage.readJson<ProjectConfig>("project.json"),
+    ).resolves.toMatchObject({
+      revision: fixture.changePackage.manifest.target_revision,
+    });
+    await expect(fixture.receiverStorage.readJsonl<Entry>(path)).resolves.toMatchObject([
+      { target: "Updated", context: "Unsubmitted local context" },
+    ]);
+  });
+
+  it("treats an already applied project update as an idempotent no-op", async () => {
+    const fixture = await createProjectUpdateFixture();
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await applyChangePackage(fixture.changePackage, [], {
+      actor: fixture.receiverOwner,
+    });
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({
+      alreadyApplied: true,
+      appliedEntries: 0,
+      importedTasks: 0,
+    });
+  });
+
+  it("rejects a stale signed snapshot instead of rolling the project back", async () => {
+    const fixture = await createProjectUpdateFixture();
+    const receiverProject = {
+      ...fixture.receiverProject,
+      revision: "newer-local-authority",
+      revision_hash: "newer-local-authority",
+      updated_at: "2099-01-01T00:00:00.000Z",
+    };
+    await fixture.receiverStorage.writeJson("project.json", receiverProject);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, receiverProject);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(detectConflicts(fixture.changePackage)).rejects.toThrow(
+      "为避免回滚已拒绝导入",
+    );
+  });
+
+  it("keeps publisher trust transitions on the strict revision chain", async () => {
+    const fixture = await createProjectUpdateFixture({
+      projectUpdateMembers: (owner) => [
+        {
+          ...owner,
+          public_key: `${owner.public_key}-rotated`,
+          key_id: "rotated-key",
+        },
+      ],
+    });
+    const receiverProject = {
+      ...fixture.receiverProject,
+      revision: "skipped-trust-transition-base",
+      revision_hash: "skipped-trust-transition-base",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    };
+    await fixture.receiverStorage.writeJson("project.json", receiverProject);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, receiverProject);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(detectConflicts(fixture.changePackage)).rejects.toThrow(
+      "必须按顺序接收",
+    );
+  });
+
+  it("uses unique suggested names for multiple exports on the same day", () => {
+    const first = getChangePackageSuggestedFileName(
+      "寿司盒子酱",
+      { mode: "project_update" },
+      "2026-08-22T10:01:51.236Z",
+    );
+    const second = getChangePackageSuggestedFileName(
+      "寿司盒子酱",
+      { mode: "project_update" },
+      "2026-08-22T10:22:25.671Z",
+    );
+
+    expect(first).not.toBe(second);
+    expect(first).toContain("项目更新-寿司盒子酱");
+    expect(first).not.toContain("owner-1");
+    expect(first).toContain("20260822100151236");
+    expect(second).toContain("20260822102225671");
+  });
+
   it("does not publish an update when project content changes after generation", async () => {
     const fixture = await createProjectUpdateFixture({ sign: false });
     const [entry] = await fixture.sourceStorage.readJsonl<Entry>(
@@ -2623,6 +2742,46 @@ describe("project update package write plan", () => {
         due_at: "2026-03-15T00:00:00.000Z",
       },
     ]);
+  });
+
+  it("ignores task audit timestamps when project update task content is equal", async () => {
+    const fixture = await createProjectUpdateFixture({ sign: false });
+    const baseTask: Task = {
+      id: "task-timestamp-only",
+      type: "proofread",
+      title: "共同校对1、2",
+      description: "Same task",
+      file_id: "file-1",
+      file_ids: ["file-1"],
+      range_start: 1,
+      range_end: 1,
+      entry_ids: [],
+      assignee: fixture.receiverOwner.id,
+      status: "submitted",
+      target: "",
+      submit_method: "change_package",
+      proofread_round: 1,
+      created_by: fixture.receiverOwner.id,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      due_at: "2026-03-01T00:00:00.000Z",
+      due_time_zone: "Asia/Tokyo",
+    };
+    fixture.changePackage.tasks = { "tasks/tasks.jsonl": [baseTask] };
+    await fixture.receiverStorage.writeJsonl("tasks/tasks.jsonl", [baseTask]);
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    await fixture.receiverStorage.writeJsonl("tasks/tasks.jsonl", [
+      { ...baseTask, updated_at: "2026-02-01T00:00:00.000Z" },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.receiverStorage);
+
+    await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    await expect(
+      applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.receiverOwner,
+      }),
+    ).resolves.toMatchObject({ importedTasks: 1 });
   });
 
   it("detects a reply added by the update before applying a local comment-tree deletion", async () => {

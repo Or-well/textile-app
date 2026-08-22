@@ -65,8 +65,31 @@ function formatDetailValue(key: string, value: unknown): string {
   return String(value);
 }
 
+const DETAIL_LABELS: Record<string, string> = {
+  file_name: "文件名",
+  source_file_name: "源文件名",
+  before_name: "原文件名",
+  after_name: "新文件名",
+  folder: "文件分组",
+  before_folder: "原分组",
+  after_folder: "新分组",
+  entry_count: "词条数量",
+  source_path: "源文件位置",
+  entries_path: "词条数据位置",
+  before_hidden: "原隐藏状态",
+  after_hidden: "新隐藏状态",
+  before_locked: "原锁定状态",
+  after_locked: "新锁定状态",
+};
+
 function getDetailEntries(detail: Record<string, unknown>) {
-  return Object.entries(detail).filter(([key]) => key !== "file_id");
+  return Object.entries(detail).filter(
+    ([key]) => !key.endsWith("_id") && key !== "id",
+  );
+}
+
+function getDetailLabel(key: string): string {
+  return DETAIL_LABELS[key] ?? "其他信息";
 }
 </script>
 
@@ -109,11 +132,10 @@ function getDetailEntries(detail: Record<string, unknown>) {
           <li v-for="row in rows" :key="row.id">
             <div class="history-main">
               <strong>{{ row.label }}</strong>
-              <small :title="row.userId || undefined">
+              <small>
                 {{ formatCreatedAt(row.createdAt) }} · {{ getMemberName(row.userId) }}
               </small>
             </div>
-            <span v-if="row.entryId" class="entry-chip">{{ row.entryId }}</span>
             <details v-if="getDetailEntries(row.detail).length > 0">
               <summary>详情</summary>
               <dl>
@@ -121,7 +143,7 @@ function getDetailEntries(detail: Record<string, unknown>) {
                   v-for="[key, value] in getDetailEntries(row.detail)"
                   :key="key"
                 >
-                  <dt>{{ key }}</dt>
+                  <dt>{{ getDetailLabel(key) }}</dt>
                   <dd>{{ formatDetailValue(key, value) }}</dd>
                 </div>
               </dl>

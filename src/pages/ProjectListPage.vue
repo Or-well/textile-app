@@ -63,9 +63,6 @@ const previewBadgeClass = computed(() =>
     ? `status-${props.projectFilePreview.importStatus}`
     : "",
 );
-const previewRevisionText = computed(
-  () => props.projectFilePreview?.revision || "未记录",
-);
 const previewUpdatedAtText = computed(() => {
   const updatedAt = props.projectFilePreview?.updatedAt;
 
@@ -234,10 +231,6 @@ watch(
             </section>
 
             <dl class="preview-grid">
-              <div>
-                <dt>项目修订</dt>
-                <dd>{{ previewRevisionText }}</dd>
-              </div>
               <div>
                 <dt>更新时间</dt>
                 <dd>{{ previewUpdatedAtText }}</dd>

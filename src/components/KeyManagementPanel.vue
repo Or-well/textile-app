@@ -138,7 +138,7 @@ function getRoot(): ProjectDirectoryHandle {
 
 function getProjectId(): string {
   if (!props.projectId) {
-    throw new Error("当前项目缺少项目 ID，无法处理公钥登记文件。");
+    throw new Error("当前项目缺少项目标识，无法处理公钥登记文件。");
   }
 
   return props.projectId;
@@ -316,7 +316,7 @@ async function handleRotateProjectUpdateSigningKey() {
       },
       {
         fileName: getChangePackageSuggestedFileName(
-          rotation.previousMember.id,
+          rotation.previousMember.name,
           exportOptions,
           createdAt,
         ),
@@ -551,7 +551,7 @@ async function handleRevokeProjectUpdateSigningKey() {
     let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
     const saved = await saveGeneratedFileFromFactory(
       getChangePackageSuggestedFileName(
-        revocation.previousMember.id,
+        revocation.previousMember.name,
         exportOptions,
         createdAt,
       ),
@@ -750,7 +750,7 @@ async function handleImportPublicKey(event: Event) {
       };
       let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
       const saved = await saveGeneratedFileFromFactory(
-        getChangePackageSuggestedFileName(actor.id, exportOptions, createdAt),
+        getChangePackageSuggestedFileName(actor.name, exportOptions, createdAt),
         async () => {
           exported = await exportChangePackage(actor.id, exportOptions);
 

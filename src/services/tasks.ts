@@ -704,7 +704,7 @@ export async function getTaskOpenTargets(
 
       return {
         fileId,
-        fileName: fileNames.get(fileId) ?? fileId,
+        fileName: fileNames.get(fileId) ?? "已删除文件",
         entryId: firstEntry?.id ?? "",
         entryIndex: firstEntry?.index ?? 0,
         entryCount: sortedEntries.length,

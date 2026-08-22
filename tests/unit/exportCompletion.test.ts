@@ -58,6 +58,7 @@ describe("export completion", () => {
         baseRevision: "revision-1",
         targetRevision: "revision-2",
         projectJson: `${JSON.stringify(nextProject, null, 2)}\n`,
+        exportedAt: "2026-01-01T00:00:00.000Z",
       },
     };
 

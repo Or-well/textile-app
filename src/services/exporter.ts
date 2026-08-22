@@ -14,6 +14,7 @@ import {
 } from "../model/status";
 import { nowIso, utcDateKey } from "../utils/time";
 import { APP_VERSION } from "../utils/appVersion";
+import { sanitizeFileNamePart } from "../utils/fileNames";
 import { createZip, type ZipContent } from "../utils/zip";
 import { exportCsvFile } from "./exporters/csvExporter";
 import { exportJsonFile } from "./exporters/jsonExporter";
@@ -494,10 +495,10 @@ export async function getReleaseExportSummary(
 }
 
 export function getReleaseExportSuggestedFileName(
-  projectId: string,
+  projectName: string,
   exportedAt = nowIso(),
 ): string {
-  return `release-${projectId}-${utcDateKey(exportedAt)}.zip`;
+  return `成品-${sanitizeFileNamePart(projectName, "Textile项目")}-${utcDateKey(exportedAt)}.zip`;
 }
 
 export async function exportProject(
@@ -535,7 +536,7 @@ export async function exportProject(
   };
 
   return {
-    fileName: getReleaseExportSuggestedFileName(config.project_id, exportedAt),
+    fileName: getReleaseExportSuggestedFileName(config.name, exportedAt),
     blob: await generateReleaseZip(data),
     manifest,
     summary: buildSummary(config, allEntries, exportEntries),

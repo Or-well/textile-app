@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { getMemberDisplayName } from "../model/memberOptions";
+import { getFileDisplayName } from "../model/displayNames";
 import { getTaskTypeLabel } from "../model/taskPresentation";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
@@ -29,7 +30,7 @@ function getMemberName(memberId: string): string {
 }
 
 function getFileName(fileId: string): string {
-  return props.files.find((file) => file.id === fileId)?.name || fileId || "未关联文件";
+  return getFileDisplayName(props.files, fileId);
 }
 
 function getTaskFileText(task: Task): string {

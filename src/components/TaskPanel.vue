@@ -4,6 +4,7 @@ import {
   buildMemberOptions,
   getMemberDisplayName,
 } from "../model/memberOptions";
+import { getFileDisplayName } from "../model/displayNames";
 import { getTaskTypeLabel } from "../model/taskPresentation";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
@@ -65,9 +66,8 @@ const assignmentOptions = computed(() =>
 
 const fileName = computed(() => {
   if (props.task?.file_ids?.length) {
-    const names = props.task.file_ids.map(
-      (fileId) =>
-        props.files.find((file) => file.id === fileId)?.name || fileId,
+    const names = props.task.file_ids.map((fileId) =>
+      getFileDisplayName(props.files, fileId),
     );
 
     return names.join("、");
@@ -77,10 +77,7 @@ const fileName = computed(() => {
     return "未关联文件";
   }
 
-  return (
-    props.files.find((file) => file.id === props.task?.file_id)?.name ||
-    props.task.file_id
-  );
+  return getFileDisplayName(props.files, props.task.file_id);
 });
 
 const taskSummary = computed(() => {

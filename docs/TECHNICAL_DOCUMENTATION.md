@@ -443,14 +443,19 @@ const route = computed(() => parseRoute(routePath.value));
 
 `App.vue` 负责把子页面结果合并回当前项目。
 
-### 成员显示名
+### 实体显示名
 
-词条、批注、术语、任务、历史和修改包预览等 UI 不直接把 `user_id`、`created_by`、`updated_by`、`resolved_by`、`translated_by`、`proofread_by`、`reviewed_by` 等底层成员 ID 当用户名显示。展示层统一使用 `model/memberOptions.ts` 的 `getMemberDisplayName()` 或 `buildMemberOptions()`：
+词条、批注、术语、任务、文件、历史和修改包预览等 UI 不直接把内部 ID 当作名称显示。成员展示统一使用 `model/memberOptions.ts` 的 `getMemberDisplayName()` 或 `buildMemberOptions()`；文件和词条展示使用 `model/displayNames.ts`：
 
 - 当前成员显示 `Member.name`。
 - 已禁用成员显示 `成员名（已禁用）`。
 - 普通正文区域找不到成员时显示“已删除成员”或“未知成员”。
-- 筛选项或排查用 `title` 可以保留成员 ID，用于区分多个历史成员。
+- 文件显示 `ProjectFile.name`，引用已经失效时显示“已删除文件”，不回退为 `file_id`。
+- 词条使用文件名和键值或顺序号描述；任务使用标题；术语使用原文；批注使用正文摘要。
+- 错误提示只描述可理解的对象和恢复方法，不拼接内部 ID。诊断所需 ID 保留在项目数据中。
+- 原始 ID 只允许出现在明确折叠的技术详情、密钥编号等确有技术用途的位置；不得通过普通正文或悬浮 `title` 暗中外露。
+
+用户保存的文件名通过 `utils/fileNames.ts` 清理不安全字符。修改包使用成员名、包用途和 UTC 毫秒时间戳；项目备份和成品包使用项目名。`.hproj` 导入目录使用项目名，重名时自动追加 `(2)`、`(3)`，不再拼接 `project_id`。
 
 ### service 模块状态
 
@@ -648,7 +653,7 @@ changes/
 
 - `schema_version`：项目格式版本，当前为 1。读取时缺失 schema 按 v1 兼容处理；高于当前支持版本的 schema 会阻止打开。
 - `project_id`：跨副本和修改包匹配的稳定 ID。
-- `revision`/`revision_hash`：项目更新包的线性基线。
+- `revision`/`revision_hash`：负责人权威快照标识。普通内容更新允许成员跳过中间快照并把本地工作重放到较新的有效签名快照；发布密钥和负责人等信任过渡仍保持严格线性。
 - `trust_epoch`：项目信任代次，可选非负整数，旧项目默认为 0；只有所有可信发布私钥都不可用、必须线下重建信任时递增。
 - `files`：项目文件索引。
 - `chunk_size`：控制新增、更新源文件和导入译文时每个 entries chunk 的最大词条数；旧的单 chunk 项目仍兼容读取。
@@ -1702,6 +1707,8 @@ overall = 三个比例乘归一化权重后相加
 
 项目更新导出成功后，主项目自身的 `project.json` revision 会推进。
 
+普通项目更新是完整权威快照，不是必须逐包应用的增量补丁。成员可以直接接收同一项目、同一信任代次中较新的有效签名快照；Textile 使用成员当前工作区基线计算尚未提交的本地差异，再重放到负责人快照。目标 revision 已经应用时按幂等成功处理，更旧或时间顺序无法证明为更新的快照拒绝回滚。负责人、公钥或可信发布者密钥变化属于信任过渡，仍必须按 base revision 顺序接收。
+
 ## 32. 修改包文件结构
 
 典型结构：
@@ -1771,6 +1778,8 @@ manifest 示例：
 9. 生成 ZIP Blob。
 10. 页面调用 `saveGeneratedFile()` 保存 ZIP。
 11. 只有保存明确成功后，project_update 才推进主项目 revision；普通和任务范围修改包不改变工作区基线。
+
+修改包建议文件名包含 UTC 毫秒时间戳，同一天重复导出不会再使用同一个默认名称。
 
 导出页 UI 不把当前 actor 作为独立只读字段展示；actor 仍来自当前会话、props 或 `getCurrentUser()`，导出时继续由 service 层校验 actor、权限和导出模式。
 
@@ -1855,10 +1864,13 @@ manifest 示例：
 - 内容完整性必须 passed。
 - 签名必须 valid。
 - 签名人当前拥有发布权限。
-- manifest base revision 等于本地 revision。
+- manifest base revision 等于本地 revision 时直接快进；不相等时，普通内容更新必须由当前可信发布者有效签名、属于同一信任代次且发布时间晚于当前权威快照，随后自动重放本地工作。
 - manifest target revision 存在。
 - 包内 project ID 和 target revision 一致。
 - 本地工作区基线可读取；旧项目缺少基线时记录首次登录成员，并在第一次项目更新中按该成员署名保守迁移已有修改。迁移成功后即使用正常精确基线，不再依赖历史署名推断。
+- target revision 已等于本地 revision 时按“已经应用”处理，不重复写入。
+- 负责人、公钥或可信发布密钥变化必须严格匹配 base revision；普通跳跃更新不能绕过信任过渡。
+- 发布时间不晚于当前权威快照的分叉包或旧包拒绝导入，避免静默回滚。
 
 写入顺序：
 
@@ -2682,7 +2694,7 @@ Tauri：
 
 - “请先打开项目”：对应 service root 未设置。
 - 项目恢复失败：IndexedDB 句柄或权限丢失。
-- 项目更新基线不匹配：revision 分叉或漏包。
+- 项目更新被拒绝：检查是否为旧快照、无有效签名、信任过渡漏包或 trust epoch 不同；普通内容快照的 revision 分叉会自动 rebase。
 - 无法签名：当前运行没有加载私钥。
 - 统计不一致：调用方没有传 workflow/weights。
 

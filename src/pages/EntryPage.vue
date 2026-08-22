@@ -549,7 +549,7 @@ onMounted(loadFileEntries);
   <section class="entry-page">
     <ProjectPageHeader
       eyebrow="文件词条"
-      :title="currentFile?.name || fileId"
+      :title="currentFile?.name || '已删除文件'"
       summary="编辑当前文件的译文、状态、批注、术语和上下文。"
     >
       <template #actions>
@@ -591,7 +591,7 @@ onMounted(loadFileEntries);
 
         <EntryEditor
           :entry="selectedEntry"
-          :file-name="currentFile?.name || fileId"
+          :file-name="currentFile?.name || '已删除文件'"
           :is-saving="isSaving"
           :can-go-previous="canGoPrevious"
           :can-go-next="canGoNext"

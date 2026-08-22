@@ -124,7 +124,7 @@ describe("file history", () => {
       userId: "member-2",
     });
     expect(rows[1]).toMatchObject({
-      label: "legacy.file.event",
+      label: "其他文件操作",
     });
   });
 

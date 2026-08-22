@@ -63,7 +63,7 @@ async function assertCurrentProjectSource(
   const sourceProject = await readJson<ProjectConfig>(root, "project.json");
 
   if (sourceProject.project_id !== project.project_id) {
-    throw new Error("当前项目来源中的项目 ID 与正在打开的项目不一致，已阻止继续。");
+    throw new Error("当前项目来源与正在打开的项目不一致，已阻止继续。");
   }
 }
 

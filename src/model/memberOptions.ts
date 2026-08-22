@@ -32,7 +32,7 @@ export function buildMemberOptions(
     knownIds.add(memberId);
     options.push({
       id: memberId,
-      label: `${memberId}（成员已删除）`,
+      label: "已删除成员",
       active: false,
       missing: true,
     });

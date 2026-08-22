@@ -232,6 +232,6 @@ describe("project deletion", () => {
 
     await expect(
       scanProjectDeletion(root, project, "local_record_only"),
-    ).rejects.toThrow("项目 ID 与正在打开的项目不一致");
+    ).rejects.toThrow("项目来源与正在打开的项目不一致");
   });
 });

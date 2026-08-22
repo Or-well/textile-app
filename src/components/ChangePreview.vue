@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { getMemberDisplayName } from "../model/memberOptions";
-import type { Member } from "../model/types";
+import type { Member, Task } from "../model/types";
 import type { ChangePackagePreview } from "../services/changes";
 import { formatDateTime } from "../utils/time";
 
-defineProps<{
+const props = defineProps<{
   preview?: ChangePackagePreview;
   members?: Member[];
+  tasks?: Task[];
   conflictCount: number;
 }>();
 
@@ -24,9 +25,7 @@ function projectMatchText(preview: ChangePackagePreview): string {
 
 function contentIntegrityText(preview: ChangePackagePreview): string {
   if (preview.validation.contentIntegrity === "passed") {
-    return preview.contentHashShort
-      ? `通过：${preview.contentHashShort}`
-      : "通过";
+    return "通过";
   }
 
   if (preview.validation.contentIntegrity === "failed") {
@@ -103,6 +102,16 @@ function submitterText(
 
   return preview.manifest.user_name || "已删除成员";
 }
+
+function taskText(preview: ChangePackagePreview): string {
+  const taskId = preview.manifest.task_id;
+
+  if (!taskId) {
+    return "无";
+  }
+
+  return props.tasks?.find((task) => task.id === taskId)?.title || "已删除任务";
+}
 </script>
 
 <template>
@@ -116,9 +125,7 @@ function submitterText(
       </div>
       <div>
         <dt>提交者</dt>
-        <dd :title="preview.manifest.user_id || undefined">
-          {{ submitterText(preview, members) }}
-        </dd>
+        <dd>{{ submitterText(preview, members) }}</dd>
       </div>
       <div>
         <dt>创建时间</dt>
@@ -126,7 +133,7 @@ function submitterText(
       </div>
       <div>
         <dt>任务</dt>
-        <dd>{{ preview.manifest.task_id || "无" }}</dd>
+        <dd>{{ taskText(preview) }}</dd>
       </div>
       <div>
         <dt>修改词条</dt>

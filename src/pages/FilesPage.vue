@@ -947,7 +947,7 @@ async function handleHistory(fileId: string) {
   const file = currentProject.value.files.find((item) => item.id === fileId);
 
   historyDialogOpen.value = true;
-  historyFileName.value = file?.name ?? fileId;
+  historyFileName.value = file?.name ?? "已删除文件";
   historyRows.value = [];
   historyErrorMessage.value = "";
   isLoadingHistory.value = true;

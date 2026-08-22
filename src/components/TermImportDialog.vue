@@ -98,7 +98,7 @@ function handleSubmit() {
     <article class="dialog" role="dialog" aria-modal="true" aria-label="导入术语">
       <header>
         <h2>导入术语</h2>
-        <p>选择术语文件后，会按 id 或 source 更新已有术语，否则新增。</p>
+        <p>选择术语文件后，会匹配已有记录或相同原文，否则新增。</p>
       </header>
 
       <label class="file-input">

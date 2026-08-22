@@ -34,7 +34,7 @@ describe("member options", () => {
       },
       {
         id: "deleted-1",
-        label: "deleted-1（成员已删除）",
+        label: "已删除成员",
         active: false,
         missing: true,
       },

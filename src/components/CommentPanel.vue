@@ -350,7 +350,7 @@ async function handleDeleteComment(comment: Comment) {
         >
           <template v-if="replyingTo?.id === comment.id" #reply-editor>
             <section class="reply-box" @click.stop>
-              <p :title="replyingTo.user_id">回复 {{ replyingToMemberName }}</p>
+              <p>回复 {{ replyingToMemberName }}</p>
               <CommentEditor
                 v-model="replyText"
                 label="回复"

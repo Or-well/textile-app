@@ -2,6 +2,7 @@ import type { Member, ProjectConfig } from "../model/types";
 import { parseJsonl } from "../utils/jsonl";
 import { createZip, readZipEntries, type ZipContent } from "../utils/zip";
 import { utcDateKey } from "../utils/time";
+import { sanitizeFileNamePart } from "../utils/fileNames";
 import { PERMISSION_ACTIONS } from "../model/permissions";
 import {
   createMemoryProjectDirectory,
@@ -160,11 +161,7 @@ function normalizePackagePath(path: string): string {
 }
 
 export function getProjectPackageSuggestedFileName(project: ProjectConfig): string {
-  const safeProjectId = project.project_id
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const baseName = safeProjectId || "translation-project";
+  const baseName = sanitizeFileNamePart(project.name, "Textile项目");
   const dateText = utcDateKey();
 
   return `${baseName}-${dateText}.hproj`;
@@ -342,10 +339,29 @@ function sanitizeImportFolderName(name: string): string {
 function buildImportFolderName(project: ProjectConfig, fileName: string): string {
   const packageName = fileName.replace(/\.hproj$/i, "");
   const baseName = project.name.trim() || packageName || "Textile项目";
-  const idText = project.project_id.replace(/[^a-zA-Z0-9]+/g, "").slice(-8);
-  const folderName = idText ? `${baseName}-${idText}` : baseName;
+  return sanitizeImportFolderName(baseName);
+}
 
-  return sanitizeImportFolderName(folderName);
+async function resolveUniqueImportFolderName(
+  parentRoot: ProjectDirectoryHandle,
+  preferredName: string,
+): Promise<string> {
+  if (!(await fileExists(parentRoot, preferredName))) {
+    return preferredName;
+  }
+
+  for (let suffix = 2; suffix < 10_000; suffix += 1) {
+    const suffixText = ` (${suffix})`;
+    const baseName = preferredName
+      .slice(0, 80 - suffixText.length)
+      .replace(/[. ]+$/g, "");
+    const candidate = sanitizeImportFolderName(`${baseName}${suffixText}`);
+    if (!(await fileExists(parentRoot, candidate))) {
+      return candidate;
+    }
+  }
+
+  throw new Error("导入位置中已有过多同名项目，请整理后再试。");
 }
 
 function countPackageEntries(files: Record<string, Uint8Array>): number {
@@ -674,13 +690,10 @@ async function importPreparedProjectPackage(
   preview: ProjectPackagePreview,
   parentRoot: ProjectDirectoryHandle,
 ): Promise<ImportedProjectPackage> {
-  const folderName = preview.suggestedFolderName;
-
-  if (await fileExists(parentRoot, folderName)) {
-    throw new Error(
-      `目标位置已存在 ${folderName}，请换一个导入位置或先移动已有文件夹。`,
-    );
-  }
+  const folderName = await resolveUniqueImportFolderName(
+    parentRoot,
+    preview.suggestedFolderName,
+  );
 
   const targetRoot = await parentRoot.getDirectoryHandle(folderName, {
     create: true,

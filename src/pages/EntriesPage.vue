@@ -6,6 +6,7 @@ import {
   buildMemberOptions,
   getMemberDisplayName,
 } from "../model/memberOptions";
+import { getFileDisplayName } from "../model/displayNames";
 import { PERMISSION_ACTIONS } from "../model/permissions";
 import {
   getEntryWorkflowLabel,
@@ -348,7 +349,7 @@ function getMemberName(memberId: string): string {
 }
 
 function getFileName(fileId: string): string {
-  return fileById.value.get(fileId)?.name ?? fileId;
+  return getFileDisplayName(props.project.files, fileId);
 }
 
 function getTaskLabel(task: Task): string {

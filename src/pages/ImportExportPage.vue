@@ -309,6 +309,10 @@ const applyDisabledReason = computed(() => {
     return "修改包不属于当前项目，不能导入。";
   }
 
+  if (validation.projectUpdateError) {
+    return validation.projectUpdateError;
+  }
+
   if (validation.packageType === "project_update" && !canImportProjectUpdate.value) {
     return "当前成员没有接收项目更新包的权限。";
   }
@@ -834,7 +838,7 @@ async function handleExportChanges() {
       };
       let result: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
       const saved = await saveGeneratedFileFromFactory(
-        getChangePackageSuggestedFileName(currentUser.value!.id, exportOptions, createdAt),
+        getChangePackageSuggestedFileName(currentUser.value!.name, exportOptions, createdAt),
         async () => {
           result = await exportChangePackage(currentUser.value!.id, exportOptions);
 
@@ -904,7 +908,7 @@ async function handleExportRelease() {
 
       let result: Awaited<ReturnType<typeof exportProject>> | undefined;
       const saved = await saveGeneratedFileFromFactory(
-        getReleaseExportSuggestedFileName(currentProject.value.project_id, exportedAt),
+        getReleaseExportSuggestedFileName(currentProject.value.name, exportedAt),
         async () => {
           result = await exportProject({
             ...releaseOptionPayload.value,
@@ -1064,15 +1068,17 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
       result.packageEntries > 0 &&
       result.appliedEntries === 0 &&
       result.unchangedEntries === 0;
-    const outcome = appliedNothing
-      ? "未应用任何词条修改"
-      : isPartial
-        ? "部分导入完成"
-        : packageValidation.value?.packageType === "project_update"
-          ? "项目更新完成"
-          : needsDangerousImport.value
-            ? "危险导入完成"
-            : "导入完成";
+    const outcome = result.alreadyApplied
+      ? "项目更新已经应用"
+      : appliedNothing
+        ? "未应用任何词条修改"
+        : isPartial
+          ? "部分导入完成"
+          : packageValidation.value?.packageType === "project_update"
+            ? "项目更新完成"
+            : needsDangerousImport.value
+              ? "危险导入完成"
+              : "导入完成";
 
     message.value = `${outcome}：${detail}`;
   } catch (error) {
@@ -1409,6 +1415,7 @@ watch(
         <ChangePreview
           :preview="packagePreview"
           :members="membersForKeys"
+          :tasks="tasks"
           :conflict-count="conflicts.length"
         />
 
@@ -1460,6 +1467,8 @@ watch(
           :can-apply="canApplySelectedPackage"
           :disabled-reason="applyDisabledReason"
           :is-project-update="packageValidation?.packageType === 'project_update'"
+          :members="localMembers"
+          :files="currentProject?.files"
           @apply="handleApplyPackage"
         />
         </section>

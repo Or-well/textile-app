@@ -241,7 +241,7 @@ describe(".hproj project import", () => {
       controlledRoot,
     );
 
-    expect(imported.folderName).toBe("Imported Project-project1");
+    expect(imported.folderName).toBe("Imported Project");
     await expect(
       imported.root.getFileHandle("project.json"),
     ).resolves.toBeDefined();
@@ -263,9 +263,9 @@ describe(".hproj project import", () => {
     await expect(Array.fromAsync(root.keys())).resolves.toEqual([]);
   });
 
-  it("keeps an existing target directory unchanged", async () => {
+  it("keeps an existing target directory and imports into a numbered folder", async () => {
     const file = await createProjectPackageFile();
-    const folderName = "Imported Project-project1";
+    const folderName = "Imported Project";
     const root = createMemoryProjectDirectory(
       {
         [`${folderName}/keep.txt`]: "keep",
@@ -273,13 +273,15 @@ describe(".hproj project import", () => {
       "imports",
     );
 
-    await expect(
-      importProjectPackageToParentDirectory(file, root),
-    ).rejects.toThrow("目标位置已存在");
+    const imported = await importProjectPackageToParentDirectory(file, root);
     const targetRoot = await root.getDirectoryHandle(folderName);
     const keepFile = await targetRoot.getFileHandle("keep.txt");
 
     await expect((await keepFile.getFile()).text()).resolves.toBe("keep");
+    expect(imported.folderName).toBe("Imported Project (2)");
+    await expect(
+      root.getDirectoryHandle(imported.folderName),
+    ).resolves.toBeDefined();
   });
 
   it("removes the target directory when a package write fails", async () => {
@@ -314,7 +316,7 @@ describe(".hproj project import", () => {
 
   it("reports exact residual paths when cleanup cannot remove a file", async () => {
     const file = await createProjectPackageFile();
-    const folderName = "Imported Project-project1";
+    const folderName = "Imported Project";
     const residualFile = `${folderName}/entries/file-1/chunk_0001.jsonl`;
     const { controlledRoot } = createParentDirectory({
       failWriteAt: 2,

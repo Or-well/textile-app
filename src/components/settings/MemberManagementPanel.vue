@@ -441,7 +441,7 @@ async function handleDeleteMember(): Promise<void> {
 
   const deleted = await runMemberAction(
     () => deleteMember(getRoot(), props.members, getActor(), member.id),
-    "成员账户已永久删除。历史译文、批注、任务和审计记录仍保留原成员 ID。",
+    "成员账户已永久删除。历史译文、批注、任务和审计记录仍保留原成员归属。",
   );
 
   if (deleted) {
@@ -548,7 +548,7 @@ async function handleTransferOwner() {
     let exported: Awaited<ReturnType<typeof exportChangePackage>> | undefined;
     const saved = await saveGeneratedFileFromFactory(
       getChangePackageSuggestedFileName(
-        transfer.previousOwner.id,
+        transfer.previousOwner.name,
         exportOptions,
         createdAt,
       ),

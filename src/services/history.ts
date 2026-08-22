@@ -347,5 +347,5 @@ function getFileHistoryLabel(type: string): string {
     "comment.deleted": "删除批注",
   };
 
-  return labels[type] ?? type;
+  return labels[type] ?? "其他文件操作";
 }

@@ -6,6 +6,7 @@ import {
   buildMemberOptions,
   getMemberDisplayName,
 } from "../model/memberOptions";
+import { getFileDisplayName } from "../model/displayNames";
 import type { Comment, Entry, Member, ProjectConfig } from "../model/types";
 import { loadAllComments } from "../services/comments";
 import { loadAllEntries } from "../services/entries";
@@ -132,7 +133,9 @@ const filterTabs: Array<{ id: CommentFilter; label: string }> = [
 ];
 
 function getFileName(fileId: string): string {
-  return props.project?.files.find((file) => file.id === fileId)?.name || fileId;
+  return getFileDisplayName(props.project?.files ?? [], fileId, {
+    emptyLabel: "未知文件",
+  });
 }
 
 function getMemberName(memberId: string): string {

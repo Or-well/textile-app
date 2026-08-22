@@ -533,7 +533,7 @@ watch(
               当前版本
             </span>
           </div>
-          <span :title="row.event.user_id || undefined">
+          <span>
             {{ getMemberName(row.event.user_id) }}
             {{ row.version?.isInitial ? "修改前" : "" }} ·
             {{ formatEventTime(row.event.created_at) }}
