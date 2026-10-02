@@ -129,6 +129,9 @@ const sectionLabels: Record<ProjectSection, string> = {
 };
 
 const routePath = ref(`${window.location.pathname}${window.location.search}`);
+let historyPosition: number = window.history.state?.textilePosition ?? 0;
+let restoringHistoryPosition = false;
+window.history.replaceState({ ...window.history.state, textilePosition: historyPosition }, "");
 const currentProject = ref<OpenedProject | null>(null);
 const currentUser = ref<Member | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
@@ -249,22 +252,30 @@ function navigate(path: string) {
     return;
   }
 
-  window.history.pushState({}, "", path);
+  historyPosition += 1;
+  window.history.pushState({ textilePosition: historyPosition }, "", path);
   routePath.value = path;
   appErrorMessage.value = "";
   appNoticeMessage.value = "";
 }
 
 function replace(path: string) {
-  window.history.replaceState({}, "", path);
+  window.history.replaceState({ ...window.history.state, textilePosition: historyPosition }, "", path);
   routePath.value = path;
 }
 
 function handlePopState() {
-  if (!canLeaveEntriesEditor()) {
-    window.history.pushState({}, "", routePath.value);
+  if (restoringHistoryPosition) {
+    restoringHistoryPosition = false;
     return;
   }
+  const nextPosition: number = window.history.state?.textilePosition ?? historyPosition - 1;
+  if (!canLeaveEntriesEditor()) {
+    restoringHistoryPosition = true;
+    window.history.go(historyPosition - nextPosition);
+    return;
+  }
+  historyPosition = nextPosition;
   routePath.value = `${window.location.pathname}${window.location.search}`;
 }
 

@@ -237,10 +237,13 @@ async function handleRestoreVersion(version: HistoryVersion): Promise<void> {
   }
 
   const targetPreview = version.target || "空译文";
+  const draftWarning = props.draftTarget !== undefined && props.draftTarget !== props.entry.target
+    ? "当前未保存的译文会被替换。"
+    : "";
 
   if (
     !window.confirm(
-      `确认恢复此历史译文吗？恢复后需要重新校对和审核。\n\n${targetPreview}`,
+      `确认恢复此历史译文吗？${draftWarning}恢复后需要重新校对和审核。\n\n${targetPreview}`,
     )
   ) {
     return;

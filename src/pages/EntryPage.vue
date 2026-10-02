@@ -391,7 +391,14 @@ function replaceEntry(savedEntry: Entry) {
   scopeSnapshot.value = scopeSnapshot.value.map((entry) =>
     entry.id === savedEntry.id ? savedEntry : entry,
   );
-  setSelectedEntry(savedEntry, { ensurePage: false, remember: false });
+  if (selectedEntry.value?.id === savedEntry.id) {
+    const previousDraft = draftTarget.value;
+    const preserveDraft = selectedEntry.value.target === savedEntry.target;
+    setSelectedEntry(savedEntry, { ensurePage: false, remember: false });
+    if (preserveDraft) {
+      draftTarget.value = previousDraft;
+    }
+  }
   emit("entryChanged", savedEntry);
 }
 
@@ -787,6 +794,27 @@ onBeforeUnmount(() => {
 
 p {
   margin: 0;
+}
+
+.secondary-button {
+  min-height: var(--control-md);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-brand);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: #285f63;
+  font: inherit;
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: var(--color-brand-soft);
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .entry-count {

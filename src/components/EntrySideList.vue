@@ -115,7 +115,7 @@ watch(
 </script>
 
 <template>
-  <aside class="entry-side-list">
+  <aside class="entry-side-list" :class="{ 'fixed-scope': fixedScope }">
     <div v-if="!fixedScope" class="list-tools">
       <label>
         <span>搜索</span>
@@ -226,6 +226,10 @@ watch(
 </template>
 
 <style scoped>
+.entry-side-list.fixed-scope {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
 .entry-side-list {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;

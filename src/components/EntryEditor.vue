@@ -168,8 +168,10 @@ const proofreadButtonLabel = computed(() =>
 
 watch(
   () => props.entry,
-  (entry) => {
-    target.value = entry?.target ?? "";
+  (entry, previous) => {
+    if (entry?.id !== previous?.id || entry?.target !== previous?.target) {
+      target.value = entry?.target ?? "";
+    }
     copyMessage.value = "";
     emit("draftTargetChanged", target.value);
   },
