@@ -136,6 +136,12 @@ export function setTasksProjectRoot(root: ProjectDirectoryHandle): void {
   setTasksProjectStorage(createProjectStorage(root));
 }
 
+export function clearCachedTasks(storage: ProjectStorage): void {
+  if (currentProjectStorage?.root === storage.root) {
+    cachedTasks = null;
+  }
+}
+
 export function setTasksProjectStorage(storage: ProjectStorage): void {
   currentProjectStorage = storage;
   cachedTasks = null;

@@ -20,7 +20,9 @@ import {
   normalizeEntry,
   type EntryWorkflowOperation,
 } from "../model/status";
-import { cacheEntriesForFile } from "./entries";
+import { cacheEntriesForFile, clearCachedEntries } from "./entries";
+import { clearCachedTasks } from "./tasks";
+import { clearCachedTerms } from "./terms";
 import {
   isValidTimeZone,
   normalizeInstant,
@@ -981,12 +983,13 @@ async function getProjectUpdateRevisionValidation(
   );
 
   if (
-    currentAuthorityTime !== null &&
-    (incomingAuthorityTime === null || incomingAuthorityTime <= currentAuthorityTime)
+    currentAuthorityTime === null ||
+    incomingAuthorityTime === null ||
+    incomingAuthorityTime <= currentAuthorityTime
   ) {
     return {
       projectUpdateError:
-        "这个项目更新早于或不晚于当前已接收的负责人版本，为避免回滚已拒绝导入。",
+        "无法确认这个项目更新晚于当前已接收的负责人版本，为避免回滚已拒绝导入。",
     };
   }
 
@@ -1243,6 +1246,22 @@ function getTaskEntriesFromGroups(
     .filter((entry) => isEntryInTask(entry, task));
 }
 
+function assertProjectEntrySnapshotComplete(
+  project: ProjectConfig,
+  entries: Record<string, Entry[]>,
+): void {
+  for (const file of project.files) {
+    const hasChunks = Object.keys(entries).some(
+      (path) =>
+        path.startsWith(`${file.entries_path}/`) &&
+        /^chunk_.*\.jsonl$/i.test(path.slice(file.entries_path.length + 1)),
+    );
+    if (!hasChunks) {
+      throw new Error(`项目更新快照缺少文件 ${file.id} 的词条分块（${file.entries_path}），无法安全导入或发布。`);
+    }
+  }
+}
+
 async function collectProjectEntryGroups(
   storage: ProjectStorage,
   project: ProjectConfig,
@@ -1345,10 +1364,6 @@ function mergeEntryRecords(
   return merged;
 }
 
-function getPackageEntries(payloadEntries: Record<string, Entry[]>): Entry[] {
-  return Object.values(payloadEntries).flat();
-}
-
 async function collectCommentsByUsers(
   storage: ProjectStorage,
   entries: Entry[],
@@ -1399,7 +1414,7 @@ async function collectTaskScopedChanges(
       ),
     ),
   );
-  const scopeEntries = getPackageEntries(entries);
+  const scopeEntries = tasks.flatMap((task) => getTaskEntriesFromGroups(groups, task));
   const commentUsers = new Set([
     userId,
     ...(options.includeAssignees
@@ -1704,11 +1719,13 @@ async function buildWorkspaceMemberChangePayload(
       )
     : [];
   const selectedTaskChanges = diff.tasks.filter(
-      (change) =>
-        Boolean(change.after) &&
-        (change.after!.assignee === userId || change.after!.created_by === userId) &&
-        (!selectedTaskIds || selectedTaskIds.has(change.id)),
-    );
+    (change) =>
+      Boolean(change.after) &&
+      (change.after!.assignee === userId ||
+        change.after!.created_by === userId ||
+        (options.includeTaskAssignees && selectedTaskIds?.has(change.id))) &&
+      (!selectedTaskIds || selectedTaskIds.has(change.id)),
+  );
   const entries = groupChangedRows(selectedEntryChanges);
   const comments = groupChangedRows(selectedCommentChanges);
   const terms = groupChangedRows(selectedTermChanges);
@@ -1748,7 +1765,7 @@ async function collectAllEvents(storage: ProjectStorage): Promise<ProjectEvent[]
   return loadProjectEventsFromStorage(storage);
 }
 
-async function calculateProjectUpdateSourceSnapshotHash(
+export async function calculateProjectUpdateSourceSnapshotHash(
   storage: ProjectStorage,
   project: ProjectConfig,
 ): Promise<string> {
@@ -3168,6 +3185,16 @@ async function precheckChangePackageImport(
 
   const storage = getProjectStorage();
   const isProjectUpdate = isProjectUpdatePackage(validation.packageType);
+  if (isProjectUpdate) {
+    const projectText = changePackage.projectFiles["project/project.json"];
+    if (!projectText) {
+      throw new Error("项目更新快照缺少项目配置。");
+    }
+    assertProjectEntrySnapshotComplete(
+      JSON.parse(projectText) as ProjectConfig,
+      changePackage.entries,
+    );
+  }
 
   for (const path of Object.keys(changePackage.entries)) {
     assertPackagePath(path, "entries/", "词条", ".jsonl");
@@ -3598,6 +3625,7 @@ export async function exportChangePackage(
     }
 
     payload.entries = await collectAllEntries(storage, project);
+    assertProjectEntrySnapshotComplete(project, payload.entries);
     payload.comments = await collectAllComments(storage);
     payload.terms = await collectAllTerms(storage);
     payload.contexts = await collectTextFiles(storage, "contexts");
@@ -3811,8 +3839,8 @@ export async function completeChangePackageExport(
   nextBaseline.captured_at = nowIso();
   nextBaseline.authority_updated_at = completion.exportedAt;
   const writePlan = createProjectWritePlan(storage);
-  writePlan.writeText("project.json", completion.projectJson);
   writePlan.writeJson(WORKSPACE_BASELINE_PATH, nextBaseline);
+  writePlan.writeText("project.json", completion.projectJson);
   await writePlan.execute({ verifyWrites: true });
   setPermissionProject(nextProject);
   return nextProject;
@@ -4661,9 +4689,11 @@ async function prepareProjectUpdateRebase(
   changePackage: ReadChangePackage,
   resolutions: ConflictResolution[] = [],
 ): Promise<ProjectUpdateRebaseResult> {
-  let baseline =
-    (await readWorkspaceBaseline(storage, currentProject)) ??
-    (await captureWorkspaceSnapshot(storage, currentProject));
+  let baseline = await readWorkspaceBaseline(storage, currentProject);
+
+  if (!baseline) {
+    throw new Error("当前项目缺少匹配的协作基线，无法安全保留本地修改。请先备份项目并恢复对应基线，再接收项目更新。");
+  }
 
   const current = await captureWorkspaceSnapshot(storage, currentProject);
   const currentEvents = await loadProjectEventsFromStorage(storage);
@@ -5848,10 +5878,6 @@ async function applyProjectUpdatePackage(
     ...preservedLocalEvents,
     importEvent,
   ]);
-  writePlan.writeText(
-    "project.json",
-    changePackage.projectFiles["project/project.json"],
-  );
   const incomingBaseline: WorkspaceSnapshot = {
     schema_version: 1,
     project_id: nextProject.project_id,
@@ -5867,8 +5893,15 @@ async function applyProjectUpdatePackage(
     event_ids: [...changePackage.events.map((event) => event.id), importEvent.id],
   };
   writePlan.writeJson(WORKSPACE_BASELINE_PATH, incomingBaseline);
+  writePlan.writeText(
+    "project.json",
+    changePackage.projectFiles["project/project.json"],
+  );
 
   await writePlan.execute();
+  clearCachedEntries(storage);
+  clearCachedTasks(storage);
+  clearCachedTerms(storage);
   setPermissionProject(nextProject);
 
   return result;
@@ -6574,6 +6607,9 @@ export async function applyChangePackage(
   ]);
 
   await writePlan.execute();
+
+  clearCachedTasks(storage);
+  clearCachedTerms(storage);
 
   for (const group of changedEntryGroups) {
     cacheEntriesForFile(group.fileId, group.entries);

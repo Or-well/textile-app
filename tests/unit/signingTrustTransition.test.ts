@@ -21,6 +21,7 @@ import {
   prepareOfflineTrustRebuild,
 } from "../../src/services/signingTrustTransition";
 import { createMember } from "./factories";
+import { readWorkspaceBaseline } from "../../src/services/workspaceBaseline";
 
 function createProject(): ProjectConfig {
   return {
@@ -136,6 +137,9 @@ describe("signing trust transitions", () => {
     );
 
     expect(committed.project.revision).toBe(exported.manifest.target_revision);
+    const baseline = await readWorkspaceBaseline(storage, committed.project);
+    expect(baseline?.revision).toBe(committed.project.revision);
+    expect(baseline?.authority_updated_at).toBe(exported.manifest.exported_at);
     await expect(storage.readJson<{ members: Member[] }>("members.json")).resolves.toMatchObject({
       members: [
         { id: owner.id, roles: ["admin"] },
@@ -182,6 +186,9 @@ describe("signing trust transitions", () => {
     activatePreparedOwnSigningKey(rotation, context.owner);
 
     expect(committed.project.revision).toBe(exported.manifest.target_revision);
+    const baseline = await readWorkspaceBaseline(context.storage, committed.project);
+    expect(baseline?.revision).toBe(committed.project.revision);
+    expect(baseline?.authority_updated_at).toBe(exported.manifest.exported_at);
     expect(committed.archivePath).toContain("changes/transitions/");
     await expect(context.storage.fileExists(committed.archivePath)).resolves.toBe(true);
 
@@ -229,5 +236,21 @@ describe("signing trust transitions", () => {
     expect(committed.trust_epoch).toBe(1);
     const stored = await context.storage.readJson<ProjectConfig>("project.json");
     expect(stored.trust_epoch).toBe(1);
+    expect((await readWorkspaceBaseline(context.storage, stored))?.revision).toBe(stored.revision);
   });
+
+  it("rejects a transition whose source changed after package generation", async () => {
+    const context = await createProjectWithOwner();
+    const rotation = await prepareOwnSigningKeyRotation(context.members, context.owner);
+    const exported = await exportChangePackage(context.owner.id, {
+      mode: "project_update", sign: true, actor: context.owner,
+      projectUpdateMembers: rotation.members, signatureMember: context.owner,
+    });
+    await context.storage.writeText("source/late.txt", "Late local change");
+    await expect(commitSignedTrustTransition(context.root, exported, rotation.members, context.owner, "member.key_rotated", {})).rejects.toThrow("项目内容");
+    expect((await context.storage.readJson<ProjectConfig>("project.json")).revision).toBe(context.project.revision);
+    expect((await context.storage.readJson<{members: Member[]}>("members.json")).members[0]?.key_id).toBe(context.owner.key_id);
+    expect(await context.storage.fileExists("changes/transitions")).toBe(false);
+  });
+
 });

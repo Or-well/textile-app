@@ -76,8 +76,11 @@ function getTaskFileText(task: Task): string {
 <style scoped>
 .task-item {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max-content;
   gap: var(--space-2);
   width: 100%;
+  min-width: 0;
   min-height: 82px;
   padding: var(--space-4);
   border: 1px solid #d8dee8;
@@ -121,6 +124,7 @@ function getTaskFileText(task: Task): string {
   color: #526071;
   font-size: var(--font-sm);
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .progress-track {

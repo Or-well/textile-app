@@ -131,6 +131,12 @@ export function setEntriesProjectRoot(root: ProjectDirectoryHandle): void {
   setEntriesProjectStorage(createProjectStorage(root));
 }
 
+export function clearCachedEntries(storage: ProjectStorage): void {
+  if (currentProjectStorage?.root === storage.root) {
+    resetEntryReadModel();
+  }
+}
+
 export function setEntriesProjectStorage(storage: ProjectStorage): void {
   currentProjectStorage = storage;
   resetEntryReadModel();

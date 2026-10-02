@@ -188,6 +188,10 @@ export async function ensureWorkspaceBaseline(
     return existing;
   }
 
+  if (await storage.fileExists(WORKSPACE_BASELINE_PATH)) {
+    throw new Error("现有协作基线与当前项目版本不匹配，未重建基线。请先备份项目并恢复对应版本的基线。");
+  }
+
   const snapshot = await captureWorkspaceSnapshot(storage, project);
   if (legacyUserId) {
     snapshot.legacy_user_id = legacyUserId;

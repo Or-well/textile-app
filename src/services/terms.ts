@@ -71,6 +71,12 @@ export function setTermsProjectRoot(root: ProjectDirectoryHandle): void {
   setTermsProjectStorage(createProjectStorage(root));
 }
 
+export function clearCachedTerms(storage: ProjectStorage): void {
+  if (currentProjectStorage?.root === storage.root) {
+    cachedTerms = null;
+  }
+}
+
 export function setTermsProjectStorage(storage: ProjectStorage): void {
   currentProjectStorage = storage;
   cachedTerms = null;

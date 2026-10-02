@@ -1051,6 +1051,8 @@ async function handleApplyPackage(resolutions: ConflictResolution[] = []) {
       emit("membersUpdated", members);
     }
 
+    tasks.value = await loadTasks();
+    await refreshReleaseSummary();
     conflicts.value = [];
     const entryDetail = result.packageEntries > 0
       ? `修改包包含 ${result.packageEntries} 条词条，实际应用 ${result.appliedEntries} 条、已一致 ${result.unchangedEntries} 条、保留或跳过 ${result.keptEntries} 条；`

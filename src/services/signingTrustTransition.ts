@@ -7,7 +7,14 @@ import type {
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
 import { readZip } from "../utils/zip";
-import type { ExportedChangePackage } from "./changes";
+import {
+  calculateProjectUpdateSourceSnapshotHash,
+  type ExportedChangePackage,
+} from "./changes";
+import {
+  captureWorkspaceSnapshot,
+  WORKSPACE_BASELINE_PATH,
+} from "./workspaceBaseline";
 import { can, isOwnerMember, setPermissionProject } from "./permissions";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import { createProjectStorage } from "./projectStorage";
@@ -122,6 +129,14 @@ export async function commitProjectUpdateTransition(
     throw new Error("项目版本已变化，可信过渡没有提交。请重新生成过渡包。");
   }
 
+  if (
+    exported.completion.sourceSnapshotHash &&
+    await calculateProjectUpdateSourceSnapshotHash(storage, currentProject) !==
+      exported.completion.sourceSnapshotHash
+  ) {
+    throw new Error("项目内容在过渡包生成后发生了变化，可信过渡没有提交。请重新生成过渡包。");
+  }
+
   const nextProject = JSON.parse(
     exported.completion.projectJson,
   ) as ProjectConfig;
@@ -147,6 +162,12 @@ export async function commitProjectUpdateTransition(
       members,
     });
   await planAppendProjectEvents(plan, storage, [transitionEvent]);
+  const baseline = await captureWorkspaceSnapshot(storage, currentProject);
+  baseline.revision = exported.completion.targetRevision;
+  baseline.captured_at = nowIso();
+  baseline.authority_updated_at = exported.completion.exportedAt;
+  baseline.event_ids.push(transitionEvent.id);
+  plan.writeJson(WORKSPACE_BASELINE_PATH, baseline);
   plan.writeText("project.json", exported.completion.projectJson);
 
   await plan.execute({ verifyWrites: true });
@@ -287,6 +308,12 @@ export async function commitOfflineTrustRebuild(
       members,
     });
   await planAppendProjectEvents(plan, storage, [event]);
+  const baseline = await captureWorkspaceSnapshot(storage, diskProject);
+  baseline.revision = getProjectRevision(nextProject);
+  baseline.captured_at = nowIso();
+  baseline.authority_updated_at = nextProject.updated_at;
+  baseline.event_ids.push(event.id);
+  plan.writeJson(WORKSPACE_BASELINE_PATH, baseline);
   plan.writeJson("project.json", nextProject);
 
   await plan.execute({ verifyWrites: true });

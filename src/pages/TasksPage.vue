@@ -620,6 +620,7 @@ select {
 
 .task-list {
   display: grid;
+  grid-auto-rows: max-content;
   align-content: start;
   gap: var(--space-3);
   max-height: calc(100vh - 186px);
