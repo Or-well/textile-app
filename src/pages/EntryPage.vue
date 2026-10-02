@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import EntryAssistPanel from "../components/EntryAssistPanel.vue";
 import EntryEditor from "../components/EntryEditor.vue";
 import EntrySideList from "../components/EntrySideList.vue";
@@ -34,11 +34,16 @@ const props = defineProps<{
   targetAssistTab?: AssistTab;
   targetCommentId?: string;
   lastViewedEntryId?: string;
+  scopeEntries?: Entry[];
+  scopeLabel?: string;
 }>();
 
 const emit = defineEmits<{
   openCommentTarget: [comment: Comment];
   entryViewed: [fileId: string, entryId: string];
+  entryChanged: [entry: Entry];
+  exitScope: [];
+  editingBusy: [busy: boolean];
 }>();
 
 const entries = ref<Entry[]>([]);
@@ -46,6 +51,7 @@ const selectedEntry = ref<Entry>();
 const searchText = ref("");
 const statusFilter = ref<EntryFilter>("all");
 const assistTab = ref<AssistTab>("terms");
+const highlightedCommentId = ref(props.targetCommentId ?? "");
 const draftTarget = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
@@ -57,9 +63,75 @@ const scrollTargetEntryId = ref("");
 const scrollTargetPosition = ref<EntryScrollPosition>("nearest");
 const scrollRequestId = ref(0);
 
-const currentFile = computed(() =>
-  props.project.files.find((file) => file.id === props.fileId),
+const showingFileContext = ref(false);
+const scopeSnapshot = ref<Entry[]>([]);
+const scopePositionId = ref("");
+const isScopeMode = computed(
+  () => Boolean(props.scopeEntries) && !showingFileContext.value,
 );
+const fileNames = computed(() =>
+  Object.fromEntries(props.project.files.map((file) => [file.id, file.name])),
+);
+
+function canDiscardDraft() {
+  return !isSaving.value && !isLoading.value && (
+    !hasUnsavedTranslation.value ||
+    window.confirm("译文尚未保存，是否放弃修改并切换？")
+  );
+}
+
+async function handleExitScope() {
+  if (canDiscardDraft()) {
+    // 清除草稿后再由 App 导航，避免重复询问。
+    draftTarget.value = selectedEntry.value?.target ?? "";
+    await nextTick();
+    emit("exitScope");
+  }
+}
+
+async function toggleFileContext() {
+  if (!canDiscardDraft() || !selectedEntry.value) {
+    return;
+  }
+  const entry = selectedEntry.value;
+  if (showingFileContext.value) {
+    entries.value = scopeSnapshot.value;
+    showingFileContext.value = false;
+    setSelectedEntry(entries.value.find((row) => row.id === scopePositionId.value), {
+      scrollPosition: "second",
+    });
+    return;
+  }
+  isLoading.value = true;
+  errorMessage.value = "";
+  try {
+    const loaded = await loadEntries(entry.file_id);
+    scopeSnapshot.value = entries.value;
+    scopePositionId.value = entry.id;
+    showingFileContext.value = true;
+    entries.value = loaded;
+    setSelectedEntry(loaded.find((row) => row.id === entry.id), {
+      scrollPosition: "second",
+      remember: false,
+    });
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "文件上下文读取失败。";
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (props.scopeEntries && (hasUnsavedTranslation.value || isSaving.value)) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+}
+
+const currentFile = computed(() => {
+  const fileId = props.scopeEntries ? selectedEntry.value?.file_id : props.fileId;
+  return props.project.files.find((file) => file.id === fileId);
+});
 const selectedEffectiveEntry = computed(() =>
   selectedEntry.value
     ? {
@@ -73,6 +145,9 @@ const selectedEffectiveEntry = computed(() =>
 );
 
 const filteredEntries = computed(() => {
+  if (props.scopeEntries) {
+    return entries.value;
+  }
   const keyword = searchText.value.trim().toLowerCase();
 
   return entries.value.filter((entry) => {
@@ -212,8 +287,8 @@ function requestEntryScroll(
 }
 
 function rememberViewedEntry(entry: Entry | undefined) {
-  if (entry) {
-    emit("entryViewed", props.fileId, entry.id);
+  if (entry && !showingFileContext.value) {
+    emit("entryViewed", entry.file_id, entry.id);
   }
 }
 
@@ -277,7 +352,9 @@ async function loadFileEntries() {
   currentEntryPage.value = 1;
 
   try {
-    const loadedEntries = await loadEntries(props.fileId);
+    const loadedEntries = props.scopeEntries
+      ? [...props.scopeEntries]
+      : await loadEntries(props.fileId);
     entries.value = loadedEntries;
     setSelectedEntry(getInitialEntry(entries.value), {
       scrollPosition: "second",
@@ -300,6 +377,9 @@ function handleSelectEntry(
   entry: Entry,
   scrollPosition?: EntryScrollPosition,
 ) {
+  if (entry.id === selectedEntry.value?.id || !canDiscardDraft()) {
+    return;
+  }
   setSelectedEntry(entry, { scrollPosition });
   savedMessage.value = "";
 }
@@ -308,7 +388,11 @@ function replaceEntry(savedEntry: Entry) {
   entries.value = entries.value.map((entry) =>
     entry.id === savedEntry.id ? savedEntry : entry,
   );
+  scopeSnapshot.value = scopeSnapshot.value.map((entry) =>
+    entry.id === savedEntry.id ? savedEntry : entry,
+  );
   setSelectedEntry(savedEntry, { ensurePage: false, remember: false });
+  emit("entryChanged", savedEntry);
 }
 
 function selectEntryByOffset(offset: -1 | 1) {
@@ -354,7 +438,7 @@ async function handleWorkflowStatus(entry: Entry, requestedStatus: EntryStatus) 
     replaceEntry(savedEntry);
 
     if (requestedStatus === "proofread" && nextEntry) {
-      handleSelectEntry(nextEntry, "nearest");
+      setSelectedEntry(nextEntry, { scrollPosition: "nearest" });
     }
 
     savedMessage.value = "词条状态已更新。";
@@ -374,7 +458,13 @@ async function handleMarkDisputed(entry: Entry) {
   savedMessage.value = "";
 
   try {
-    const updatedEntry = await markDisputed(entry, "");
+    const savedEntry = props.scopeEntries && entry.target !== selectedEntry.value?.target
+      ? await saveEntry(entry, getSaveEntryOptions())
+      : entry;
+    if (savedEntry !== entry) {
+      replaceEntry(savedEntry);
+    }
+    const updatedEntry = await markDisputed(savedEntry, "");
 
     replaceEntry(updatedEntry);
     savedMessage.value = "已标记为争议。";
@@ -386,16 +476,31 @@ async function handleMarkDisputed(entry: Entry) {
   }
 }
 
-async function handleResolveDispute(entry: Entry) {
+async function handleResolveDispute(entry: Entry, advance = false) {
   isSaving.value = true;
   errorMessage.value = "";
   savedMessage.value = "";
 
   try {
-    const updatedEntry = await resolveDispute(entry, "");
+    const nextEntry = advance
+      ? filteredEntries.value[selectedIndex.value + 1]
+      : undefined;
+    // 争议操作不会保存编辑器草稿，必须先通过正常保存服务提交译文。
+    const savedEntry = entry.target !== selectedEntry.value?.target
+      ? await saveEntry(entry, getSaveEntryOptions())
+      : entry;
+    if (savedEntry !== entry) {
+      replaceEntry(savedEntry);
+    }
+    const updatedEntry = await resolveDispute(savedEntry, "");
 
     replaceEntry(updatedEntry);
-    savedMessage.value = "争议已解决。";
+    if (nextEntry) {
+      setSelectedEntry(nextEntry, { scrollPosition: "nearest" });
+    }
+    savedMessage.value = advance && !nextEntry
+      ? "争议已解决，已到本次结果末尾。"
+      : "争议已解决。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "解决争议失败。请稍后再试。";
@@ -456,10 +561,12 @@ async function handleSaveAndNext(entry: Entry) {
     replaceEntry(savedEntry);
 
     if (nextEntry) {
-      handleSelectEntry(nextEntry, "nearest");
+      setSelectedEntry(nextEntry, { scrollPosition: "nearest" });
     }
 
-    savedMessage.value = "已保存译文。";
+    savedMessage.value = props.scopeEntries && !nextEntry
+      ? "已保存译文，已到本次结果末尾。"
+      : "已保存译文。";
   } catch (error) {
     errorMessage.value =
       error instanceof Error
@@ -473,6 +580,21 @@ async function handleSaveAndNext(entry: Entry) {
 function handleEntryUpdated(entry: Entry) {
   replaceEntry(entry);
   savedMessage.value = "词条状态已更新。";
+}
+
+function handleViewEntryComment(comment: Comment) {
+  if (!props.scopeEntries) {
+    emit("openCommentTarget", comment);
+    return;
+  }
+  const entry = entries.value.find((row) => row.id === comment.entry_id);
+  if (entry && (entry.id === selectedEntry.value?.id || canDiscardDraft())) {
+    if (entry.id !== selectedEntry.value?.id) {
+      setSelectedEntry(entry, { scrollPosition: "second" });
+    }
+    assistTab.value = "comments";
+    highlightedCommentId.value = comment.id;
+  }
 }
 
 function handleOpenContext() {
@@ -491,7 +613,7 @@ watch(
   () => {
     const requestedEntry = getRequestedEntry(entries.value);
 
-    if (requestedEntry) {
+    if (requestedEntry && requestedEntry.id !== selectedEntry.value?.id && !showingFileContext.value) {
       setSelectedEntry(requestedEntry, { scrollPosition: "second" });
     }
   },
@@ -520,6 +642,7 @@ watch(
     if (props.targetAssistTab) {
       assistTab.value = props.targetAssistTab;
     }
+    highlightedCommentId.value = props.targetCommentId ?? "";
   },
   { immediate: true },
 );
@@ -542,18 +665,40 @@ watch(totalEntryPages, () => {
   );
 });
 
-onMounted(loadFileEntries);
+onMounted(() => {
+  void loadFileEntries();
+  window.addEventListener("beforeunload", handleBeforeUnload);
+});
+watch(isSaving, (busy) => emit("editingBusy", busy), { flush: "sync" });
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", handleBeforeUnload);
+  emit("editingBusy", false);
+});
 </script>
 
 <template>
   <section class="entry-page">
     <ProjectPageHeader
-      eyebrow="文件词条"
-      :title="currentFile?.name || '已删除文件'"
-      summary="编辑当前文件的译文、状态、批注、术语和上下文。"
+      :eyebrow="scopeEntries ? (isScopeMode ? '连续编辑' : '文件上下文') : '文件词条'"
+      :title="isScopeMode ? (scopeLabel || '筛选结果') : (currentFile?.name || '已删除文件')"
+      :summary="scopeEntries ? '本次范围和顺序保持不变，状态变化后仍可回看；返回列表可重新筛选。' : '编辑当前文件的译文、状态、批注、术语和上下文。'"
     >
       <template #actions>
-        <p class="entry-count">{{ entryCountLabel }}</p>
+        <button
+          v-if="scopeEntries"
+          type="button"
+          class="secondary-button"
+          :disabled="isSaving || isLoading"
+          @click="handleExitScope"
+        >返回结果列表</button>
+        <button
+          v-if="scopeEntries"
+          type="button"
+          class="secondary-button"
+          :disabled="isSaving || isLoading || !selectedEntry"
+          @click="toggleFileContext"
+        >{{ showingFileContext ? '返回本次结果' : '查看文件上下文' }}</button>
+        <p class="entry-count">{{ scopeEntries ? `第 ${selectedIndex + 1} / ${entries.length} 条` : entryCountLabel }}</p>
       </template>
     </ProjectPageHeader>
 
@@ -565,6 +710,8 @@ onMounted(loadFileEntries);
       <section v-else-if="entries.length > 0" class="entry-workspace">
         <EntrySideList
           :entries="pagedEntries"
+          :file-names="isScopeMode ? fileNames : undefined"
+          :fixed-scope="Boolean(scopeEntries)"
           :selected-entry-id="selectedEntry?.id"
           :search-text="searchText"
           :status-filter="statusFilter"
@@ -606,6 +753,8 @@ onMounted(loadFileEntries);
           @workflow-status="handleWorkflowStatus"
           @mark-disputed="handleMarkDisputed"
           @resolve-dispute="handleResolveDispute"
+          :show-resolve-next="isScopeMode"
+          @resolve-dispute-next="handleResolveDispute($event, true)"
           @toggle-locked="handleToggleEntryLocked"
           @toggle-hidden="handleToggleEntryHidden"
           @open-context="handleOpenContext"
@@ -616,10 +765,10 @@ onMounted(loadFileEntries);
           :members="members ?? []"
           :draft-target="draftTarget"
           :active-tab="assistTab"
-          :highlight-comment-id="targetCommentId"
+          :highlight-comment-id="highlightedCommentId"
           @entry-updated="handleEntryUpdated"
           @update-active-tab="assistTab = $event"
-          @view-entry-comment="emit('openCommentTarget', $event)"
+          @view-entry-comment="handleViewEntryComment"
         />
       </section>
 

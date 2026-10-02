@@ -20,7 +20,11 @@ import {
 } from "./projectStorage";
 import { appendEvent } from "./history";
 import { assertEntryContentWritable } from "./entryAccess";
-import { updateSharedCachedEntry } from "./entries";
+import {
+  loadChunkContainingEntry,
+  loadSharedEntriesForFile,
+  updateSharedCachedEntry,
+} from "./entries";
 
 let currentProjectStorage: ProjectStorage | null = null;
 
@@ -101,15 +105,15 @@ async function loadEntryChunk(fileId: string): Promise<{
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
 
-  return Promise.all(
-    chunkFiles.map(async (fileName) => {
+  return mapWithConcurrency(
+    chunkFiles, 4, async (fileName) => {
       const path = `${entryDirectory}/${fileName}`;
 
       return {
         path,
         entries: normalizeEntries(await storage.readJsonl<Entry>(path)),
       };
-    }),
+    },
   );
 }
 
@@ -119,14 +123,10 @@ async function updateEntry(
   userId: string,
 ): Promise<Entry> {
   const storage = getProjectStorage();
-  const chunks = await loadEntryChunk(entry.file_id);
+  const chunk = await loadChunkContainingEntry(storage, entry.file_id, entry.id);
 
-  for (const chunk of chunks) {
-    const entryIndex = chunk.entries.findIndex((row) => row.id === entry.id);
-
-    if (entryIndex < 0) {
-      continue;
-    }
+  if (chunk) {
+    const entryIndex = chunk.entryIndex;
 
     const originalEntry = normalizeEntry(chunk.entries[entryIndex]);
 
@@ -140,7 +140,7 @@ async function updateEntry(
     };
 
     chunk.entries[entryIndex] = updatedEntry;
-    await storage.writeJsonl(chunk.path, chunk.entries);
+    await storage.writeJsonl(chunk.chunkPath, chunk.entries);
     updateSharedCachedEntry(updatedEntry, storage);
 
     return updatedEntry;
@@ -150,13 +150,18 @@ async function updateEntry(
 }
 
 async function loadEntriesForAllFiles(): Promise<Entry[]> {
-  const fileIds = await getProjectStorage().listFiles("entries");
-  const groups = await Promise.all(
-    fileIds.map(async (fileId) => {
+  const storage = getProjectStorage();
+  const fileIds = await storage.listFiles("entries");
+  const groups = await mapWithConcurrency(
+    fileIds, 8, async (fileId) => {
+      const shared = await loadSharedEntriesForFile(fileId, storage);
+      if (shared) {
+        return shared;
+      }
       const chunks = await loadEntryChunk(fileId);
 
       return chunks.flatMap((chunk) => chunk.entries);
-    }),
+    },
   );
 
   return groups

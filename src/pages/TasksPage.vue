@@ -545,6 +545,7 @@ h2 {
 
 .tasks-layout {
   display: grid;
+  align-items: start;
   grid-template-columns: 220px minmax(320px, 1fr) minmax(400px, 430px);
   gap: var(--page-gap);
   min-height: 0;
@@ -619,12 +620,13 @@ select {
 }
 
 .task-list {
-  display: grid;
-  grid-auto-rows: max-content;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-3);
   max-height: calc(100vh - 186px);
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding-right: 2px;
 }
 
@@ -692,6 +694,7 @@ select {
 
 .target-dialog {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: var(--space-4);
   width: min(520px, 100%);
   max-height: min(640px, calc(100vh - 32px));
@@ -739,13 +742,17 @@ select {
 }
 
 .target-options {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .target-option {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
@@ -765,10 +772,8 @@ select {
 }
 
 .target-option span {
-  overflow: hidden;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .target-option small {

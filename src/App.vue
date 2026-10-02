@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { getActiveAppDrafts } from "./services/appDraft";
+import { getActiveAppOperations } from "./services/appOperation";
 import ProjectLayout from "./components/ProjectLayout.vue";
 import UpdateNotice from "./components/UpdateNotice.vue";
 import CommentsPage from "./pages/CommentsPage.vue";
@@ -132,6 +134,7 @@ const currentUser = ref<Member | null>(null);
 const currentStats = ref<BasicProjectStats | null>(null);
 const currentRecentRecordId = ref("");
 const taskCount = ref(0);
+const entriesEditorBusy = ref(false);
 const lastViewedFileId = ref("");
 const lastViewedEntryByFileId = ref<Record<string, string>>({});
 const pendingProjectPathAfterLogin = ref("");
@@ -213,6 +216,7 @@ function parseRoute(path: string) {
     assistTab,
     importExportPanel,
     entriesFileId,
+    editingEntries: section === "entries" && query.get("edit") === "1",
     commentId: query.get("comment") ?? "",
   };
 }
@@ -224,8 +228,24 @@ function getExplicitProjectPath(path: string): string | undefined {
   return parts.length >= 3 ? path : undefined;
 }
 
+function canLeaveEntriesEditor() {
+  if (route.value.page !== "project" || !route.value.editingEntries) {
+    return true;
+  }
+  if (entriesEditorBusy.value || getActiveAppOperations().length > 0) {
+    appNoticeMessage.value = "请等待当前操作完成后再离开。";
+    return false;
+  }
+  return getActiveAppDrafts().length === 0 ||
+    window.confirm("译文尚未保存，是否放弃修改并离开？");
+}
+
 function navigate(path: string) {
   if (path === routePath.value) {
+    return;
+  }
+
+  if (!canLeaveEntriesEditor()) {
     return;
   }
 
@@ -241,6 +261,10 @@ function replace(path: string) {
 }
 
 function handlePopState() {
+  if (!canLeaveEntriesEditor()) {
+    window.history.pushState({}, "", routePath.value);
+    return;
+  }
   routePath.value = `${window.location.pathname}${window.location.search}`;
 }
 
@@ -979,6 +1003,27 @@ function handleOpenEntries(fileId = "") {
   );
 }
 
+function handleEditEntries(entryId: string, replacePosition = false) {
+  if (!currentProject.value) {
+    return;
+  }
+  const query = new URLSearchParams();
+  if (route.value.page === "project" && route.value.entriesFileId) {
+    query.set("file", route.value.entriesFileId);
+  }
+  if (entryId) {
+    query.set("edit", "1");
+    query.set("entry", entryId);
+  }
+  const suffix = query.size ? `?${query}` : "";
+  const path = `/projects/${encodeURIComponent(currentProject.value.config.project_id)}/entries${suffix}`;
+  if (replacePosition) {
+    replace(path);
+  } else {
+    navigate(path);
+  }
+}
+
 function handleOpenTaskTarget(fileId: string, entryId: string, entryIndex: number) {
   if (!currentProject.value || !fileId) {
     return;
@@ -1204,7 +1249,7 @@ onBeforeUnmount(() => {
     @navigate-project-list="navigate('/projects')"
     @navigate-section="handleOpenProjectSection"
     @open-help="handleOpenHelp"
-    @logout="handleLogout"
+    @logout="canLeaveEntriesEditor() && handleLogout()"
   >
     <template v-if="currentProject">
       <ProjectPage
@@ -1236,6 +1281,11 @@ onBeforeUnmount(() => {
         :members="currentProject.members"
         :current-user="currentUser"
         :initial-file-id="route.entriesFileId"
+        :editing="route.editingEntries"
+        :target-entry-id="route.entryId"
+        @edit-entries="handleEditEntries"
+        @editing-busy="entriesEditorBusy = $event"
+        @entry-viewed="handleEntryViewed"
         @open-entry="handleOpenTaskTarget"
         @entries-changed="refreshProjectSummary"
       />

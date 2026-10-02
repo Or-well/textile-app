@@ -22,6 +22,11 @@ export interface ProjectEventLogTail {
 }
 
 const textEncoder = new TextEncoder();
+const replacementGenerations = new WeakMap<object, number>();
+
+export function getEventLogReplacementGeneration(storage: ProjectStorage): number {
+  return replacementGenerations.get(storage.root) ?? 0;
+}
 
 async function listEventArchiveFiles(
   storage: ProjectStorage,
@@ -176,6 +181,7 @@ export async function planReplaceProjectEvents(
   storage: ProjectStorage,
   events: readonly ProjectEvent[],
 ): Promise<void> {
+  replacementGenerations.set(storage.root, getEventLogReplacementGeneration(storage) + 1);
   const existingArchives = await listEventArchiveFiles(storage);
   const chunks = splitEventChunks(events);
   const activeEvents = chunks.pop() ?? [];

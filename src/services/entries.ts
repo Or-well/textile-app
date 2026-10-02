@@ -27,7 +27,8 @@ import { nowIso } from "../utils/time";
 import { mapWithConcurrency } from "../utils/async";
 import {
   createEntryVersionEvent,
-  deriveEntryWorkflowAudit,
+  clearEntryWorkflowAuditCache,
+  loadEntryWorkflowAudit,
   isEntryVersionEvent,
   type EntryVersionSnapshot,
 } from "./history";
@@ -58,10 +59,12 @@ import {
 import {
   cacheFileEntries,
   cacheFileEntryChunks,
+  cacheWrittenEntryChunks,
   getCachedEntry,
   getCachedEntryLocation,
   getCachedFileEntries,
   getEntryReadModelGeneration,
+  getFileReadGeneration,
   getOrLoadFileEntries,
   invalidateCachedFile,
   resetEntryReadModel,
@@ -108,6 +111,7 @@ export interface PreparedEntriesWrite {
     rows: Entry[];
   }>;
   deletes: string[];
+  chunks?: Array<{ path: string; rows: Entry[] }>;
 }
 
 interface ImportEntryRow {
@@ -134,12 +138,14 @@ export function setEntriesProjectRoot(root: ProjectDirectoryHandle): void {
 export function clearCachedEntries(storage: ProjectStorage): void {
   if (currentProjectStorage?.root === storage.root) {
     resetEntryReadModel();
+    clearEntryWorkflowAuditCache(storage);
   }
 }
 
 export function setEntriesProjectStorage(storage: ProjectStorage): void {
   currentProjectStorage = storage;
   resetEntryReadModel();
+  clearEntryWorkflowAuditCache(storage);
 }
 
 function getProjectStorage(): ProjectStorage {
@@ -592,7 +598,7 @@ export async function writeEntriesForFileToStorage(
   }
 
   await writePlan.execute();
-  cacheEntriesForFile(fileId, entries);
+  cachePreparedEntries(prepared, storage);
 }
 
 export async function prepareEntriesWrite(
@@ -626,8 +632,71 @@ export function cacheEntriesForFile(fileId: string, entries: Entry[]): void {
   cacheFileEntries(fileId, entries);
 }
 
-function cacheEntry(savedEntry: Entry): void {
-  updateCachedEntry(savedEntry);
+export function cachePreparedEntries(
+  prepared: PreparedEntriesWrite,
+  expectedStorage?: ProjectStorage,
+): void {
+  if (expectedStorage && currentProjectStorage?.root !== expectedStorage.root) {
+    return;
+  }
+  cacheWrittenEntryChunks(
+    prepared.fileId,
+    (prepared.chunks ?? prepared.writes).map(
+      ({ path, rows }) => ({ path, entries: rows }),
+    ),
+  );
+}
+
+/** Accepts the complete, freshly prechecked file; keeps existing chunk boundaries. */
+export async function prepareEntryUpdates(
+  storage: ProjectStorage,
+  fileId: string,
+  entries: Entry[],
+  updatedIds: ReadonlySet<string>,
+): Promise<PreparedEntriesWrite> {
+  if (storage === currentProjectStorage) {
+    const indexedRows = entries.map((entry) => ({
+      entry,
+      location: getCachedEntryLocation(entry.id),
+    }));
+    if (indexedRows.every((row) => row.location)) {
+      const byPath = new Map<string, Array<{ entry: Entry; rowIndex: number }>>();
+      for (const { entry, location } of indexedRows) {
+        const rows = byPath.get(location!.chunkPath) ?? [];
+        rows.push({ entry, rowIndex: location!.rowIndex });
+        byPath.set(location!.chunkPath, rows);
+      }
+      const chunks = Array.from(byPath, ([path, rows]) => ({
+        path,
+        rows: rows.sort((a, b) => a.rowIndex - b.rowIndex).map((row) => row.entry),
+      }));
+      return {
+        fileId,
+        entries,
+        chunks,
+        writes: chunks.filter((chunk) => chunk.rows.some((entry) => updatedIds.has(entry.id))),
+        deletes: [],
+      };
+    }
+  }
+  const names = await listEntryChunkFiles(storage, fileId);
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const chunks = await mapWithConcurrency(names, 4, async (name) => {
+    const path = `entries/${fileId}/${name}`;
+    const rows = normalizeEntries(await storage.readJsonl<Entry>(path));
+    return { path, rows: rows.map((entry) => byId.get(entry.id) ?? entry) };
+  });
+  return {
+    fileId,
+    entries,
+    chunks,
+    writes: chunks.filter((chunk) => chunk.rows.some((entry) => updatedIds.has(entry.id))),
+    deletes: [],
+  };
+}
+
+function cacheEntry(savedEntry: Entry, storage: ProjectStorage): void {
+  updateSharedCachedEntry(savedEntry, storage);
 }
 
 export function parseEntriesFromSourceFile(
@@ -646,8 +715,10 @@ export async function writeEntriesForFile(
   await writeFileEntries(fileId, entries, options);
 }
 
-export function clearCachedEntriesForFile(fileId: string): void {
-  invalidateCachedFile(fileId);
+export function clearCachedEntriesForFile(fileId: string, expectedStorage?: ProjectStorage): void {
+  if (!expectedStorage || currentProjectStorage?.root === expectedStorage.root) {
+    invalidateCachedFile(fileId);
+  }
 }
 
 function resolveActor(actor?: Member | null): Member {
@@ -852,10 +923,11 @@ async function listEntryChunkFiles(
 export async function loadEntries(fileId: string): Promise<Entry[]> {
   const storage = getProjectStorage();
   const generation = getEntryReadModelGeneration();
+  const fileGeneration = getFileReadGeneration(fileId);
 
   return getOrLoadFileEntries(fileId, async () => {
     try {
-      return await loadEntriesFromStorage(storage, fileId, generation);
+      return await loadEntriesFromStorage(storage, fileId, generation, fileGeneration);
     } catch {
       throw new Error("词条数据无法读取。请确认项目文件夹和词条文件没有损坏。");
     }
@@ -871,18 +943,19 @@ async function loadEntriesFromStorage(
   storage: ProjectStorage,
   fileId: string,
   generation = getEntryReadModelGeneration(),
+  fileGeneration = getFileReadGeneration(fileId),
 ): Promise<Entry[]> {
   const entryDirectory = `entries/${fileId}`;
   const chunkFiles = await listEntryChunkFiles(storage, fileId);
-  const entryGroups = await Promise.all(
-    chunkFiles.map(async (fileName) => {
+  const entryGroups = await mapWithConcurrency(
+    chunkFiles, 4, async (fileName) => {
       const path = `${entryDirectory}/${fileName}`;
 
       return {
         path,
         entries: normalizeEntries(await storage.readJsonl<Entry>(path)),
       };
-    }),
+    },
   );
   const sortedEntries = entryGroups
     .flatMap((group) => group.entries)
@@ -893,15 +966,15 @@ async function loadEntriesFromStorage(
     entries: group.entries.map((entry) => entryById.get(entry.id) ?? entry),
   }));
 
-  return cacheFileEntryChunks(fileId, normalizedGroups, generation);
+  return cacheFileEntryChunks(fileId, normalizedGroups, generation, fileGeneration);
 }
 
-async function loadChunkContainingEntry(
+export async function loadChunkContainingEntry(
   storage: ProjectStorage,
   fileId: string,
   entryId: string,
 ): Promise<{ chunkPath: string; entries: Entry[]; entryIndex: number } | null> {
-  const cachedLocation = getCachedEntryLocation(entryId);
+  const cachedLocation = storage === currentProjectStorage ? getCachedEntryLocation(entryId) : undefined;
 
   if (cachedLocation) {
     try {
@@ -915,8 +988,9 @@ async function loadChunkContainingEntry(
       if (entryIndex >= 0) {
         return { chunkPath: cachedLocation.chunkPath, entries, entryIndex };
       }
-    } catch {
+    } catch (error) {
       invalidateCachedFile(fileId);
+      throw error;
     }
   }
 
@@ -1055,7 +1129,7 @@ export async function importEntryTranslations(
 
     await planAppendProjectEvents(writePlan, storage, versionEvents);
     await writePlan.execute();
-    cacheEntriesForFile(fileId, entries);
+    cachePreparedEntries(prepared, storage);
   }
 
   return { matched, skipped };
@@ -1132,7 +1206,7 @@ export async function updateEntryContext(
 
     await storage.writeJsonl(chunkPath, entries);
 
-    cacheEntry(savedEntry);
+    cacheEntry(savedEntry, storage);
 
     return savedEntry;
   }
@@ -1158,18 +1232,7 @@ export async function saveEntry(
 
     const storedEntry = normalizeEntry(entries[entryIndex]);
     const eventLogTail = await loadProjectEventLogTail(storage);
-    const auditEvent = await findProjectEventFromNewest(
-      storage,
-      (event) =>
-        isEntryVersionEvent(event) &&
-        event.entry_id === storedEntry.id &&
-        event.created_at === storedEntry.updated_at,
-      eventLogTail,
-    );
-    const historyAudit = deriveEntryWorkflowAudit(
-      storedEntry,
-      auditEvent ? [auditEvent] : [],
-    );
+    const historyAudit = await loadEntryWorkflowAudit(storage, storedEntry, eventLogTail);
     const originalEntry = normalizeEntry({
       ...storedEntry,
       translated_by: historyAudit.translatedBy,
@@ -1226,7 +1289,7 @@ export async function saveEntry(
       eventLogTail,
     );
 
-    cacheEntry(savedEntry);
+    cacheEntry(savedEntry, storage);
 
     return savedEntry;
   }
@@ -1333,7 +1396,7 @@ export async function restoreEntryVersion(
       restoreEvent,
       eventLogTail,
     );
-    cacheEntry(restoredEntry);
+    cacheEntry(restoredEntry, storage);
 
     return restoredEntry;
   }
@@ -1443,7 +1506,7 @@ export async function updateEntryAccess(
       },
     ]);
     await writePlan.execute();
-    cacheEntry(updatedEntry);
+    cacheEntry(updatedEntry, storage);
 
     return updatedEntry;
   }

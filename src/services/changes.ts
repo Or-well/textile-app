@@ -20,7 +20,7 @@ import {
   normalizeEntry,
   type EntryWorkflowOperation,
 } from "../model/status";
-import { cacheEntriesForFile, clearCachedEntries } from "./entries";
+import { clearCachedEntries, clearCachedEntriesForFile } from "./entries";
 import { clearCachedTasks } from "./tasks";
 import { clearCachedTerms } from "./terms";
 import {
@@ -6031,10 +6031,7 @@ export async function applyChangePackage(
   const writePlan = createProjectWritePlan(storage);
   const commentRowsByPath: CommentImportRowsByPath = new Map();
   const changedCommentPaths = new Set<string>();
-  const changedEntryGroups: Array<{
-    fileId: string;
-    entries: Entry[];
-  }> = [];
+  const changedEntryFileIds = new Set<string>();
   const localEntryEvents: ProjectEvent[] = [];
   const rejectedEntryIds = new Set<string>();
   const rejectedCommentIds = new Set<string>();
@@ -6169,7 +6166,7 @@ export async function applyChangePackage(
       const fileId = currentEntries[0]?.file_id;
 
       if (fileId) {
-        changedEntryGroups.push({ fileId, entries: currentEntries });
+        changedEntryFileIds.add(fileId);
       }
     }
   }
@@ -6611,8 +6608,9 @@ export async function applyChangePackage(
   clearCachedTasks(storage);
   clearCachedTerms(storage);
 
-  for (const group of changedEntryGroups) {
-    cacheEntriesForFile(group.fileId, group.entries);
+  for (const fileId of changedEntryFileIds) {
+    // A package group is one chunk, not a complete file snapshot.
+    clearCachedEntriesForFile(fileId, storage);
   }
 
   return result;

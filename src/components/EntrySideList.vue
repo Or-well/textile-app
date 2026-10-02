@@ -22,6 +22,8 @@ const props = defineProps<{
   scrollTargetPosition: "nearest" | "second" | "top";
   scrollRequestId: number;
   workflow?: ProjectWorkflowSettings;
+  fixedScope?: boolean;
+  fileNames?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -114,7 +116,7 @@ watch(
 
 <template>
   <aside class="entry-side-list">
-    <div class="list-tools">
+    <div v-if="!fixedScope" class="list-tools">
       <label>
         <span>搜索</span>
         <input
@@ -151,6 +153,7 @@ watch(
         type="button"
         @click="emit('select', entry)"
       >
+        <span v-if="fileNames" class="entry-file-name">{{ fileNames[entry.file_id] || "已删除文件" }}</span>
         <span class="entry-source">{{ summarize(entry.source) }}</span>
         <span class="entry-row-meta">
           <span>{{ getEntryWorkflowLabel(entry, workflow) }}</span>
@@ -264,8 +267,8 @@ select {
 }
 
 .entry-list {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 0;
   min-height: 0;
   overflow-x: hidden;
@@ -276,9 +279,13 @@ select {
 }
 
 .entry-row {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;
   gap: var(--space-1);
   width: 100%;
+  min-width: 0;
   min-height: 50px;
   padding: var(--space-2) var(--space-4);
   border: 0;
@@ -305,6 +312,12 @@ select {
   border-left-color: var(--color-brand);
 }
 
+.entry-file-name {
+  color: var(--color-muted);
+  font-size: var(--font-xs);
+  overflow-wrap: anywhere;
+}
+
 .entry-source {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -313,6 +326,7 @@ select {
   color: var(--color-heading);
   font-size: var(--font-sm);
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .entry-row-meta {

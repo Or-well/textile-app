@@ -27,7 +27,7 @@ import {
   canExportRelease,
   getCurrentUser,
 } from "./permissions";
-import { getCachedEntriesForFile } from "./entries";
+import { loadSharedEntriesForFile } from "./entries";
 
 export interface ReleaseExportOptions {
   format: ReleaseExportFormat;
@@ -155,7 +155,7 @@ async function loadProjectConfig(): Promise<ProjectConfig> {
 
 async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
   const storage = getProjectStorage();
-  const cachedEntries = getCachedEntriesForFile(projectFile.id, storage);
+  const cachedEntries = await loadSharedEntriesForFile(projectFile.id, storage);
 
   if (cachedEntries) {
     return cachedEntries
@@ -167,10 +167,9 @@ async function loadEntryChunks(projectFile: ProjectFile): Promise<Entry[]> {
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
-  const groups = await Promise.all(
-    chunkFiles.map((fileName) =>
+  const groups = await mapWithConcurrency(
+    chunkFiles, 4, (fileName) =>
       storage.readJsonl<Entry>(`${projectFile.entries_path}/${fileName}`),
-    ),
   );
 
   return normalizeEntries(groups.flat())

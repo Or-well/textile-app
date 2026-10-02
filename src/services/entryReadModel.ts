@@ -19,6 +19,7 @@ const fileSnapshots = new Map<string, FileEntrySnapshot>();
 const loadingFiles = new Map<string, Promise<Entry[]>>();
 const entriesById = new Map<string, Entry>();
 let generation = 0;
+const fileGenerations = new Map<string, number>();
 
 function removeIndexedFile(fileId: string): void {
   const snapshot = fileSnapshots.get(fileId);
@@ -54,10 +55,20 @@ export function resetEntryReadModel(): void {
   fileSnapshots.clear();
   loadingFiles.clear();
   entriesById.clear();
+  fileGenerations.clear();
 }
 
 export function getEntryReadModelGeneration(): number {
   return generation;
+}
+
+export function getFileReadGeneration(fileId: string): number {
+  return fileGenerations.get(fileId) ?? 0;
+}
+
+function advanceFileGeneration(fileId: string): void {
+  fileGenerations.set(fileId, getFileReadGeneration(fileId) + 1);
+  loadingFiles.delete(fileId);
 }
 
 export function getCachedFileEntries(fileId: string): Entry[] | undefined {
@@ -82,6 +93,7 @@ export function cacheFileEntryChunks(
   fileId: string,
   chunks: EntryChunkSnapshot[],
   expectedGeneration = generation,
+  expectedFileGeneration = getFileReadGeneration(fileId),
 ): Entry[] {
   const entries: Entry[] = [];
   const locations = new Map<string, EntryLocation>();
@@ -97,16 +109,28 @@ export function cacheFileEntryChunks(
     (left, right) => left.index - right.index || left.id.localeCompare(right.id),
   );
 
-  return expectedGeneration === generation
+  return expectedGeneration === generation &&
+    expectedFileGeneration === getFileReadGeneration(fileId)
     ? indexFile(fileId, entries, locations)
     : entries;
 }
 
 export function cacheFileEntries(fileId: string, entries: Entry[]): Entry[] {
-  return indexFile(fileId, entries, new Map());
+  advanceFileGeneration(fileId);
+  const previous = fileSnapshots.get(fileId);
+  // Positions remain valid only when membership and ordering have not changed.
+  const unchangedLayout = previous?.entries.length === entries.length &&
+    previous.entries.every((entry, index) => entry.id === entries[index]?.id);
+  return indexFile(fileId, entries, unchangedLayout ? previous.locations : new Map());
+}
+
+export function cacheWrittenEntryChunks(fileId: string, chunks: EntryChunkSnapshot[]): Entry[] {
+  advanceFileGeneration(fileId);
+  return cacheFileEntryChunks(fileId, chunks);
 }
 
 export function updateCachedEntry(entry: Entry): void {
+  advanceFileGeneration(entry.file_id);
   const snapshot = fileSnapshots.get(entry.file_id);
 
   if (!snapshot) {
@@ -124,6 +148,7 @@ export function updateCachedEntry(entry: Entry): void {
 }
 
 export function invalidateCachedFile(fileId: string): void {
+  advanceFileGeneration(fileId);
   removeIndexedFile(fileId);
   fileSnapshots.delete(fileId);
   loadingFiles.delete(fileId);

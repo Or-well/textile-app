@@ -405,10 +405,9 @@ async function loadEntriesForFile(fileId: string): Promise<Entry[]> {
   const chunkFiles = fileNames
     .filter((name) => /^chunk_.*\.jsonl$/i.test(name))
     .sort((a, b) => a.localeCompare(b));
-  const chunks = await Promise.all(
-    chunkFiles.map((fileName) =>
+  const chunks = await mapWithConcurrency(
+    chunkFiles, 4, (fileName) =>
       storage.readJsonl<Entry>(`${entryDirectory}/${fileName}`),
-    ),
   );
 
   return normalizeEntries(chunks.flat()).sort(

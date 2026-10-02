@@ -9,10 +9,11 @@ import { PERMISSION_ACTIONS } from "../model/permissions";
 import { normalizeEntry } from "../model/status";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
+import { mapWithConcurrency } from "../utils/async";
 import {
-  cacheEntriesForFile,
+  cachePreparedEntries,
   loadAllEntriesFresh,
-  prepareEntriesWrite,
+  prepareEntryUpdates,
 } from "./entries";
 import { can, canManageTask } from "./permissions";
 import type { ProjectDirectoryHandle } from "./projectFs";
@@ -395,15 +396,17 @@ export async function executeEntryReplace(
     entriesByFile.set(entry.file_id, fileEntries);
   }
 
-  const writes = await Promise.all(
-    affectedFileIds.map((fileId) =>
-      prepareEntriesWrite(
+  const updatedIds = new Set(prepared.updatedEntries.map((entry) => entry.id));
+  const writes = await mapWithConcurrency(
+    affectedFileIds,
+    4,
+    (fileId) =>
+      prepareEntryUpdates(
         storage,
         fileId,
         entriesByFile.get(fileId) ?? [],
-        { chunkSize: prepared.project.settings.chunk_size },
+        updatedIds,
       ),
-    ),
   );
   const writePlan = createProjectWritePlan(storage);
 
@@ -421,8 +424,8 @@ export async function executeEntryReplace(
 
   await writePlan.execute();
 
-  for (const fileId of affectedFileIds) {
-    cacheEntriesForFile(fileId, entriesByFile.get(fileId) ?? []);
+  for (const write of writes) {
+    cachePreparedEntries(write, storage);
   }
 
   return {

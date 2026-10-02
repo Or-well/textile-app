@@ -15,14 +15,15 @@ import {
 } from "../model/status";
 import { createId } from "../utils/id";
 import { nowIso } from "../utils/time";
+import { mapWithConcurrency } from "../utils/async";
 import {
-  cacheEntriesForFile,
+  cachePreparedEntries,
   loadAllEntriesFresh,
-  prepareEntriesWrite,
+  prepareEntryUpdates,
 } from "./entries";
 import {
   createEntryVersionEvent,
-  deriveEntryWorkflowAudit,
+  loadEntryWorkflowAudit,
 } from "./history";
 import {
   canCreateComment,
@@ -43,7 +44,7 @@ import {
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
 import {
-  loadProjectEventsFromStorage,
+  loadProjectEventLogTail,
   planAppendProjectEvents,
 } from "./eventLog";
 import { isEntryInTask, loadTasks } from "./tasks";
@@ -427,12 +428,12 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
     throw new Error("当前项目与批量操作目标不一致，请重新打开项目后再试。");
   }
 
-  const [allEntries, tasks, existingEvents] = await Promise.all([
+  const [allEntries, tasks, eventLogTail] = await Promise.all([
     loadAllEntriesFresh(),
     storedProject.settings.workflow?.enable_tasks === false
       ? Promise.resolve([])
       : loadTasks(),
-    loadProjectEventsFromStorage(storage),
+    loadProjectEventLogTail(storage),
   ]);
   const entriesById = new Map(allEntries.map((entry) => [entry.id, entry]));
   const skipped: EntryBatchSkippedItem[] = [];
@@ -451,7 +452,7 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
       continue;
     }
 
-    const audit = deriveEntryWorkflowAudit(storedEntry, existingEvents);
+    const audit = await loadEntryWorkflowAudit(storage, storedEntry, eventLogTail);
     const entry = normalizeEntry({
       ...storedEntry,
       translated_by: audit.translatedBy,
@@ -587,15 +588,17 @@ export async function executeEntryBatch(
     entriesByFile.set(entry.file_id, fileEntries);
   }
 
-  const writes = await Promise.all(
-    affectedFileIds.map((fileId) =>
-      prepareEntriesWrite(
+  const updatedIds = new Set(prepared.updatedEntries.map((entry) => entry.id));
+  const writes = await mapWithConcurrency(
+    affectedFileIds,
+    4,
+    (fileId) =>
+      prepareEntryUpdates(
         storage,
         fileId,
         entriesByFile.get(fileId) ?? [],
-        { chunkSize: prepared.project.settings.chunk_size },
+        updatedIds,
       ),
-    ),
   );
   const writePlan = createProjectWritePlan(storage);
 
@@ -620,8 +623,8 @@ export async function executeEntryBatch(
 
   await writePlan.execute();
 
-  for (const fileId of affectedFileIds) {
-    cacheEntriesForFile(fileId, entriesByFile.get(fileId) ?? []);
+  for (const write of writes) {
+    cachePreparedEntries(write, storage);
   }
 
   return {

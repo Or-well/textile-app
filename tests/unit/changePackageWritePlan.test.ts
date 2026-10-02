@@ -493,6 +493,21 @@ async function createExportFixture(options: {
 }
 
 describe("ordinary change-package write plan", () => {
+  it("keeps every chunk visible after importing a change to one chunk", async () => {
+    const fixture = await createChangePackageFixture({ packageEntry: { target: "Package translation" } });
+    const secondEntry = createEntry({ id: "file-1:2", file_id: "file-1", index: 2, key: "line_000002", target: "Unchanged" });
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0002.jsonl", [secondEntry]);
+    setEntriesProjectStorage(fixture.storage);
+    setChangesProjectStorage(fixture.storage);
+    expect(await loadEntries("file-1")).toHaveLength(2);
+    await applyChangePackage(fixture.changePackage, [{ entryId: fixture.originalEntry.id, action: "use_package" }], { actor: fixture.actor });
+    expect(await loadEntries("file-1")).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.originalEntry.id, target: "Package translation" }),
+      expect.objectContaining({ id: secondEntry.id, target: "Unchanged" }),
+    ]));
+    expect(await loadEntries("file-1")).toHaveLength(2);
+  });
+
   it("rejects unsigned member package export when project requires signatures", async () => {
     const fixture = await createExportFixture({
       requireSignedChangePackages: true,

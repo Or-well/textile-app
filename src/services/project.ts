@@ -25,7 +25,7 @@ import {
   validateRolePermissionChange,
 } from "./permissions";
 import {
-  cacheEntriesForFile,
+  cachePreparedEntries,
   clearCachedEntriesForFile,
   importEntryTranslations,
   parseEntriesFromSourceFile,
@@ -762,7 +762,7 @@ export async function addSourceFileToStorage(
 
   try {
     await writePlan.execute();
-    cacheEntriesForFile(addedFile.id, entries);
+    cachePreparedEntries(preparedEntries, storage);
     setPermissionProject(nextConfig);
   } catch (error) {
     const residualPaths = await cleanupFailedSourceImport(storage, addedFile);
@@ -887,7 +887,7 @@ export async function updateSourceFileInStorage(
   );
 
   await writePlan.execute();
-  cacheEntriesForFile(projectFile.id, preparedEntries.entries);
+  cachePreparedEntries(preparedEntries, storage);
 
   return {
     config: nextConfig,

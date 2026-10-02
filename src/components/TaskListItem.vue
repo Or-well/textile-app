@@ -75,9 +75,10 @@ function getTaskFileText(task: Task): string {
 
 <style scoped>
 .task-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-auto-rows: max-content;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;
   gap: var(--space-2);
   width: 100%;
   min-width: 0;
@@ -98,12 +99,11 @@ function getTaskFileText(task: Task): string {
 }
 
 .task-title {
-  overflow: hidden;
   font-size: var(--font-md);
   font-weight: 700;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .task-meta {

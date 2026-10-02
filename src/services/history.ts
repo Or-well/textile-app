@@ -16,9 +16,13 @@ import {
   type ProjectStorage,
 } from "./projectStorage";
 import {
+  getEventLogReplacementGeneration,
+  loadProjectEventLogTail,
   loadProjectEventsFromStorage,
   planAppendProjectEvents,
+  type ProjectEventLogTail,
 } from "./eventLog";
+import { mapWithConcurrency } from "../utils/async";
 import { createProjectWritePlan } from "./projectWritePlan";
 
 type ProjectEventInput = Omit<ProjectEvent, "id" | "created_at"> &
@@ -87,12 +91,105 @@ export interface EntryWorkflowAudit {
 
 let currentProjectStorage: ProjectStorage | null = null;
 
+type StoredWorkflowAudit = Omit<EntryWorkflowAudit, "translatedBy"> & {
+  translatedBy?: string;
+};
+
+interface ArchivedWorkflowAudits {
+  generation: number;
+  paths: Set<string>;
+  audits: Map<string, StoredWorkflowAudit>;
+  loading?: Promise<void>;
+}
+
+const archivedWorkflowAudits = new WeakMap<object, ArchivedWorkflowAudits>();
+
+export function clearEntryWorkflowAuditCache(storage: ProjectStorage): void {
+  archivedWorkflowAudits.delete(storage.root);
+}
+
+/** Sealed archives are indexed once per session; retain audit fields, not translation text. */
+export async function loadEntryWorkflowAudit(
+  storage: ProjectStorage,
+  entry: Entry,
+  tail: ProjectEventLogTail,
+): Promise<EntryWorkflowAudit> {
+  const matches = (event: ProjectEvent) => isEntryVersionEvent(event) &&
+    event.entry_id === entry.id && event.created_at === entry.updated_at &&
+    event.detail.after_proofread_by !== undefined &&
+    event.detail.after_proofread_count !== undefined &&
+    event.detail.after_reviewed_by !== undefined;
+  if (tail.activeEvents.some(matches)) {
+    return deriveEntryWorkflowAudit(entry, [...tail.activeEvents]);
+  }
+
+  const generation = getEventLogReplacementGeneration(storage);
+  let cache = archivedWorkflowAudits.get(storage.root);
+  if (!cache || cache.generation !== generation) {
+    cache = { generation, paths: new Set(), audits: new Map() };
+    archivedWorkflowAudits.set(storage.root, cache);
+  }
+  while (cache.loading) {
+    await cache.loading;
+  }
+  const missing = tail.archives.filter((archive) => !cache.paths.has(archive.path));
+  if (missing.length > 0) {
+    const index = cache;
+    const request = (async () => {
+      const groups = await mapWithConcurrency(missing, 4, async (archive) => {
+        const events = await storage.readJsonl<ProjectEvent>(archive.path);
+        const audits: Array<[string, StoredWorkflowAudit]> = [];
+        for (const event of events) {
+          if (isEntryVersionEvent(event) &&
+            event.detail.after_proofread_by !== undefined &&
+            event.detail.after_proofread_count !== undefined &&
+            event.detail.after_reviewed_by !== undefined) {
+            audits.push([JSON.stringify([event.entry_id, event.created_at]), {
+              translatedBy: event.detail.after_translated_by,
+              proofreadBy: event.detail.after_proofread_by,
+              proofreadCount: event.detail.after_proofread_count,
+              reviewedBy: event.detail.after_reviewed_by,
+            }]);
+          }
+        }
+        return { path: archive.path, audits };
+      });
+      for (const { path, audits } of groups) {
+        for (const [key, audit] of audits) {
+          index.audits.set(key, audit);
+        }
+        index.paths.add(path);
+      }
+    })();
+    index.loading = request;
+    try {
+      await request;
+    } finally {
+      if (index.loading === request) {
+        index.loading = undefined;
+      }
+    }
+  }
+  if (getEventLogReplacementGeneration(storage) !== generation) {
+    return loadEntryWorkflowAudit(storage, entry, await loadProjectEventLogTail(storage));
+  }
+  const audit = cache.audits.get(JSON.stringify([entry.id, entry.updated_at]));
+  return audit
+    ? {
+        ...audit,
+        proofreadBy: [...audit.proofreadBy],
+        translatedBy: audit.translatedBy ?? entry.translated_by,
+      }
+    : deriveEntryWorkflowAudit(entry, []);
+}
+
 export function setHistoryProjectRoot(root: ProjectDirectoryHandle): void {
   setHistoryProjectStorage(createProjectStorage(root));
 }
 
 export function setHistoryProjectStorage(storage: ProjectStorage): void {
   currentProjectStorage = storage;
+  clearEntryWorkflowAuditCache(storage);
 }
 
 function getProjectStorage(): ProjectStorage {

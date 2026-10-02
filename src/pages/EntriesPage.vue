@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import EntryPage from "./EntryPage.vue";
+import { resolveEntryScope } from "../model/entryScope";
 import BatchSelectionBar from "../components/BatchSelectionBar.vue";
 import ProjectPageHeader from "../components/ProjectPageHeader.vue";
 import {
@@ -59,11 +61,16 @@ const props = defineProps<{
   members: Member[];
   currentUser: Member | null;
   initialFileId?: string;
+  editing?: boolean;
+  targetEntryId?: string;
 }>();
 
 const emit = defineEmits<{
   openEntry: [fileId: string, entryId: string, entryIndex: number];
   entriesChanged: [];
+  editEntries: [entryId: string, replacePosition?: boolean];
+  editingBusy: [busy: boolean];
+  entryViewed: [fileId: string, entryId: string];
 }>();
 
 const batchActionOptions: BatchActionOption[] = [
@@ -102,11 +109,45 @@ const batchActionOptions: BatchActionOption[] = [
 ];
 
 const entries = ref<Entry[]>([]);
+const scopeIds = ref<string[]>([]);
+const scopeLabel = ref("筛选结果");
+const scopeEntries = computed(() => resolveEntryScope(scopeIds.value, entries.value));
+let returnScrollTop = 0;
+
+function startEditing(selected: boolean) {
+  // 按当前输入筛选，不受搜索防抖尚未完成影响。
+  debouncedSearchText.value = searchText.value;
+  const rows = selected
+    ? resolveEntryScope([
+        ...filteredEntries.value.filter((entry) => selectedEntryIds.value.has(entry.id)).map((entry) => entry.id),
+        ...entries.value.filter((entry) => selectedEntryIds.value.has(entry.id)).map((entry) => entry.id),
+      ], entries.value)
+    : filteredEntries.value;
+  if (!rows.length) {
+    return;
+  }
+  returnScrollTop = tableScroll.value?.scrollTop ?? 0;
+  scopeIds.value = rows.map((entry) => entry.id);
+  scopeLabel.value = selected ? "所选词条" : "筛选结果";
+  closeReplaceBar();
+  emit("editEntries", rows[0].id);
+}
+
+function handleScopedEntryViewed(fileId: string, entryId: string) {
+  emit("entryViewed", fileId, entryId);
+  emit("editEntries", entryId, true);
+}
+
+function updateScopedEntry(entry: Entry) {
+  entries.value = entries.value.map((row) => row.id === entry.id ? entry : row);
+  emit("entriesChanged");
+}
+
 const tasks = ref<Task[]>([]);
 const selectedEntryIds = ref(new Set<string>());
 const searchText = ref("");
 const debouncedSearchText = ref("");
-const fileFilter = ref(props.initialFileId ?? "all");
+const fileFilter = ref(props.initialFileId || "all");
 const taskFilter = ref("all");
 const assigneeFilter = ref("all");
 const statusFilter = ref<StatusFilter>("all");
@@ -840,6 +881,9 @@ async function moveReplaceMatch(offset: -1 | 1) {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
+  if (props.editing) {
+    return;
+  }
   const key = event.key.toLowerCase();
 
   if ((event.ctrlKey || event.metaKey) && key === "h") {
@@ -929,6 +973,19 @@ watch(availableBatchActions, (actions) => {
   }
 }, { immediate: true });
 
+watch(() => props.editing, async (editing, previous) => {
+  if (editing && scopeIds.value.length === 0) {
+    noticeMessage.value = "本次编辑范围已结束，请重新筛选或选择词条。";
+    emit("editEntries", "", true);
+  } else if (!editing && previous) {
+    await loadPageData();
+    await nextTick();
+    if (tableScroll.value) {
+      tableScroll.value.scrollTop = returnScrollTop;
+    }
+  }
+}, { immediate: true });
+
 onMounted(() => {
   void loadPageData();
   window.addEventListener("keydown", handleGlobalKeydown);
@@ -944,13 +1001,39 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="entries-page">
+  <EntryPage
+    v-if="editing && scopeEntries.length"
+    :project="project"
+    :members="members"
+    :file-id="''"
+    :scope-entries="scopeEntries"
+    :scope-label="scopeLabel"
+    :target-entry-id="targetEntryId"
+    @entry-changed="updateScopedEntry"
+    @editing-busy="emit('editingBusy', $event)"
+    @entry-viewed="handleScopedEntryViewed"
+    @exit-scope="emit('editEntries', '')"
+  />
+  <section v-show="!editing || !scopeEntries.length" class="entries-page">
     <ProjectPageHeader
       eyebrow="词条管理"
       title="词条"
       summary="跨文件筛选、查看和批量处理项目词条。"
     >
       <template #actions>
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="isLoading || filteredEntries.length === 0"
+          @click="startEditing(false)"
+        >编辑筛选结果</button>
+        <button
+          v-if="selectedCount > 0"
+          type="button"
+          class="secondary-button"
+          :disabled="isLoading"
+          @click="startEditing(true)"
+        >编辑所选词条</button>
         <p class="count-summary">
           {{ filteredEntries.length }} / {{ entries.length }} 条
         </p>

@@ -33,6 +33,7 @@ const props = defineProps<{
   workflow?: ProjectWorkflowSettings;
   fileLocked?: boolean;
   fileHidden?: boolean;
+  showResolveNext?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -41,6 +42,7 @@ const emit = defineEmits<{
   workflowStatus: [entry: Entry, status: EntryStatus];
   markDisputed: [entry: Entry];
   resolveDispute: [entry: Entry];
+  resolveDisputeNext: [entry: Entry];
   openContext: [];
   toggleLocked: [entry: Entry];
   toggleHidden: [entry: Entry];
@@ -236,11 +238,15 @@ function handleMarkDisputed() {
   }
 }
 
-function handleResolveDispute() {
+function handleResolveDispute(advance = false) {
   const draftEntry = buildDraftEntry();
 
   if (draftEntry) {
-    emit("resolveDispute", draftEntry);
+    if (advance) {
+      emit("resolveDisputeNext", draftEntry);
+    } else {
+      emit("resolveDispute", draftEntry);
+    }
   }
 }
 
@@ -439,10 +445,17 @@ async function copyEntryId() {
         class="secondary-button"
         type="button"
         :disabled="isSaving || entry.locked"
-        @click="handleResolveDispute"
+        @click="handleResolveDispute()"
       >
         解决争议
       </button>
+      <button
+        v-if="canResolveEntryDispute && showResolveNext"
+        class="primary-button"
+        type="button"
+        :disabled="isSaving || entry.locked"
+        @click="handleResolveDispute(true)"
+      >解决争议并下一条</button>
     </footer>
 
     <dl class="meta-grid">
