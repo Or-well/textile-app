@@ -12,6 +12,8 @@ import {
 } from "../../src/services/projectPackage";
 import { createZip, type ZipContent } from "../../src/utils/zip";
 import { createProject } from "./factories";
+import { loadProjectFromStorage } from "../../src/services/project";
+import { createProjectStorage } from "../../src/services/projectStorage";
 
 interface ControlledDirectoryState {
   writeCount: number;
@@ -232,6 +234,14 @@ async function createProjectPackageFile(
 }
 
 describe(".hproj project import", () => {
+  it("imports an older project without persisted settings using the normal project defaults", async () => {
+    const { settings: _settings, ...legacyProject } = createProject();
+    const file = await createProjectPackageFile({ "project.json": JSON.stringify(legacyProject) });
+    const { controlledRoot } = createParentDirectory();
+    const imported = await importProjectPackageToParentDirectory(file, controlledRoot);
+    expect(await loadProjectFromStorage(createProjectStorage(imported.root)))
+      .toMatchObject({ project_id: legacyProject.project_id, settings: { auto_save: true } });
+  });
   it("writes and verifies a complete local project", async () => {
     const file = await createProjectPackageFile();
     const { root, controlledRoot } = createParentDirectory();

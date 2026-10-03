@@ -22,10 +22,21 @@ import {
   getReviewBlockMessage,
   getReviewBlockReason,
   validateRolePermissionChange,
+  setPermissionProject,
 } from "../../src/services/permissions";
 import { createEntry, createMember, createProject } from "./factories";
 
 describe("effective permissions", () => {
+  it("uses the supplied project's defaults instead of another project's current role overrides", () => {
+    const actor = createMember(["translator"]);
+    setPermissionProject(createProject({ settings: { role_permissions: { translator: [] } } }));
+    try {
+      expect(can(actor, PERMISSION_ACTIONS.FILE_VIEW)).toBe(false);
+      expect(can(actor, PERMISSION_ACTIONS.FILE_VIEW, createProject())).toBe(true);
+    } finally {
+      setPermissionProject(undefined);
+    }
+  });
   it("loads permission catalog and default roles from validated config", () => {
     const defaults = getDefaultRolePermissions();
 

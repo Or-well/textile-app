@@ -216,7 +216,7 @@ describe("entry replace", () => {
     ]);
   });
 
-  it("limits ordinary members to active tasks assigned to them", async () => {
+  it("allows local replacements outside assigned tasks", async () => {
     const first = createEntry({
       id: "file-1:1",
       file_id: "file-1",
@@ -269,13 +269,14 @@ describe("entry replace", () => {
 
     expect(preview.replacements.map((item) => item.entryId)).toEqual([
       first.id,
+      second.id,
     ]);
-    expect(preview.skipped).toEqual([
-      {
-        entryId: second.id,
-        reason: "不在当前成员可编辑的已分配任务范围内",
-      },
-    ]);
+    expect(preview.skipped).toEqual([]);
+    const result = await executeEntryReplace({
+      entryIds: [first.id, second.id], findText: "old", replaceText: "new",
+      actor: createMember(["translator"], { id: "translator-1" }), project,
+    });
+    expect(result.updatedEntries.map((entry) => entry.target)).toEqual(["new", "new"]);
   });
 
   it("rejects empty find text", async () => {

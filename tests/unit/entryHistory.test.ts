@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Entry, ProjectEvent } from "../../src/model/types";
+import type { Entry, ProjectEvent, ProjectWorkflowSettings } from "../../src/model/types";
 import {
   restoreEntryVersion,
   saveEntry,
@@ -14,7 +14,10 @@ import { createProjectStorage } from "../../src/services/projectStorage";
 import { createEntry, createMember, createProject } from "./factories";
 import { FailingProjectStorage } from "./failingProjectStorage";
 
-async function createEntryStorage(entryOverrides: Partial<Entry> = {}) {
+async function createEntryStorage(
+  entryOverrides: Partial<Entry> = {},
+  workflow?: ProjectWorkflowSettings,
+) {
   const entry = createEntry({
     id: "file-1:1",
     file_id: "file-1",
@@ -29,6 +32,7 @@ async function createEntryStorage(entryOverrides: Partial<Entry> = {}) {
       "logs/events.jsonl": "\n",
       "project.json": JSON.stringify(
         createProject({
+          settings: { workflow },
           files: [
             {
               id: "file-1",
@@ -353,7 +357,7 @@ describe("entry version history", () => {
 
   it("records partial proofread progress even when the main status is unchanged", async () => {
     const actor = createMember(["proofreader"], { id: "proofreader-1" });
-    const { storage, entry } = await createEntryStorage();
+    const { storage, entry } = await createEntryStorage({}, { proofread_required: 2 });
 
     setEntriesProjectStorage(storage);
 

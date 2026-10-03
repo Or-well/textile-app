@@ -128,6 +128,7 @@ interface NormalizedProjectPackage {
 const PROJECT_PACKAGE_DIRECTORIES = [
   "source",
   "entries",
+  "contexts",
   "terms",
   "tasks",
   "comments",
@@ -139,6 +140,7 @@ const PROJECT_PACKAGE_DIRECTORIES = [
 const PROJECT_PACKAGE_EXPORT_DIRECTORIES = [
   "source",
   "entries",
+  "contexts",
   "terms",
   "tasks",
   "comments",
@@ -214,7 +216,8 @@ function readPackageProjectConfig(
     typeof project.name !== "string" ||
     typeof project.source_language !== "string" ||
     typeof project.target_language !== "string" ||
-    !project.settings ||
+    (project.settings !== undefined &&
+      (!project.settings || typeof project.settings !== "object" || Array.isArray(project.settings))) ||
     !Array.isArray(project.files)
   ) {
     throw new Error("项目配置缺少必要字段，无法读取。");

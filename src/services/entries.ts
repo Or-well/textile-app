@@ -48,7 +48,8 @@ import {
 import {
   assertCan,
   canEditEntry,
-  canProofreadEntry,
+  getProofreadBlockMessage,
+  getProofreadBlockReason,
   canRollbackEntry,
   canRestoreEntryVersion,
   canTranslateEntry,
@@ -92,6 +93,7 @@ export interface TranslationImportResult {
 
 export interface SaveEntryOptions {
   actor?: Member | null;
+  /** @deprecated 保留调用兼容；保存时以项目中的最新工作流设置为准。 */
   workflow?: ProjectWorkflowSettings;
 }
 
@@ -217,7 +219,8 @@ function normalizeHeaderName(value: string): string {
 function isHeaderRow(columns: string[]): boolean {
   const names = columns.map(normalizeHeaderName);
 
-  return names.includes("key") && (names.includes("source") || names.includes("target"));
+  return (names.includes("key") || names.includes("index")) &&
+    (names.includes("source") || names.includes("target"));
 }
 
 function parseCsvRows(text: string): ImportEntryRow[] {
@@ -241,7 +244,7 @@ function parseCsvRows(text: string): ImportEntryRow[] {
         } else if (header === "source") {
           row.source = value;
         } else if (header === "target") {
-          row.target = value;
+          row.target = columns[columnIndex];
         } else if (header === "context") {
           row.context = value;
         } else if (header === "speaker") {
@@ -258,7 +261,7 @@ function parseCsvRows(text: string): ImportEntryRow[] {
   return rows.map((columns, rowIndex) => ({
     key: columns[0] ?? "",
     source: columns[1] ?? "",
-    target: columns[2] ?? "",
+    target: columns[2],
     context: columns[3] ?? "",
     index: rowIndex + 1,
   }));
@@ -476,6 +479,14 @@ function mergeSourceEntries(newEntries: Entry[], existingEntries: Entry[]): Entr
   });
 }
 
+function getTranslationTargetText(row: ImportEntryRow, rowNumber: number): string {
+  const target = row.target ?? row.translation;
+  if (typeof target !== "string") {
+    throw new Error(`第 ${rowNumber} 条导入记录缺少有效的译文 target / translation。需要清空译文时请明确填写空字符串。`);
+  }
+  return target;
+}
+
 function parseTranslationRows(text: string, fileName: string): Array<{
   key?: string;
   index?: number;
@@ -485,10 +496,10 @@ function parseTranslationRows(text: string, fileName: string): Array<{
 
   if (format === "jsonl") {
     return parseJsonl<ImportEntryRow>(text)
-      .map((row) => ({
+      .map((row, index) => ({
         key: row.key,
         index: row.index,
-        target: getTargetText(row),
+        target: getTranslationTargetText(row, index + 1),
       }))
       .filter((row) => Boolean(row.key || row.index));
   }
@@ -498,17 +509,17 @@ function parseTranslationRows(text: string, fileName: string): Array<{
       .map((row, index) => ({
         key: row.key,
         index: row.index ?? index + 1,
-        target: getTargetText(row),
+        target: getTranslationTargetText(row, index + 1),
       }))
       .filter((row) => Boolean(row.key || row.index));
   }
 
   if (format === "csv") {
     return parseCsvRows(text)
-      .map((row) => ({
+      .map((row, index) => ({
         key: row.key,
         index: row.index,
-        target: getTargetText(row),
+        target: getTranslationTargetText(row, index + 1),
       }))
       .filter((row) => Boolean(row.key || row.index));
   }
@@ -770,8 +781,9 @@ function assertCanWriteEntry(
       throw new Error("译文为空，不能校对通过。");
     }
 
-    if (!canProofreadEntry(actor, originalEntry, workflow)) {
-      throw new Error("Permission denied.");
+    const reason = getProofreadBlockReason(actor, originalEntry, workflow);
+    if (reason) {
+      throw new Error(getProofreadBlockMessage(reason) || "当前成员不能校对此词条。");
     }
     return;
   }
@@ -1079,9 +1091,9 @@ export async function importEntryTranslations(
   const versionEvents: ProjectEvent[] = [];
 
   for (const row of rows) {
-    const entry =
-      (row.key ? entriesByKey.get(row.key) : undefined) ??
-      (row.index ? entriesByIndex.get(row.index) : undefined);
+    const entry = row.key
+      ? entriesByKey.get(row.key)
+      : row.index ? entriesByIndex.get(row.index) : undefined;
 
     if (!entry) {
       skipped += 1;
@@ -1257,13 +1269,15 @@ export async function saveEntry(
     });
 
     const operation = getRequestedEntryOperation(originalEntry, mergedEntry);
+    const project = await storage.readJson<ProjectConfig>("project.json");
+    const workflow = project.settings?.workflow;
 
     assertCanWriteEntry(
       actor,
       originalEntry,
       mergedEntry,
       operation,
-      options.workflow,
+      workflow,
     );
 
     const savedEntry = applyEntryAuditFields(
@@ -1271,7 +1285,7 @@ export async function saveEntry(
       mergedEntry,
       actor,
       operation,
-      options.workflow,
+      workflow,
     );
     const versionEvent = entryVersionChanged(originalEntry, savedEntry)
       ? createEntryVersionEvent(originalEntry, savedEntry, actor.id, {

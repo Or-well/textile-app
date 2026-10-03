@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setCurrentUser } from "../../src/services/permissions";
 import {
   createMemoryProjectDirectory,
+  readTextFile,
   type ProjectDirectoryHandle,
   type ProjectFileHandle,
 } from "../../src/services/projectFs";
-import { exportProjectPackage } from "../../src/services/projectPackage";
+import {
+  exportProjectPackage,
+  importProjectPackageToParentDirectory,
+  inspectProjectPackage,
+} from "../../src/services/projectPackage";
 import { readZip } from "../../src/utils/zip";
 import { createMember, createProject } from "./factories";
 
@@ -110,6 +115,33 @@ describe(".hproj project export", () => {
 
     await expect(exportProjectPackage(root)).rejects.toThrow(
       "项目目录中包含嵌套备份“source/old-backup.hproj”",
+    );
+  });
+
+  it("preserves legacy contexts through backup, preview, and import", async () => {
+    const root = createProjectRoot();
+    const contexts = await root.getDirectoryHandle("contexts", { create: true });
+    const file = await contexts.getFileHandle("scene.txt", { create: true });
+    const writable = await file.createWritable();
+    await writable.write("旧项目的独立上下文\n");
+    await writable.close();
+    setCurrentUser(createMember(["owner"]));
+
+    const exported = await exportProjectPackage(root);
+    const bytes = new Uint8Array(await exported.blob.arrayBuffer());
+    const packageFile = Object.assign(bytes, {
+      name: exported.fileName,
+    }) as unknown as File;
+    const files = await readZip(bytes);
+    expect(files["contexts/scene.txt"]).toBe("旧项目的独立上下文\n");
+    expect((await inspectProjectPackage(packageFile)).includedDirectories).toContain("contexts");
+
+    const imported = await importProjectPackageToParentDirectory(
+      packageFile,
+      createMemoryProjectDirectory({}),
+    );
+    expect(await readTextFile(imported.root, "contexts/scene.txt")).toBe(
+      "旧项目的独立上下文\n",
     );
   });
 

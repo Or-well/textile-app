@@ -117,12 +117,12 @@ function cloneRolePermissions(source: Record<Role, readonly string[]>): RolePerm
 }
 
 function getRolePermissionsSource(project?: ProjectConfig): RolePermissions | undefined {
-  return project?.settings.role_permissions ?? currentRolePermissions;
+  return project ? project.settings?.role_permissions : currentRolePermissions;
 }
 
 function getPermissionSchemaVersion(project?: ProjectConfig): number {
   return (
-    project?.settings.permission_schema_version ??
+    project?.settings?.permission_schema_version ??
     (project ? 1 : currentPermissionSchemaVersion)
   );
 }
@@ -203,9 +203,9 @@ function applySystemSafetyPermissions(
 }
 
 export function setPermissionProject(project: ProjectConfig | null | undefined): void {
-  currentRolePermissions = project?.settings.role_permissions;
+  currentRolePermissions = project?.settings?.role_permissions;
   currentPermissionSchemaVersion =
-    project?.settings.permission_schema_version ?? 1;
+    project?.settings?.permission_schema_version ?? 1;
 }
 
 export function getDefaultRolePermissions(): RolePermissions {

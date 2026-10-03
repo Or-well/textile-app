@@ -4,7 +4,6 @@ import type {
   Member,
   ProjectConfig,
   ProjectEvent,
-  Task,
 } from "../model/types";
 import {
   applyEntryWorkflowOperation,
@@ -27,7 +26,6 @@ import {
 } from "./history";
 import {
   canCreateComment,
-  canManageTask,
   canMarkDisputed,
   canResolveDispute,
   canRollbackEntry,
@@ -47,7 +45,6 @@ import {
   loadProjectEventLogTail,
   planAppendProjectEvents,
 } from "./eventLog";
-import { isEntryInTask, loadTasks } from "./tasks";
 
 export type EntryBatchOperation =
   | "set_reviewed"
@@ -160,31 +157,6 @@ function countSkippedReasons(
   return Array.from(counts, ([reason, count]) => ({ reason, count })).sort(
     (left, right) => right.count - left.count,
   );
-}
-
-function getTaskScopeBlockReason(
-  entry: Entry,
-  actor: Member,
-  project: ProjectConfig,
-  tasks: Task[],
-): string {
-  if (
-    project.settings.workflow?.enable_tasks === false ||
-    canManageTask(actor)
-  ) {
-    return "";
-  }
-
-  const isInEditableOwnTask = tasks.some(
-    (task) =>
-      task.assignee === actor.id &&
-      (task.status === "assigned" || task.status === "in_progress") &&
-      isEntryInTask(entry, task),
-  );
-
-  return isInEditableOwnTask
-    ? ""
-    : "不在当前成员可编辑的已分配任务范围内";
 }
 
 function resolveWorkflowOperation(
@@ -428,11 +400,8 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
     throw new Error("当前项目与批量操作目标不一致，请重新打开项目后再试。");
   }
 
-  const [allEntries, tasks, eventLogTail] = await Promise.all([
+  const [allEntries, eventLogTail] = await Promise.all([
     loadAllEntriesFresh(),
-    storedProject.settings.workflow?.enable_tasks === false
-      ? Promise.resolve([])
-      : loadTasks(),
     loadProjectEventLogTail(storage),
   ]);
   const entriesById = new Map(allEntries.map((entry) => [entry.id, entry]));
@@ -461,22 +430,14 @@ async function prepareBatch(request: EntryBatchRequest): Promise<PreparedBatch> 
       reviewed_by: audit.reviewedBy,
     });
     const workflowOperation = resolveWorkflowOperation(request.operation, entry);
-    const taskReason = getTaskScopeBlockReason(
+    const operationReason = getOperationBlockReason(
+      request.operation,
+      workflowOperation,
       entry,
       actor,
       storedProject,
-      tasks,
+      note,
     );
-    const operationReason =
-      taskReason ||
-      getOperationBlockReason(
-        request.operation,
-        workflowOperation,
-        entry,
-        actor,
-        storedProject,
-        note,
-      );
 
     if (operationReason) {
       skipped.push({ entryId, reason: operationReason });

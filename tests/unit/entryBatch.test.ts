@@ -97,7 +97,7 @@ describe("entry batch workflow", () => {
     ).rejects.toThrow("批量操作目标不一致");
   });
 
-  it("limits ordinary members to active tasks assigned to them", async () => {
+  it("allows local batch editing outside assigned tasks", async () => {
     const entries = [
       createEntry({
         id: "file-1:1",
@@ -154,13 +154,12 @@ describe("entry batch workflow", () => {
       project,
     });
 
-    expect(preview.applicableEntryIds).toEqual(["file-1:1"]);
-    expect(preview.skipped).toEqual([
-      {
-        entryId: "file-1:2",
-        reason: "不在当前成员可编辑的已分配任务范围内",
-      },
-    ]);
+    expect(preview.applicableEntryIds).toEqual(["file-1:1", "file-1:2"]);
+    expect(preview.skipped).toEqual([]);
+    const result = await executeEntryBatch({
+      entryIds: entries.map((entry) => entry.id), operation: "set_proofread", actor, project,
+    });
+    expect(result.updatedEntries.map((entry) => entry.id)).toEqual(["file-1:1", "file-1:2"]);
   });
 
   it("commits multiple files and version events through one batch", async () => {

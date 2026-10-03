@@ -551,8 +551,7 @@ function isSignableChangePackageMode(
   mode: ExportChangePackageMode | ChangePackageType,
 ): boolean {
   return (
-    mode === "member_changes" ||
-    mode === "task_changes" ||
+    isMemberChangePackage(mode) ||
     mode === "maintenance_changes" ||
     mode === "project_update"
   );
@@ -752,6 +751,24 @@ function parseProjectFromPackage(projectFiles: Record<string, string>): ProjectC
   } catch {
     return null;
   }
+}
+
+function mergeMaintenanceProjectSettings(
+  current: ProjectConfig,
+  incoming: ProjectConfig,
+): ProjectConfig {
+  if (incoming.project_id !== current.project_id) {
+    throw new Error("维护包中的项目配置不属于当前项目，不能导入。");
+  }
+  if (incoming.settings !== undefined && !isRecord(incoming.settings)) {
+    throw new Error("维护包中的项目设置格式不正确，不能导入。");
+  }
+
+  // 维护包没有正文快照或协作基线，只应用设置，保留本地项目身份和版本。
+  return {
+    ...current,
+    settings: { ...current.settings, ...incoming.settings },
+  };
 }
 
 function sanitizeMemberForProjectUpdate(member: Member): Member {
@@ -954,13 +971,15 @@ async function getProjectUpdateRevisionValidation(
   if (baseRevision === currentRevision) {
     return { projectUpdateMode: "fast_forward" };
   }
-  if (signatureStatus !== "valid") {
+  const requiresSignature = projectRequiresSignedChangePackages(project);
+  if (requiresSignature && signatureStatus !== "valid") {
     return {
       projectUpdateError:
         "项目版本不连续时，只能接收当前项目可信发布者签名的完整项目更新包。",
     };
   }
   if (
+    requiresSignature &&
     isProjectUpdateTrustTransition(
       project,
       packageProject,
@@ -1534,13 +1553,15 @@ async function collectAllTerms(storage: ProjectStorage): Promise<Record<string, 
 async function collectUserTasks(
   storage: ProjectStorage,
   userId: string,
+  includeCreatedTasks = false,
 ): Promise<Record<string, Task[]>> {
   if (!(await storage.fileExists("tasks/tasks.jsonl"))) {
     return {};
   }
 
   const rows = (await storage.readJsonl<Task>("tasks/tasks.jsonl")).filter(
-    (task) => task.created_by === userId || task.assignee === userId,
+    (task) => task.assignee === userId ||
+      (includeCreatedTasks && task.created_by === userId),
   );
 
   return rows.length > 0 ? { "tasks/tasks.jsonl": rows } : {};
@@ -1722,7 +1743,7 @@ async function buildWorkspaceMemberChangePayload(
     (change) =>
       Boolean(change.after) &&
       (change.after!.assignee === userId ||
-        change.after!.created_by === userId ||
+        (options.includeTaskAssignees && change.after!.created_by === userId) ||
         (options.includeTaskAssignees && selectedTaskIds?.has(change.id))) &&
       (!selectedTaskIds || selectedTaskIds.has(change.id)),
   );
@@ -2351,9 +2372,13 @@ function assertOrdinaryEntryPackageFields(
 function assertOrdinaryTaskPackageFields(
   mainTask: Task,
   packageTask: Task,
+  baseTask?: Task,
 ): void {
   for (const field of TASK_PROTECTED_FIELDS) {
-    if (!samePackageValue(mainTask[field], packageTask[field])) {
+    if (
+      !samePackageValue(mainTask[field], packageTask[field]) &&
+      (!baseTask || !samePackageValue(baseTask[field], packageTask[field]))
+    ) {
       throw new Error(`普通修改包不能修改任务受保护字段：${field}。`);
     }
   }
@@ -2702,11 +2727,15 @@ async function assertOrdinaryPackageWithinTaskScope(
   members: Member[],
   validation: ChangePackageValidation,
 ): Promise<void> {
+  const project = await storage.readJson<ProjectConfig>("project.json");
   const exporter = members.find(
     (member) => member.id === changePackage.manifest.user_id,
   );
 
-  if (validation.signatureStatus === "valid" && canManageTask(exporter)) {
+  if (
+    canManageTask(exporter) &&
+    (!validation.requiresSignedPackage || validation.signatureStatus === "valid")
+  ) {
     return;
   }
 
@@ -2715,17 +2744,19 @@ async function assertOrdinaryPackageWithinTaskScope(
         (task) => task.assignee === changePackage.manifest.user_id,
       )
     : [];
-  const allowedEntryIds = await getTaskScopeEntryIds(storage, tasks);
+  const allowedEntryIds = project.settings?.workflow?.enable_tasks === false
+    ? null
+    : await getTaskScopeEntryIds(storage, tasks);
 
   for (const packageEntry of flattenEntries(changePackage.entries)) {
-    if (!allowedEntryIds.has(packageEntry.id)) {
+    if (allowedEntryIds && !allowedEntryIds.has(packageEntry.id)) {
       throw new Error("普通成员修改包包含分配任务范围外的词条，不能导入。");
     }
   }
 
   for (const comments of Object.values(changePackage.comments)) {
     for (const comment of comments) {
-      if (!allowedEntryIds.has(comment.entry_id)) {
+      if (allowedEntryIds && !allowedEntryIds.has(comment.entry_id)) {
         throw new Error("普通成员修改包包含分配任务范围外的批注，不能导入。");
       }
     }
@@ -2733,7 +2764,7 @@ async function assertOrdinaryPackageWithinTaskScope(
 
   for (const event of changePackage.events) {
     if (
-      event.type === "comment.deleted" &&
+      allowedEntryIds && event.type === "comment.deleted" &&
       (!event.entry_id || !allowedEntryIds.has(event.entry_id))
     ) {
       throw new Error("普通成员修改包包含分配任务范围外的批注删除操作，不能导入。");
@@ -2765,7 +2796,8 @@ async function assertOrdinaryPackageComments(
     (member) => member.id === changePackage.manifest.user_id,
   );
   const canSubmitOtherMembersComments =
-    validation.signatureStatus === "valid" && canManageTask(exporter);
+    canManageTask(exporter) &&
+    (!validation.requiresSignedPackage || validation.signatureStatus === "valid");
 
   for (const [path, packageComments] of Object.entries(changePackage.comments)) {
     const existingComments = (await storage.fileExists(path))
@@ -2953,7 +2985,7 @@ function mergeOrdinaryPackageTasks(
 
     const currentTask = nextRows[index]!;
     const baseTask = findRowById(baseTasks, packageTask.id)?.row;
-    assertOrdinaryTaskPackageFields(baseTask ?? currentTask, packageTask);
+    assertOrdinaryTaskPackageFields(currentTask, packageTask, baseTask);
 
     if (currentTask.status !== packageTask.status) {
       const allowedStatuses: Task["status"][] = [
@@ -3084,6 +3116,15 @@ function assertChangePackageManifestForImport(
     throw new Error("修改包缺少提交者信息，无法导入。");
   }
 
+  const packageType = getPackageType(manifest);
+  if (
+    !isMemberChangePackage(packageType) &&
+    packageType !== "maintenance_changes" &&
+    !isProjectUpdatePackage(packageType)
+  ) {
+    throw new Error(`不支持的修改包类型：${packageType}。`);
+  }
+
   const schemaVersion = getSupportedManifestSchemaVersion(manifest);
 
   if (
@@ -3093,6 +3134,30 @@ function assertChangePackageManifestForImport(
     throw new Error(
       `修改包 schema_version ${manifest.schema_version} 暂不支持，无法导入。`,
     );
+  }
+}
+
+function assertChangePackageContentScope(changePackage: ReadChangePackage): void {
+  const packageType = getPackageType(changePackage.manifest);
+  if (isMemberChangePackage(packageType)) {
+    if (
+      Object.keys(changePackage.projectFiles).length > 0 ||
+      Object.keys(changePackage.sourceFiles).length > 0 ||
+      Object.keys(changePackage.contexts).length > 0
+    ) {
+      throw new Error("普通修改包不能携带项目配置、源文件或独立上下文文件；请使用维护包或项目更新包。词条上下文应随词条提交。");
+    }
+  } else if (
+    !isProjectUpdatePackage(packageType) &&
+    Object.keys(changePackage.sourceFiles).length > 0
+  ) {
+    throw new Error("只有项目更新包可以携带源文件快照。");
+  }
+  if (
+    packageType === "maintenance_changes" &&
+    (countRecordRows(changePackage.entries) > 0 || countRecordRows(changePackage.comments) > 0)
+  ) {
+    throw new Error("维护包不能携带词条或批注正文，请使用项目更新包或普通修改包。");
   }
 }
 
@@ -3243,7 +3308,13 @@ async function precheckChangePackageImport(
       throw new Error(`项目设置目标路径不正确：${path}`);
     }
 
-    JSON.parse(changePackage.projectFiles[path]);
+    const incomingProject = JSON.parse(changePackage.projectFiles[path]) as ProjectConfig;
+    if (validation.packageType === "maintenance_changes") {
+      mergeMaintenanceProjectSettings(
+        await storage.readJson<ProjectConfig>("project.json"),
+        incomingProject,
+      );
+    }
     await assertTextTargetReadable(storage, "project.json", "项目设置");
   }
 
@@ -3490,6 +3561,7 @@ export async function exportChangePackage(
   const storage = getProjectStorage();
   const project = await storage.readJson<ProjectConfig>("project.json");
   const actor = options.actor;
+  const canExportAnyTask = canManageTask(actor);
   const createdAt = options.createdAt ?? nowIso();
   const baseRevision = getProjectRevision(project);
   const targetRevision =
@@ -3531,7 +3603,6 @@ export async function exportChangePackage(
     }
 
     const tasks = await loadTasksByIds(storage, taskIds);
-    const canExportAnyTask = canManageTask(actor);
     const unauthorizedTask = tasks.find(
       (task) => task.assignee !== actor.id && !canExportAnyTask,
     );
@@ -3569,7 +3640,7 @@ export async function exportChangePackage(
       throw new Error("当前成员没有导出普通修改包的权限。");
     }
 
-    const exportTasks = canManageTask(actor)
+    const exportTasks = project.settings?.workflow?.enable_tasks === false || canExportAnyTask
       ? null
       : await loadExportableTasksForUser(storage, userId);
     const workspacePayload = await buildWorkspaceMemberChangePayload(
@@ -3577,15 +3648,15 @@ export async function exportChangePackage(
       project,
       userId,
       exportTasks,
-      { includeTerms: true },
+      { includeTerms: true, includeTaskAssignees: canExportAnyTask },
     );
 
     if (workspacePayload) {
       Object.assign(payload, workspacePayload);
-    } else if (canManageTask(actor)) {
+    } else if (exportTasks === null) {
       payload.entries = await collectUserChangedEntries(storage, project, userId);
       payload.comments = await collectUserComments(storage, userId);
-      payload.tasks = await collectUserTasks(storage, userId);
+      payload.tasks = await collectUserTasks(storage, userId, canExportAnyTask);
       payload.events = await collectUserEvents(storage, userId);
       payload.terms = await collectUserTerms(storage, userId);
       payload.termDeletions = await collectUserTermDeletions(storage, userId);
@@ -4048,12 +4119,23 @@ export async function validateChangePackage(
   changePackage: ReadChangePackage,
 ): Promise<ChangePackageValidation> {
   assertChangePackageManifestForImport(changePackage);
+  assertChangePackageContentScope(changePackage);
 
   const storage = getProjectStorage();
   const project = await storage.readJson<ProjectConfig>("project.json");
   const members = await loadProjectMembers(storage);
   const packageProjectId = changePackage.manifest.project_id;
   const packageType = getPackageType(changePackage.manifest);
+  if (packageProjectId === project.project_id && !isProjectUpdatePackage(packageType)) {
+    assertCan(
+      members.find((member) => member.id === changePackage.manifest.user_id),
+      isMemberChangePackage(packageType)
+        ? PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MEMBER_CHANGES
+        : PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_MAINTENANCE,
+      project,
+      "提交者没有发布这类修改包的权限，请核对当前项目成员和权限设置。",
+    );
+  }
   const rawEntries = parsePackageJsonl<Entry>(changePackage.files, "entries/");
   const payload: ChangePackagePayload = {
     entries:
@@ -4091,6 +4173,9 @@ export async function validateChangePackage(
     changePackage.memberFiles,
   );
   const packageProject = parseProjectFromPackage(changePackage.projectFiles);
+  const applicableProject = packageProject && packageType === "maintenance_changes"
+    ? mergeMaintenanceProjectSettings(project, packageProject)
+    : packageProject;
   const summary = getPackageSummary(payload);
   const isProjectUpdate = isProjectUpdatePackage(packageType);
   const useCredentialPatches = isMemberChangePackage(packageType) && !isProjectUpdate;
@@ -4099,7 +4184,7 @@ export async function validateChangePackage(
       ? countChangedMemberRecords(members, packageMembers)
       : 0;
   const projectChanged =
-    packageProject && stableStringify(project) !== stableStringify(packageProject)
+    applicableProject && stableStringify(project) !== stableStringify(applicableProject)
       ? 1
       : 0;
   const credentialRecords = useCredentialPatches
@@ -4119,8 +4204,10 @@ export async function validateChangePackage(
     !useCredentialPatches && detectOwnerRolePromotion(members, packageMembers);
   const projectUpdateSignerAllowed =
     !isProjectUpdate ||
-    canExportProjectUpdatePackage(
+    can(
       members.find((member) => member.id === changePackage.manifest.user_id),
+      PERMISSION_ACTIONS.CHANGE_PACKAGE_EXPORT_PROJECT_UPDATE,
+      project,
     );
   const signatureStatus: SignatureStatus =
     isProjectUpdate &&
@@ -5928,14 +6015,6 @@ export async function applyChangePackage(
     );
   }
 
-  if (!isMemberChangePackage(validation.packageType)) {
-    try {
-      assertCan(options.actor, PERMISSION_ACTIONS.CHANGE_PACKAGE_IMPORT);
-    } catch {
-      throw new Error("当前成员没有导入修改包的权限。");
-    }
-  }
-
   if (
     isMemberChangePackage(validation.packageType) &&
     !canImportMemberChangePackage(options.actor)
@@ -6521,7 +6600,15 @@ export async function applyChangePackage(
 
   for (const [path, content] of Object.entries(changePackage.projectFiles)) {
     if (path === "project/project.json") {
-      writePlan.writeText("project.json", content);
+      if (validation.packageType === "maintenance_changes") {
+        const currentProject = await storage.readJson<ProjectConfig>("project.json");
+        writePlan.writeJson("project.json", mergeMaintenanceProjectSettings(
+          currentProject,
+          JSON.parse(content) as ProjectConfig,
+        ));
+      } else {
+        writePlan.writeText("project.json", content);
+      }
       importedProjectSettings += 1;
     }
   }

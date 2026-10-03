@@ -25,6 +25,6 @@ export function projectRequiresSignedChangePackages(
   project: ProjectConfig | null | undefined,
 ): boolean {
   return normalizeProjectCollaborationSettings(
-    project?.settings.collaboration,
+    project?.settings?.collaboration,
   ).require_signed_change_packages;
 }

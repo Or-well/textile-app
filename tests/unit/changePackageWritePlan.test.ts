@@ -123,10 +123,10 @@ async function createChangePackageFixture(options: {
     reply_to: null,
     created_at: "2026-02-01T00:00:00.000Z",
   };
-  const entries = {
+  const entries: Record<string, Entry[]> = options.packageType === "maintenance_changes" ? {} : {
     "entries/file-1/chunk_0001.jsonl": [packageEntry],
   };
-  const comments = {
+  const comments: Record<string, Comment[]> = options.packageType === "maintenance_changes" ? {} : {
     "comments/file-1/1.jsonl": [comment],
   };
   const tasks = options.packageTask
@@ -177,8 +177,8 @@ async function createChangePackageFixture(options: {
     project_id: project.project_id,
     package_id: "change-1",
     package_type: options.packageType ?? "member_changes",
-    user_id: contributor.id,
-    user_name: contributor.name,
+    user_id: options.packageType === "maintenance_changes" ? actor.id : contributor.id,
+    user_name: options.packageType === "maintenance_changes" ? actor.name : contributor.name,
     created_at: "2026-02-01T00:00:00.000Z",
     content_hash: await calculateChangePackageContentHash(payload),
   };
@@ -493,6 +493,168 @@ async function createExportFixture(options: {
 }
 
 describe("ordinary change-package write plan", () => {
+  it.each(["member_changes", "user_changes", "task_changes", "legacy"] as const)(
+    "rejects project configuration in a %s package before writing",
+    async (packageType) => {
+      const fixture = await createChangePackageFixture({ packageType });
+      const original = await fixture.storage.readText("project.json");
+      fixture.changePackage.projectFiles = {
+        "project/project.json": JSON.stringify({ ...JSON.parse(original), name: "Wrong snapshot", files: [] }),
+      };
+      await refreshChangePackageHash(fixture.changePackage);
+      setChangesProjectStorage(fixture.storage);
+      await expect(applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor, confirmMaintenance: true,
+      })).rejects.toThrow("普通修改包不能携带");
+      expect(await fixture.storage.readText("project.json")).toBe(original);
+      expect(await fixture.storage.fileExists("logs/events.jsonl")).toBe(true);
+      expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+    },
+  );
+
+  it.each(["sourceFiles", "contexts"] as const)("rejects %s in an ordinary package", async (field) => {
+    const fixture = await createChangePackageFixture();
+    fixture.changePackage[field] = field === "sourceFiles"
+      ? { "source/dialog.txt": "Unrelated source" }
+      : { "contexts/other.txt": "Unrelated context" };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+      .rejects.toThrow("普通修改包不能携带");
+    expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+  });
+
+  it("rejects an unknown package type rather than treating it as maintenance", async () => {
+    const fixture = await createChangePackageFixture();
+    fixture.changePackage.manifest.package_type = "unknown" as ChangePackageType;
+    setChangesProjectStorage(fixture.storage);
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+      .rejects.toThrow("不支持的修改包类型");
+    expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+  });
+
+  it.each(["user_changes", "task_changes", "legacy"] as const)(
+    "requires signatures for the supported old %s package type when enabled",
+    async (packageType) => {
+      const fixture = await createChangePackageFixture({ packageType, requireSignedChangePackages: true });
+      setChangesProjectStorage(fixture.storage);
+      await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+        .rejects.toThrow("有效成员签名");
+      expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+    },
+  );
+
+  it.each(["disabled", "removed", "readonly"])("rejects an ordinary submission from a currently %s exporter", async (state) => {
+    const fixture = await createChangePackageFixture();
+    const members = await fixture.storage.readJson<{ members: Member[] }>("members.json");
+    members.members = state === "removed" ? [fixture.actor] : members.members.map((member) =>
+      member.id === fixture.actor.id ? member : {
+        ...member, active: state !== "disabled", roles: state === "readonly" ? ["readonly"] : member.roles,
+      },
+    );
+    await fixture.storage.writeJson("members.json", members);
+    setChangesProjectStorage(fixture.storage);
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+      .rejects.toThrow("提交者没有发布这类修改包的权限");
+    expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+  });
+
+  it("rejects maintenance published by a member without maintenance export permission", async () => {
+    const fixture = await createChangePackageFixture({ packageType: "maintenance_changes" });
+    fixture.changePackage.manifest.user_id = "member-2";
+    setChangesProjectStorage(fixture.storage);
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor, confirmMaintenance: true }))
+      .rejects.toThrow("提交者没有发布这类修改包的权限");
+    expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+  });
+
+  it.each(["entries", "comments"] as const)("rejects %s in maintenance rather than applying a body snapshot", async (field) => {
+    const fixture = await createChangePackageFixture({ packageType: "maintenance_changes" });
+    if (field === "entries") fixture.changePackage.entries = {
+      "entries/file-1/chunk_0001.jsonl": [{ ...fixture.originalEntry, source: "Wrong original", target: "Wrong snapshot" }],
+    };
+    else fixture.changePackage.comments = {
+      "comments/file-1/000001.jsonl": [{
+        id: "wrong-comment", entry_id: fixture.originalEntry.id, file_id: "file-1",
+        user_id: fixture.actor.id, body: "Body snapshot", reply_to: null, created_at: "2026-02-01T00:00:00.000Z",
+      }],
+    };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor, confirmMaintenance: true }))
+      .rejects.toThrow("维护包不能携带词条或批注正文");
+    expect(await fixture.storage.readJsonl("logs/events.jsonl")).toEqual([]);
+  });
+  it.each(["legacy", "baseline"] as const)(
+    "exports owned entries and comments without tasks in a %s workspace when tasks are disabled",
+    async (workspace) => {
+      const fixture = await createExportFixture();
+      const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+      project.settings.workflow = { enable_tasks: false };
+      await fixture.storage.writeJson("project.json", project);
+      await fixture.storage.writeJsonl("tasks/tasks.jsonl", []);
+      const entries = await fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl");
+      const otherEntry = createEntry({
+        id: "file-1:2", file_id: "file-1", index: 2,
+        updated_by: fixture.members[0]!.id,
+      });
+      await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [...entries, otherEntry]);
+      if (workspace === "baseline") {
+        await ensureWorkspaceBaseline(fixture.storage, project);
+      }
+      await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+        { ...entries[0]!, target: "Owned local change" },
+        { ...otherEntry, target: "Another member's change" },
+      ]);
+      await fixture.storage.writeJsonl("comments/file-1/000001.jsonl", [{
+        id: "owned-comment", entry_id: "file-1:1", file_id: "file-1",
+        user_id: fixture.contributor.id, body: "Local comment", reply_to: null,
+        created_at: "2026-02-01T00:00:00.000Z",
+      } satisfies Comment]);
+      setChangesProjectStorage(fixture.storage);
+
+      const exported = await exportChangePackage(fixture.contributor.id, {
+        mode: "member_changes", sign: false, actor: fixture.contributor,
+      });
+      const pkg = await readChangePackage(new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob);
+      expect(Object.values(pkg.entries).flat()).toMatchObject([
+        { id: "file-1:1", target: "Owned local change" },
+      ]);
+      expect(Object.values(pkg.comments).flat()).toMatchObject([{ id: "owned-comment" }]);
+    },
+  );
+
+  it("imports member entries and comments without assigned tasks when tasks are disabled", async () => {
+    const fixture = await createChangePackageFixture({ packageEntry: { target: "Package changed" } });
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    project.settings.workflow = { enable_tasks: false };
+    await fixture.storage.writeJson("project.json", project);
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", []);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(applyChangePackage(fixture.changePackage, [
+      { entryId: fixture.originalEntry.id, action: "use_package" },
+    ], { actor: fixture.actor })).resolves.toMatchObject({ appliedEntries: 1, importedComments: 1 });
+    expect((await fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"))[0]?.target).toBe("Package changed");
+  });
+
+  it("still rejects another member's task status when tasks are disabled", async () => {
+    const fixture = await createChangePackageFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    project.settings.workflow = { enable_tasks: false };
+    await fixture.storage.writeJson("project.json", project);
+    const tasks = await fixture.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    const otherTask = { ...tasks[0]!, id: "other-task", assignee: fixture.actor.id };
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [...tasks, otherTask]);
+    fixture.changePackage.tasks = { "tasks/tasks.jsonl": [{ ...otherTask, status: "submitted" }] };
+    await refreshChangePackageHash(fixture.changePackage);
+    const original = await fixture.storage.readText("tasks/tasks.jsonl");
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor })).rejects.toThrow("未分配给导出者");
+    expect(await fixture.storage.readText("tasks/tasks.jsonl")).toBe(original);
+  });
+
   it("keeps every chunk visible after importing a change to one chunk", async () => {
     const fixture = await createChangePackageFixture({ packageEntry: { target: "Package translation" } });
     const secondEntry = createEntry({ id: "file-1:2", file_id: "file-1", index: 2, key: "line_000002", target: "Unchanged" });
@@ -901,8 +1063,8 @@ describe("ordinary change-package write plan", () => {
     ).rejects.toThrow("不能静默跳过");
   });
 
-  it("does not let unsigned packages forge a manager to bypass task scope", async () => {
-    const fixture = await createChangePackageFixture();
+  it("requires a valid signature even for manager packages when signatures are required", async () => {
+    const fixture = await createChangePackageFixture({ requireSignedChangePackages: true });
 
     fixture.changePackage.manifest.user_id = fixture.actor.id;
     fixture.changePackage.manifest.user_name = fixture.actor.name;
@@ -912,18 +1074,28 @@ describe("ordinary change-package write plan", () => {
       applyChangePackage(fixture.changePackage, [], {
         actor: fixture.actor,
       }),
-    ).rejects.toThrow("任务范围外");
+    ).rejects.toThrow("有效成员签名");
   });
 
-  it("allows managers to export changes from another member's task", async () => {
+  it.each(["unsigned", "valid", "invalid"])("exports and imports another member's task with an optional %s signature", async (signatureStatus) => {
     const fixture = await createExportFixture();
+    const sign = signatureStatus !== "unsigned";
+    const signingOwner = sign ? (await generateOwnSigningKey(
+      fixture.root, fixture.members, fixture.members[0]!,
+    )).member : fixture.members[0]!;
+    await fixture.storage.writeJsonl("comments/file-1/000001.jsonl", [{
+      id: "task-comment", entry_id: "file-1:1", file_id: "file-1",
+      user_id: fixture.contributor.id, body: "Contributor comment", reply_to: null,
+      created_at: "2026-02-01T00:00:00.000Z",
+    } satisfies Comment]);
 
     setChangesProjectStorage(fixture.storage);
 
     const exported = await exportChangePackage("owner-1", {
       mode: "task_changes",
       taskIds: ["task-1"],
-      actor: fixture.members[0],
+      sign,
+      actor: signingOwner,
     });
     const changePackage = await readChangePackage(
       new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob,
@@ -936,6 +1108,16 @@ describe("ordinary change-package write plan", () => {
         target: "Translated",
       },
     ]);
+    expect(Object.values(changePackage.comments).flat()).toMatchObject([{ id: "task-comment" }]);
+    if (signatureStatus === "invalid") changePackage.signature!.signature = "AAAA";
+    const receiver = await createExportFixture();
+    await receiver.storage.writeJson("members.json", {
+      schema_version: 1, members: [signingOwner, fixture.contributor],
+    });
+    setChangesProjectStorage(receiver.storage);
+    await expect(applyChangePackage(changePackage, [], { actor: signingOwner }))
+      .resolves.toMatchObject({ importedComments: 1 });
+    expect(changePackage.validation?.signatureStatus).toBe(signatureStatus);
   });
 
   it("does not export own credential changes unless explicitly requested", async () => {
@@ -2336,8 +2518,10 @@ describe("project update package write plan", () => {
     });
   });
 
-  it("rebases directly onto a newer signed snapshot when intermediate updates were skipped", async () => {
-    const fixture = await createProjectUpdateFixture();
+  it.each(["unsigned", "valid", "invalid"])("rebases directly onto a newer snapshot with an optional %s signature", async (signatureStatus) => {
+    const sign = signatureStatus !== "unsigned";
+    const fixture = await createProjectUpdateFixture({ sign });
+    if (signatureStatus === "invalid") fixture.changePackage.signature!.signature = "AAAA";
     const receiverProject = {
       ...fixture.receiverProject,
       revision: "skipped-intermediate-revision",
@@ -2371,6 +2555,7 @@ describe("project update package write plan", () => {
     await expect(fixture.receiverStorage.readJsonl<Entry>(path)).resolves.toMatchObject([
       { target: "Updated", context: "Unsubmitted local context" },
     ]);
+    expect(fixture.changePackage.validation?.signatureStatus).toBe(signatureStatus);
   });
 
   it("treats an already applied project update as an idempotent no-op", async () => {
@@ -2409,8 +2594,9 @@ describe("project update package write plan", () => {
     );
   });
 
-  it("keeps publisher trust transitions on the strict revision chain", async () => {
+  it.each([false, true])("uses the publisher trust chain only with requireSigned=%s", async (requireSigned) => {
     const fixture = await createProjectUpdateFixture({
+      requireSignedChangePackages: requireSigned,
       projectUpdateMembers: (owner) => [
         {
           ...owner,
@@ -2429,9 +2615,11 @@ describe("project update package write plan", () => {
     await ensureWorkspaceBaseline(fixture.receiverStorage, receiverProject);
     setChangesProjectStorage(fixture.receiverStorage);
 
-    await expect(detectConflicts(fixture.changePackage)).rejects.toThrow(
-      "必须按顺序接收",
-    );
+    if (requireSigned) {
+      await expect(detectConflicts(fixture.changePackage)).rejects.toThrow("必须按顺序接收");
+    } else {
+      await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+    }
   });
 
   it("uses unique suggested names for multiple exports on the same day", () => {
@@ -3145,6 +3333,159 @@ describe("project update package write plan", () => {
 
 
 describe("collaboration regression protection", () => {
+  it("accepts task submission after maintenance changes task details without advancing the baseline", async () => {
+    const worker = await createExportFixture();
+    const main = await createExportFixture();
+    const project = await worker.storage.readJson<ProjectConfig>("project.json");
+    await ensureWorkspaceBaseline(worker.storage, project);
+    await ensureWorkspaceBaseline(main.storage, project);
+    const [task] = await main.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    await main.storage.writeJsonl("tasks/tasks.jsonl", [{ ...task!, title: "Maintained title" }]);
+    setChangesProjectStorage(main.storage);
+    const maintenance = await exportChangePackage(main.members[0]!.id, {
+      mode: "maintenance_changes", sign: false, actor: main.members[0]!,
+    });
+    const maintenancePackage = await readChangePackage(new Uint8Array(await maintenance.blob.arrayBuffer()) as unknown as Blob);
+    setChangesProjectStorage(worker.storage);
+    await applyChangePackage(maintenancePackage, [], { actor: worker.contributor, confirmMaintenance: true });
+    setTasksProjectStorage(worker.storage);
+    setCurrentUser(worker.contributor);
+    setPermissionProject(project);
+    await submitTask("task-1");
+    const submitted = await exportChangePackage(worker.contributor.id, {
+      mode: "member_changes", sign: false, actor: worker.contributor,
+    });
+    const submission = await readChangePackage(new Uint8Array(await submitted.blob.arrayBuffer()) as unknown as Blob);
+    setChangesProjectStorage(main.storage);
+    submission.tasks["tasks/tasks.jsonl"]![0]!.title = "Unknown title";
+    await refreshChangePackageHash(submission);
+    await expect(applyChangePackage(submission, [], { actor: main.members[0]! }))
+      .rejects.toThrow("任务受保护字段：title");
+    expect(await main.storage.readJsonl<Task>("tasks/tasks.jsonl"))
+      .toMatchObject([{ title: "Maintained title", status: "assigned" }]);
+    submission.tasks["tasks/tasks.jsonl"]![0]!.title = "Maintained title";
+    await refreshChangePackageHash(submission);
+    await expect(applyChangePackage(submission, [], { actor: main.members[0]! }))
+      .resolves.toMatchObject({ importedTasks: 1 });
+    expect(await main.storage.readJsonl<Task>("tasks/tasks.jsonl"))
+      .toMatchObject([{ title: "Maintained title", status: "submitted" }]);
+    setCurrentUser(null);
+    setPermissionProject(undefined);
+  });
+
+  it("accepts an older member package after an unrelated publication", async () => {
+    const fixture = await createExportFixture();
+    const project = await fixture.storage.readJson<ProjectConfig>("project.json");
+    project.revision = "member-base";
+    project.revision_hash = "member-base";
+    await fixture.storage.writeJson("project.json", project);
+    await ensureWorkspaceBaseline(fixture.storage, project);
+    const receiver = createProjectStorage(createMemoryProjectDirectory({}));
+    for (const path of ["members.json", "entries/file-1/chunk_0001.jsonl", "tasks/tasks.jsonl", "logs/events.jsonl"]) {
+      await receiver.writeText(path, await fixture.storage.readText(path));
+    }
+    const publishedProject = { ...project, revision: "new-publication", revision_hash: "new-publication" };
+    await receiver.writeJson("project.json", publishedProject);
+    const tasks = await receiver.readJsonl<Task>("tasks/tasks.jsonl");
+    await receiver.writeJsonl("tasks/tasks.jsonl", [
+      ...tasks, { ...tasks[0]!, id: "other-task", title: "Another member's new task", assignee: fixture.members[0]!.id },
+    ]);
+    await ensureWorkspaceBaseline(receiver, publishedProject);
+    const entries = await fixture.storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl");
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [{ ...entries[0]!, target: "Late submission" }]);
+    setChangesProjectStorage(fixture.storage);
+    const exported = await exportChangePackage(fixture.contributor.id, {
+      mode: "member_changes", sign: false, actor: fixture.contributor,
+    });
+    const pkg = await readChangePackage(new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob);
+    setChangesProjectStorage(receiver);
+
+    expect(await detectConflicts(pkg)).toEqual([]);
+    await expect(applyChangePackage(pkg, [], { actor: fixture.members[0]! })).resolves.toMatchObject({ appliedEntries: 1 });
+    expect((await receiver.readJson<ProjectConfig>("project.json")).revision).toBe("new-publication");
+    expect(await receiver.readJsonl<Task>("tasks/tasks.jsonl")).toHaveLength(2);
+  });
+
+  it("imports maintenance settings and credentials without replacing the local snapshot or baseline", async () => {
+    const fixture = await createChangePackageFixture({ packageType: "maintenance_changes" });
+    const current = await fixture.storage.readJson<ProjectConfig>("project.json");
+    current.revision = "local-revision";
+    current.revision_hash = "local-revision";
+    current.trust_epoch = 2;
+    await fixture.storage.writeJson("project.json", current);
+    await ensureWorkspaceBaseline(fixture.storage, current);
+    const baseline = await fixture.storage.readText("changes/workspace/baseline.json");
+    const entryBytes = await fixture.storage.readText("entries/file-1/chunk_0001.jsonl");
+    const incoming = {
+      ...current, revision: "different-revision", revision_hash: "different-revision",
+      trust_epoch: 3, name: "Other copy", files: [],
+      settings: { ...current.settings, auto_save: false, role_permissions: { translator: ["file.view"] } },
+    };
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.projectFiles = { "project/project.json": `${JSON.stringify(incoming)}\n` };
+    const members = await fixture.storage.readJson<{ schema_version: number; members: Member[] }>("members.json");
+    members.members[1] = {
+      ...members.members[1]!, password_hash: "new-hash", password_salt: "new-salt",
+      password_updated_at: "2026-02-01T00:00:00.000Z", allow_permissions: ["term.create"],
+    };
+    fixture.changePackage.memberFiles = { "members/members.json": `${JSON.stringify(members)}\n` };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await applyChangePackage(fixture.changePackage, [], { actor: fixture.actor, confirmMaintenance: true });
+    const saved = await fixture.storage.readJson<ProjectConfig>("project.json");
+    expect(saved).toEqual({ ...current, settings: incoming.settings });
+    expect(await fixture.storage.readText("changes/workspace/baseline.json")).toBe(baseline);
+    await expect(ensureWorkspaceBaseline(fixture.storage, saved)).resolves.toBeDefined();
+    expect(await fixture.storage.readText("entries/file-1/chunk_0001.jsonl")).toBe(entryBytes);
+    expect(await fixture.storage.readJson("members.json")).toEqual(members);
+  });
+
+  it("imports legacy maintenance without settings while preserving local settings", async () => {
+    const fixture = await createChangePackageFixture({ packageType: "maintenance_changes" });
+    const current = await fixture.storage.readJson<ProjectConfig>("project.json");
+    const { settings: _settings, ...legacyProject } = current;
+    fixture.changePackage.entries = {};
+    fixture.changePackage.comments = {};
+    fixture.changePackage.projectFiles = { "project/project.json": JSON.stringify(legacyProject) };
+    const members = await fixture.storage.readJson<{ schema_version: number; members: Member[] }>("members.json");
+    members.members[1] = { ...members.members[1]!, password_hash: "legacy-hash", password_salt: "legacy-salt" };
+    fixture.changePackage.memberFiles = { "members/members.json": JSON.stringify(members) };
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(applyChangePackage(fixture.changePackage, [], {
+      actor: fixture.actor, confirmMaintenance: true,
+    })).resolves.toMatchObject({ importedMembers: 1 });
+    expect(await fixture.storage.readJson<ProjectConfig>("project.json")).toEqual(current);
+    expect(await fixture.storage.readJson("members.json")).toEqual(members);
+  });
+
+  it.each(["project_id", "settings"] as const)(
+    "rejects invalid maintenance %s before writing any project data",
+    async (field) => {
+      const fixture = await createChangePackageFixture({ packageType: "maintenance_changes" });
+      const originalProject = await fixture.storage.readText("project.json");
+      const originalMembers = await fixture.storage.readText("members.json");
+      const incoming = JSON.parse(originalProject);
+      incoming[field] = field === "project_id" ? "another-project" : [];
+      fixture.changePackage.entries = {};
+      fixture.changePackage.comments = {};
+      fixture.changePackage.terms = { "terms/terms.jsonl": [createTerm()] };
+      fixture.changePackage.projectFiles = { "project/project.json": JSON.stringify(incoming) };
+      await refreshChangePackageHash(fixture.changePackage);
+      setChangesProjectStorage(fixture.storage);
+
+      await expect(applyChangePackage(fixture.changePackage, [], {
+        actor: fixture.actor, confirmMaintenance: true,
+      })).rejects.toThrow(field === "project_id" ? "不属于当前项目" : "设置格式不正确");
+      expect(await fixture.storage.readText("project.json")).toBe(originalProject);
+      expect(await fixture.storage.readText("members.json")).toBe(originalMembers);
+      expect(await fixture.storage.fileExists("terms/terms.jsonl")).toBe(false);
+    },
+  );
+
   it("refreshes imported task status and preserves it on the next edit", async () => {
     const fixture = await createExportFixture();
     const project = await fixture.storage.readJson<ProjectConfig>("project.json");

@@ -3,7 +3,6 @@ import type {
   Member,
   ProjectConfig,
   ProjectEvent,
-  Task,
 } from "../model/types";
 import { PERMISSION_ACTIONS } from "../model/permissions";
 import { normalizeEntry } from "../model/status";
@@ -15,7 +14,7 @@ import {
   loadAllEntriesFresh,
   prepareEntryUpdates,
 } from "./entries";
-import { can, canManageTask } from "./permissions";
+import { can } from "./permissions";
 import type { ProjectDirectoryHandle } from "./projectFs";
 import {
   createProjectStorage,
@@ -23,7 +22,6 @@ import {
 } from "./projectStorage";
 import { createProjectWritePlan } from "./projectWritePlan";
 import { planAppendProjectEvents } from "./eventLog";
-import { isEntryInTask, loadTasks } from "./tasks";
 
 export interface EntryReplaceRequest {
   entryIds: string[];
@@ -147,31 +145,6 @@ function replaceLiteral(
   return { text: replaced, count };
 }
 
-function getTaskScopeBlockReason(
-  entry: Entry,
-  actor: Member,
-  project: ProjectConfig,
-  tasks: Task[],
-): string {
-  if (
-    project.settings.workflow?.enable_tasks === false ||
-    canManageTask(actor)
-  ) {
-    return "";
-  }
-
-  const isInEditableOwnTask = tasks.some(
-    (task) =>
-      task.assignee === actor.id &&
-      (task.status === "assigned" || task.status === "in_progress") &&
-      isEntryInTask(entry, task),
-  );
-
-  return isInEditableOwnTask
-    ? ""
-    : "不在当前成员可编辑的已分配任务范围内";
-}
-
 function getReplaceBlockReason(
   entry: Entry,
   actor: Member,
@@ -251,12 +224,7 @@ async function prepareReplace(request: EntryReplaceRequest): Promise<PreparedRep
     throw new Error("当前项目与替换目标不一致，请重新打开项目后再试。");
   }
 
-  const [allEntries, tasks] = await Promise.all([
-    loadAllEntriesFresh(),
-    storedProject.settings.workflow?.enable_tasks === false
-      ? Promise.resolve([])
-      : loadTasks(),
-  ]);
+  const allEntries = await loadAllEntriesFresh();
   const entriesById = new Map(allEntries.map((entry) => [entry.id, entry]));
   const skipped: EntryReplaceSkippedItem[] = [];
   const replacements: EntryReplaceItem[] = [];
@@ -274,20 +242,12 @@ async function prepareReplace(request: EntryReplaceRequest): Promise<PreparedRep
     }
 
     const entry = normalizeEntry(storedEntry);
-    const taskReason = getTaskScopeBlockReason(
+    const replaceReason = getReplaceBlockReason(
       entry,
       actor,
       storedProject,
-      tasks,
+      Boolean(request.skipReviewedAndProofread),
     );
-    const replaceReason =
-      taskReason ||
-      getReplaceBlockReason(
-        entry,
-        actor,
-        storedProject,
-        Boolean(request.skipReviewedAndProofread),
-      );
 
     if (replaceReason) {
       skipped.push({ entryId, reason: replaceReason });

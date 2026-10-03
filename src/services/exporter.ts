@@ -139,7 +139,7 @@ export function normalizeReleaseExportOptions(
   project: ProjectConfig,
   options: ExportProjectOptions = {},
 ): ReleaseExportOptions {
-  const projectSettings = normalizeProjectExportSettings(project.settings.export);
+  const projectSettings = normalizeProjectExportSettings(project.settings?.export);
 
   return {
     format: options.format ?? options.default_format ?? projectSettings.default_format,
@@ -188,7 +188,7 @@ function filterReleaseEntries(
 ): Entry[] {
   return options.only_reviewed
     ? entries.filter((entry) =>
-        isEntryReleaseComplete(entry, project.settings.workflow),
+        isEntryReleaseComplete(entry, project.settings?.workflow),
       )
     : entries;
 }
@@ -218,8 +218,8 @@ function buildSummary(
 ): ReleaseExportSummary {
   const stats: BasicProjectStats = calculateEntryProgress(
     entries,
-    project.settings.progress_weights,
-    project.settings.workflow,
+    project.settings?.progress_weights,
+    project.settings?.workflow,
   );
 
   return {

@@ -39,6 +39,50 @@ async function createImportStorage(entries: Entry[]) {
 }
 
 describe("translation import workflow", () => {
+  it.each([
+    ["translations.json", JSON.stringify([{ key: "first", target: "Would change" }, { key: "second", source: "原文" }]), JSON.stringify([{ key: "first", target: "" }])],
+    ["translations.jsonl", '{"key":"first","target":"Would change"}\n{"key":"second","source":"原文"}\n', '{"key":"first","target":""}\n'],
+    ["translations.csv", "key,target\nfirst,Would change\nsecond\n", "key,target\nfirst,\n"],
+    ["no-header.csv", "first,原文,Would change\nsecond,原文\n", "first,原文,\n"],
+  ])("rejects missing translations in %s before writing while allowing an explicit empty translation", async (fileName, missingTarget, emptyTarget) => {
+    const storage = await createImportStorage([
+      createEntry({ id: "file-1:1", index: 1, key: "first", target: "First" }),
+      createEntry({ id: "file-1:2", index: 2, key: "second", target: "Second" }),
+    ]);
+    await expect(importEntryTranslations("file-1", fileName, missingTarget, "importer-1"))
+      .rejects.toThrow("缺少有效的译文");
+    expect(await storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"))
+      .toMatchObject([{ target: "First" }, { target: "Second" }]);
+    expect(await storage.fileExists("logs/events.jsonl")).toBe(false);
+    await expect(importEntryTranslations("file-1", fileName, emptyTarget, "importer-1"))
+      .resolves.toEqual({ matched: 1, skipped: 0 });
+    expect(await storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"))
+      .toMatchObject([{ target: "", status: "untranslated" }, { target: "Second" }]);
+  });
+
+  it("uses an index/target CSV header when no key column is present", async () => {
+    const storage = await createImportStorage([
+      createEntry({ id: "file-1:1", index: 1, key: "line_1", target: "First" }),
+      createEntry({ id: "file-1:2", index: 2, key: "line_2", target: "Second" }),
+    ]);
+    await expect(importEntryTranslations("file-1", "translations.csv", "index,target\n2,Changed\n", "importer-1"))
+      .resolves.toEqual({ matched: 1, skipped: 0 });
+    expect(await storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"))
+      .toMatchObject([{ target: "First" }, { target: "Changed" }]);
+  });
+
+  it("does not fall back to a different entry's index when a supplied key is unknown", async () => {
+    const storage = await createImportStorage([
+      createEntry({ id: "file-1:1", index: 1, key: "existing", target: "Original" }),
+    ]);
+    await expect(importEntryTranslations("file-1", "translations.json", JSON.stringify([
+      { key: "from-another-file", index: 1, target: "Wrong entry" },
+    ]), "importer-1")).resolves.toEqual({ matched: 0, skipped: 1 });
+    expect(await storage.readJsonl<Entry>("entries/file-1/chunk_0001.jsonl"))
+      .toMatchObject([{ target: "Original" }]);
+    expect(await storage.fileExists("logs/events.jsonl")).toBe(false);
+  });
+
   it("resets downstream workflow when imported target changes", async () => {
     const storage = await createImportStorage([
       createEntry({
