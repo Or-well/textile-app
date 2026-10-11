@@ -16,7 +16,6 @@ export const ENTRY_STATUSES = [
 export const TASK_STATUSES = [
   "unassigned",
   "assigned",
-  "in_progress",
   "submitted",
   "completed",
 ] as const satisfies readonly TaskStatus[];
@@ -29,9 +28,9 @@ export const ENTRY_STATUS_LABELS: Record<EntryStatus, string> = {
 };
 
 export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  unassigned: "未领取",
+  unassigned: "未分配",
   assigned: "已分配",
-  in_progress: "进行中",
+  in_progress: "已分配",
   submitted: "已提交",
   completed: "已完成",
 };

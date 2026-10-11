@@ -240,7 +240,7 @@ describe(".hproj project import", () => {
     const { controlledRoot } = createParentDirectory();
     const imported = await importProjectPackageToParentDirectory(file, controlledRoot);
     expect(await loadProjectFromStorage(createProjectStorage(imported.root)))
-      .toMatchObject({ project_id: legacyProject.project_id, settings: { auto_save: true } });
+      .toMatchObject({ project_id: legacyProject.project_id, settings: { chunk_size: 500 } });
   });
   it("writes and verifies a complete local project", async () => {
     const file = await createProjectPackageFile();

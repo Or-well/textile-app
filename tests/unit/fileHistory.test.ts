@@ -45,8 +45,6 @@ async function createFileStorage() {
     ],
     settings: {
       chunk_size: 1,
-      auto_save: true,
-      allow_change_package: true,
     },
   });
   const root = createMemoryProjectDirectory(

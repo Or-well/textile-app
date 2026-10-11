@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
-import { loadProjectFromStorage } from "../../src/services/project";
+import { loadProjectFromStorage, saveProjectToStorage } from "../../src/services/project";
 import { projectRequiresSignedChangePackages } from "../../src/services/collaboration";
 import { createProject } from "./factories";
 
@@ -19,8 +19,6 @@ describe("project schema compatibility", () => {
       files: [],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
       },
     });
 
@@ -44,9 +42,38 @@ describe("project schema compatibility", () => {
     const loaded = await loadProjectFromStorage(storage);
 
     expect(loaded.schema_version).toBe(1);
-    expect(loaded.settings.auto_save).toBe(true);
-    expect(loaded.settings.allow_change_package).toBe(true);
+    expect(loaded.settings.chunk_size).toBe(250);
     expect(projectRequiresSignedChangePackages(loaded)).toBe(false);
+  });
+
+  it("ignores unused settings without changing stored input until an explicit save", async () => {
+    const storage = createProjectStorage(createMemoryProjectDirectory({}));
+    const raw = {
+      ...createProject(),
+      settings: {
+        chunk_size: 250,
+        auto_save: false,
+        allow_change_package: false,
+        export: {
+          default_format: "csv", only_reviewed: true, include_source: false, include_key: false,
+          include_report: true, include_manifest: true,
+        },
+      },
+    };
+    await storage.writeJson("project.json", raw);
+    const bytes = await storage.readText("project.json");
+    const loaded = await loadProjectFromStorage(storage);
+    expect(loaded.settings).not.toHaveProperty("auto_save");
+    expect(loaded.settings).not.toHaveProperty("allow_change_package");
+    expect(loaded.settings.export).toEqual({
+      default_format: "csv", only_reviewed: true, include_source: false, include_key: false,
+    });
+    expect(await storage.readText("project.json")).toBe(bytes);
+    await saveProjectToStorage(storage, loaded);
+    expect((await storage.readJson<{ settings: unknown }>("project.json")).settings).toEqual({
+      chunk_size: 250, permission_schema_version: 1,
+      export: { default_format: "csv", only_reviewed: true, include_source: false, include_key: false },
+    });
   });
 
   it("rejects projects from unsupported future schemas", async () => {

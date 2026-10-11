@@ -59,6 +59,7 @@ async function prepareExporter(files = [createProjectFile("file-1", "chapter.par
 
   setExporterProjectStorage(storage);
   setCurrentUser(createMember(["owner"]));
+  return storage;
 }
 
 describe("release exporter", () => {
@@ -129,6 +130,20 @@ describe("release exporter", () => {
     expect(files["manifest.json"]).toBeUndefined();
     expect(Object.keys(files).some((path) => path.startsWith("reports/"))).toBe(false);
     expect(Object.keys(files).some((path) => path.startsWith("release/"))).toBe(false);
+  });
+
+  it("ignores removed export flags while retaining supported output options", async () => {
+    const storage = await prepareExporter();
+    const project = await storage.readJson<{ settings: Record<string, unknown> }>("project.json");
+    project.settings.export = {
+      default_format: "csv", only_reviewed: false, include_source: false, include_key: false,
+      include_report: true, include_manifest: true,
+    };
+    await storage.writeJson("project.json", project);
+    const result = await exportProject();
+    const files = await readZip(await result.blob.arrayBuffer());
+    expect(Object.keys(files)).toEqual(["chapter.part.csv"]);
+    expect(files["chapter.part.csv"]!.split("\n")[0]).toBe("id,index,speaker,target,status");
   });
 
   it("rejects file names that collide after conversion", async () => {

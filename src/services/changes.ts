@@ -22,6 +22,7 @@ import {
 } from "../model/status";
 import { clearCachedEntries, clearCachedEntriesForFile } from "./entries";
 import { clearCachedTasks } from "./tasks";
+import { normalizeLegacyTaskStatus } from "../model/taskStatus";
 import { clearCachedTerms } from "./terms";
 import {
   isValidTimeZone,
@@ -463,7 +464,6 @@ const TASK_PROTECTED_FIELDS = [
 const ORDINARY_TASK_STATUS_ORDER: Task["status"][] = [
   "unassigned",
   "assigned",
-  "in_progress",
   "submitted",
   "completed",
 ];
@@ -2987,24 +2987,27 @@ function mergeOrdinaryPackageTasks(
     const baseTask = findRowById(baseTasks, packageTask.id)?.row;
     assertOrdinaryTaskPackageFields(currentTask, packageTask, baseTask);
 
-    if (currentTask.status !== packageTask.status) {
+    const currentStatus = normalizeLegacyTaskStatus(currentTask.status);
+    const packageStatus = normalizeLegacyTaskStatus(packageTask.status);
+    const baseStatus = baseTask ? normalizeLegacyTaskStatus(baseTask.status) : undefined;
+
+    if (currentStatus !== packageStatus) {
       const allowedStatuses: Task["status"][] = [
         "assigned",
-        "in_progress",
         "submitted",
       ];
 
-      if (baseTask && packageTask.status === baseTask.status) {
+      if (baseTask && packageStatus === baseStatus) {
         continue;
       }
       const conflictId = `task:${packageTask.id}`;
       const resolution = findConflictResolution(resolutions, conflictId);
       const isConflict = baseTask
-        ? currentTask.status !== baseTask.status &&
-          packageTask.status !== baseTask.status &&
-          currentTask.status !== packageTask.status
-        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageTask.status) <
-          ORDINARY_TASK_STATUS_ORDER.indexOf(currentTask.status);
+        ? currentStatus !== baseStatus &&
+          packageStatus !== baseStatus &&
+          currentStatus !== packageStatus
+        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageStatus) <
+          ORDINARY_TASK_STATUS_ORDER.indexOf(currentStatus);
       const shouldUsePackage =
         !isConflict || resolution?.action === "use_package";
 
@@ -3013,15 +3016,15 @@ function mergeOrdinaryPackageTasks(
       }
 
       if (
-        !allowedStatuses.includes(currentTask.status) ||
-        !allowedStatuses.includes(packageTask.status)
+        !allowedStatuses.includes(currentStatus) ||
+        !allowedStatuses.includes(packageStatus)
       ) {
         throw new Error("普通修改包只能提交任务或取消提交，不能完成、收回或重分配任务。");
       }
 
       nextRows[index] = {
         ...currentTask,
-        status: packageTask.status,
+        status: packageStatus,
         updated_at: updatedAt,
       };
       imported += 1;
@@ -5507,7 +5510,10 @@ export async function detectConflicts(
 
     for (const packageTask of Object.values(changePackage.tasks).flat()) {
       const mainTask = currentTasks.find((task) => task.id === packageTask.id);
-      if (!mainTask || mainTask.status === packageTask.status) {
+      if (
+        !mainTask ||
+        normalizeLegacyTaskStatus(mainTask.status) === normalizeLegacyTaskStatus(packageTask.status)
+      ) {
         continue;
       }
 
@@ -5515,12 +5521,15 @@ export async function detectConflicts(
         changePackage.base?.tasks ?? {},
         packageTask.id,
       )?.row;
+      const mainStatus = normalizeLegacyTaskStatus(mainTask.status);
+      const packageStatus = normalizeLegacyTaskStatus(packageTask.status);
+      const baseStatus = baseTask ? normalizeLegacyTaskStatus(baseTask.status) : undefined;
       const hasConflict = baseTask
-        ? mainTask.status !== baseTask.status &&
-          packageTask.status !== baseTask.status &&
-          mainTask.status !== packageTask.status
-        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageTask.status) <
-          ORDINARY_TASK_STATUS_ORDER.indexOf(mainTask.status);
+        ? mainStatus !== baseStatus &&
+          packageStatus !== baseStatus &&
+          mainStatus !== packageStatus
+        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageStatus) <
+          ORDINARY_TASK_STATUS_ORDER.indexOf(mainStatus);
 
       if (hasConflict) {
         conflicts.push({

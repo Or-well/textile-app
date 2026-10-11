@@ -48,6 +48,9 @@ describe("createProjectInStorage", () => {
         },
       },
     });
+    const saved = await storage.readJson<{ settings: unknown }>("project.json");
+    expect(saved.settings).not.toHaveProperty("auto_save");
+    expect(saved.settings).not.toHaveProperty("allow_change_package");
     await expect(storage.readJson("members.json")).resolves.toMatchObject({
       members: [{ id: result.owner.id, roles: ["owner"] }],
     });

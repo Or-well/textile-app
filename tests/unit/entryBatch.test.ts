@@ -77,8 +77,6 @@ describe("entry batch workflow", () => {
     const storedProject = createProject({
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: { enable_tasks: false },
       },
     });
@@ -134,8 +132,6 @@ describe("entry batch workflow", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: {
           enable_tasks: true,
           proofread_required: 1,
@@ -206,8 +202,6 @@ describe("entry batch workflow", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: {
           enable_tasks: true,
           proofread_required: 1,
@@ -274,8 +268,6 @@ describe("entry batch workflow", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: { enable_tasks: false },
       },
     });
@@ -355,8 +347,6 @@ describe("entry batch workflow", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: {
           enable_tasks: false,
           proofread_required: 1,

@@ -104,8 +104,6 @@ describe("entry replace", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: { enable_tasks: false },
       },
     });
@@ -187,8 +185,6 @@ describe("entry replace", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: { enable_tasks: false },
       },
     });
@@ -250,8 +246,6 @@ describe("entry replace", () => {
       ],
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: { enable_tasks: true },
       },
     });
@@ -291,8 +285,6 @@ describe("entry replace", () => {
     const project = createProject({
       settings: {
         chunk_size: 500,
-        auto_save: true,
-        allow_change_package: true,
         workflow: { enable_tasks: false },
       },
     });

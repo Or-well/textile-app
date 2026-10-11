@@ -119,7 +119,7 @@ describe("collaboration edit and submission consistency", () => {
     const { settings: _settings, ...legacyProject } = project;
     await storage.writeJson("project.json", legacyProject);
     const loaded = await loadProjectFromStorage(storage);
-    expect(loaded.settings.auto_save).toBe(true);
+    expect(loaded.settings.chunk_size).toBe(500);
     await expect(saveEntry({ ...entry, target: "Legacy edit" }, { actor }))
       .resolves.toMatchObject({ target: "Legacy edit", status: "translated" });
     await expect(exportChangePackage(actor.id, { actor, mode: "member_changes", sign: false }))

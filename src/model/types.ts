@@ -31,6 +31,7 @@ export interface ProjectWorkflowSettings {
 export type TaskStatus =
   | "unassigned"
   | "assigned"
+  // Legacy project/package value; task actions no longer produce it.
   | "in_progress"
   | "submitted"
   | "completed";
@@ -53,10 +54,6 @@ export interface ReleaseExportSettings {
   only_reviewed?: boolean;
   include_source?: boolean;
   include_key?: boolean;
-  /** @deprecated 旧项目兼容字段，成品包不再生成检查报告。 */
-  include_report?: boolean;
-  /** @deprecated 旧项目兼容字段，成品包不再生成项目清单。 */
-  include_manifest?: boolean;
 }
 
 export interface ProjectCollaborationSettings {
@@ -79,8 +76,6 @@ export interface ProjectConfig {
   updated_at?: string;
   settings: {
     chunk_size: number;
-    auto_save: boolean;
-    allow_change_package: boolean;
     workflow?: ProjectWorkflowSettings;
     progress_weights?: {
       translation?: number;

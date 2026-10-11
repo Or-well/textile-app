@@ -296,11 +296,16 @@ function normalizeProjectConfig(config: ProjectConfig): ProjectConfig {
     }),
     settings: {
       chunk_size: config.settings?.chunk_size ?? 500,
-      auto_save: config.settings?.auto_save ?? true,
-      allow_change_package: config.settings?.allow_change_package ?? true,
       workflow: config.settings?.workflow,
       progress_weights: config.settings?.progress_weights,
-      export: config.settings?.export,
+      export: config.settings?.export
+        ? {
+            default_format: config.settings.export.default_format,
+            only_reviewed: config.settings.export.only_reviewed,
+            include_source: config.settings.export.include_source,
+            include_key: config.settings.export.include_key,
+          }
+        : undefined,
       collaboration: config.settings?.collaboration
         ? normalizeProjectCollaborationSettings(config.settings.collaboration)
         : undefined,
@@ -1296,8 +1301,6 @@ export async function createProjectInStorage(
     updated_at: now,
     settings: {
       chunk_size: 500,
-      auto_save: true,
-      allow_change_package: true,
       workflow: {
         enable_tasks: input.enableTasks,
         enable_proofread: input.proofreadRequired > 0,

@@ -15,35 +15,38 @@ const TASK_STATUS_TRANSITIONS: Record<
   assign: {
     unassigned: ["assigned"],
     assigned: ["assigned", "unassigned"],
-    in_progress: ["assigned", "unassigned"],
     submitted: ["assigned", "unassigned"],
   },
   submit: {
     assigned: ["submitted"],
-    in_progress: ["submitted"],
   },
   cancel_submit: {
-    submitted: ["assigned", "in_progress"],
+    submitted: ["assigned", "unassigned"],
   },
   complete: {
     submitted: ["completed"],
   },
   reclaim: {
     assigned: ["unassigned"],
-    in_progress: ["unassigned"],
     submitted: ["unassigned"],
   },
   reopen: {
-    submitted: ["assigned", "in_progress", "unassigned"],
-    completed: ["assigned", "in_progress", "unassigned"],
+    submitted: ["assigned", "unassigned"],
+    completed: ["assigned", "unassigned"],
   },
 };
+
+export function normalizeLegacyTaskStatus(
+  status: TaskStatus,
+): Exclude<TaskStatus, "in_progress"> {
+  return status === "in_progress" ? "assigned" : status;
+}
 
 export function getTaskStatusTransitionTargets(
   action: TaskStatusAction,
   status: TaskStatus,
 ): readonly TaskStatus[] {
-  return TASK_STATUS_TRANSITIONS[action][status] ?? [];
+  return TASK_STATUS_TRANSITIONS[action][normalizeLegacyTaskStatus(status)] ?? [];
 }
 
 export function canTransitionTaskStatus(

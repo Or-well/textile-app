@@ -17,8 +17,6 @@
   ],
   "settings": {
     "chunk_size": 500,
-    "auto_save": true,
-    "allow_change_package": true,
     "workflow": {
       "enable_tasks": true,
       "enable_proofread": true,

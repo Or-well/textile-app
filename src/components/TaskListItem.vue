@@ -2,6 +2,7 @@
 import { getMemberDisplayName } from "../model/memberOptions";
 import { getFileDisplayName } from "../model/displayNames";
 import { getTaskTypeLabel } from "../model/taskPresentation";
+import { TASK_STATUS_LABELS } from "../model/status";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
 
@@ -16,14 +17,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [task: Task];
 }>();
-
-const statusLabels: Record<Task["status"], string> = {
-  unassigned: "未分配",
-  assigned: "已分配",
-  in_progress: "进行中",
-  submitted: "已提交",
-  completed: "已完成",
-};
 
 function getMemberName(memberId: string): string {
   return getMemberDisplayName(props.members, memberId);
@@ -54,7 +47,7 @@ function getTaskFileText(task: Task): string {
     <span class="task-title">{{ task.title }}</span>
     <span class="task-meta">
       <span>{{ getTaskTypeLabel(task.type) }}</span>
-      <span>{{ statusLabels[task.status] }}</span>
+      <span>{{ TASK_STATUS_LABELS[task.status] }}</span>
       <span>{{ getMemberName(task.assignee) }}</span>
     </span>
     <span class="task-target">

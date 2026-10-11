@@ -7,9 +7,10 @@ import type {
   TaskSubmitMethod,
   TaskType,
 } from "../model/types";
-import { normalizeEntries } from "../model/status";
+import { TASK_STATUSES, normalizeEntries } from "../model/status";
 import {
   canTransitionTaskStatus,
+  normalizeLegacyTaskStatus,
   type TaskStatusAction,
 } from "../model/taskStatus";
 import { createId } from "../utils/id";
@@ -111,13 +112,6 @@ export interface TaskDraft {
 export type TaskPatch = Partial<TaskDraft>;
 
 const TASKS_PATH = "tasks/tasks.jsonl";
-const TASK_STATUSES: readonly TaskStatus[] = [
-  "unassigned",
-  "assigned",
-  "in_progress",
-  "submitted",
-  "completed",
-];
 const TASK_TYPES: readonly TaskType[] = [
   "translate",
   "proofread",
@@ -200,7 +194,7 @@ function assertTaskStatusTransition(
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-  return TASK_STATUSES.includes(value as TaskStatus);
+  return value === "in_progress" || TASK_STATUSES.some((status) => status === value);
 }
 
 function normalizeTaskStatus(
@@ -208,7 +202,7 @@ function normalizeTaskStatus(
   assignee: string,
 ): TaskStatus {
   if (isTaskStatus(status)) {
-    return status;
+    return normalizeLegacyTaskStatus(status);
   }
 
   if (status === "reclaimed") {
@@ -216,7 +210,7 @@ function normalizeTaskStatus(
   }
 
   if (status === "blocked") {
-    return assignee ? "in_progress" : "unassigned";
+    return assignee ? "assigned" : "unassigned";
   }
 
   return assignee ? "assigned" : "unassigned";
@@ -366,7 +360,8 @@ function normalizeTaskDuePatch<T extends Pick<TaskDraft, "due_at" | "due_time_zo
 function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
     const statusOrder =
-      TASK_STATUSES.indexOf(a.status) - TASK_STATUSES.indexOf(b.status);
+      TASK_STATUSES.indexOf(normalizeLegacyTaskStatus(a.status)) -
+      TASK_STATUSES.indexOf(normalizeLegacyTaskStatus(b.status));
 
     if (statusOrder !== 0) {
       return statusOrder;
@@ -803,7 +798,11 @@ export async function updateTask(
 
   return updateTaskById(taskId, (task) => {
     if (patch.status && patch.status !== task.status) {
-      throw new Error("Task status must be changed through task workflow actions.");
+      throw new Error("请通过任务详情中的提交、完成或退回操作修改状态。");
+    }
+
+    if (patch.assignee !== undefined && patch.assignee !== task.assignee) {
+      throw new Error("请通过任务详情中的分配操作修改负责人。");
     }
 
     return mergeTaskPatch(task, {
@@ -878,7 +877,7 @@ export async function cancelTaskSubmission(taskId: string): Promise<Task> {
         throw new Error("Only assignee can cancel this task submission.");
       }
 
-      const status = task.assignee ? "in_progress" : "assigned";
+      const status = task.assignee ? "assigned" : "unassigned";
 
       assertTaskStatusTransition("cancel_submit", task.status, status);
 
@@ -921,7 +920,7 @@ export async function reopenTask(taskId: string): Promise<Task> {
   await assertTasksEnabled();
 
   return updateTaskById(taskId, (task) => {
-    const status = task.assignee ? "in_progress" : "unassigned";
+    const status = task.assignee ? "assigned" : "unassigned";
     assertTaskStatusTransition("reopen", task.status, status);
 
     return mergeTaskPatch(task, {

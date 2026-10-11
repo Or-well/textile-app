@@ -54,8 +54,6 @@ export function createProject(
     files: [],
     settings: {
       chunk_size: 500,
-      auto_save: true,
-      allow_change_package: true,
     },
   };
 

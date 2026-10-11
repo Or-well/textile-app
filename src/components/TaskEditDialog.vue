@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useAppDraft } from "../composables/useAppDraft";
-import { buildMemberOptions } from "../model/memberOptions";
+import { getMemberDisplayName } from "../model/memberOptions";
+import { TASK_STATUS_LABELS } from "../model/status";
 import { TASK_TYPE_OPTIONS } from "../model/taskPresentation";
 import type {
   Member,
   ProjectConfig,
   ProofreadRequired,
   Task,
-  TaskStatus,
   TaskSubmitMethod,
   TaskType,
 } from "../model/types";
@@ -42,14 +42,6 @@ const emit = defineEmits<{
   save: [draft: TaskDraft];
 }>();
 
-const taskStatuses: Array<{ value: TaskStatus; label: string }> = [
-  { value: "unassigned", label: "未分配" },
-  { value: "assigned", label: "已分配" },
-  { value: "in_progress", label: "进行中" },
-  { value: "submitted", label: "已提交" },
-  { value: "completed", label: "已完成" },
-];
-
 const form = reactive({
   title: "",
   description: "",
@@ -59,8 +51,6 @@ const form = reactive({
   range_start: 1,
   range_end: 1,
   entry_ids_text: "",
-  assignee: "",
-  status: "unassigned" as TaskStatus,
   target: "",
   proofread_round: 1 as ProofreadRequired,
   submit_method: "change_package" as TaskSubmitMethod,
@@ -79,12 +69,6 @@ const dueErrorMessage = ref("");
 const hasLegacyDueAt = ref(false);
 const initialFormSnapshot = ref("");
 const isInitializingForm = ref(false);
-const assignmentOptions = computed(() =>
-  buildMemberOptions(
-    props.members,
-    props.task?.assignee ? [props.task.assignee] : [],
-  ),
-);
 
 const proofreadRoundOptions = computed(() => {
   const required = props.project.settings.workflow?.proofread_required ?? 1;
@@ -214,11 +198,6 @@ function syncForm() {
   form.range_start = task?.range_start ?? 1;
   form.range_end = task?.range_end ?? 1;
   form.entry_ids_text = task?.entry_ids.join("\n") ?? "";
-  form.assignee = props.mode === "edit" ? (task?.assignee ?? "") : "";
-  form.status =
-    props.mode === "edit"
-      ? (task?.status ?? (task?.assignee ? "assigned" : "unassigned"))
-      : "unassigned";
   form.target = task?.target ?? "";
   form.proofread_round =
     task?.proofread_round ?? proofreadRoundOptions.value[0] ?? 1;
@@ -388,8 +367,6 @@ async function handleSubmit() {
     range_start: rangeStart,
     range_end: rangeEnd || rangeStart,
     entry_ids: entryIds,
-    assignee: props.mode === "edit" ? form.assignee : "",
-    status: props.mode === "edit" ? form.status : undefined,
     target: form.target.trim(),
     proofread_round:
       form.type === "proofread" ? form.proofread_round : undefined,
@@ -466,11 +443,8 @@ watch(
 
           <label v-if="mode === 'edit'">
             <span>状态</span>
-            <select v-model="form.status">
-              <option v-for="item in taskStatuses" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
+            <input :value="task ? TASK_STATUS_LABELS[task.status] : '未分配'" readonly />
+            <small>请在任务详情中提交、完成或退回。</small>
           </label>
 
           <fieldset class="file-field wide-field">
@@ -528,17 +502,8 @@ watch(
 
           <label v-if="mode === 'edit'">
             <span>成员</span>
-            <select v-model="form.assignee">
-              <option value="">未分配</option>
-              <option
-                v-for="member in assignmentOptions"
-                :key="member.id"
-                :value="member.id"
-                :disabled="!member.active"
-              >
-                {{ member.label }}
-              </option>
-            </select>
+            <input :value="getMemberDisplayName(members, task?.assignee ?? '')" readonly />
+            <small>请在任务详情中分配负责人。</small>
           </label>
 
           <label>

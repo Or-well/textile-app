@@ -38,6 +38,7 @@ import { loadEntries, setEntriesProjectStorage } from "../../src/services/entrie
 import { loadTerms, setTermsProjectStorage, addTerm } from "../../src/services/terms";
 import { setCurrentUser, setPermissionProject } from "../../src/services/permissions";
 import { ensureWorkspaceBaseline } from "../../src/services/workspaceBaseline";
+import { loadProjectFromStorage } from "../../src/services/project";
 import { createEntry, createMember, createProject } from "./factories";
 import { FailingProjectStorage } from "./failingProjectStorage";
 
@@ -2112,6 +2113,67 @@ describe("ordinary change-package write plan", () => {
     await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
   });
 
+  it.each(["assigned", "submitted"] as const)(
+    "treats legacy in_progress as assigned when importing %s task status",
+    async (status) => {
+      const legacyTask: Task = {
+        id: "task-1", type: "translate", title: "Task", description: "",
+        file_id: "file-1", range_start: 1, range_end: 1, entry_ids: [],
+        assignee: "member-2", status: "in_progress", target: "", submit_method: "change_package",
+        created_by: "owner-1", created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z", due_at: "",
+      };
+      const fixture = await createChangePackageFixture({
+        originalTask: legacyTask, packageTask: { ...legacyTask, status },
+      });
+      setChangesProjectStorage(fixture.storage);
+      await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+      await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+        .resolves.toMatchObject({ importedTasks: status === "submitted" ? 1 : 0 });
+      setTasksProjectStorage(fixture.storage);
+      expect((await loadTasks()).find(task => task.id === legacyTask.id)?.status).toBe(status);
+    },
+  );
+
+  it.each([
+    ["in_progress", "assigned", "submitted", "submitted", 1],
+    ["in_progress", "submitted", "assigned", "submitted", 0],
+    ["assigned", "submitted", "in_progress", "submitted", 0],
+  ] as const)(
+    "merges based task states %s / %s / %s without a false conflict",
+    async (baseStatus, mainStatus, packageStatus, expectedStatus, importedTasks) => {
+      const baseTask: Task = {
+        id: "legacy-based-task", type: "translate", title: "Task", description: "",
+        file_id: "file-1", range_start: 1, range_end: 1, entry_ids: [],
+        assignee: "member-2", status: baseStatus, target: "", submit_method: "change_package",
+        created_by: "owner-1", created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z", due_at: "",
+      };
+      const fixture = await createChangePackageFixture({
+        originalTask: baseTask, packageTask: { ...baseTask, status: packageStatus },
+      });
+      fixture.changePackage.base = {
+        schema_version: 1, entries: {}, comments: {}, terms: {},
+        tasks: { "tasks/tasks.jsonl": [baseTask] },
+      };
+      await ensureWorkspaceBaseline(
+        fixture.storage,
+        await fixture.storage.readJson<ProjectConfig>("project.json"),
+      );
+      await fixture.storage.writeJsonl("tasks/tasks.jsonl", [{ ...baseTask, status: mainStatus }]);
+      await refreshChangePackageHash(fixture.changePackage);
+      const originalHash = fixture.changePackage.manifest.content_hash;
+      setChangesProjectStorage(fixture.storage);
+      await expect(detectConflicts(fixture.changePackage)).resolves.toEqual([]);
+      await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+        .resolves.toMatchObject({ importedTasks });
+      expect(await fixture.storage.readJsonl("tasks/tasks.jsonl"))
+        .toMatchObject([{ status: expectedStatus }]);
+      expect(fixture.changePackage.manifest.content_hash).toBe(originalHash);
+      expect(fixture.changePackage.tasks["tasks/tasks.jsonl"]![0]!.status).toBe(packageStatus);
+    },
+  );
+
   it("reports a legacy task status regression instead of applying it silently", async () => {
     const submittedTask: Task = {
       id: "task-1",
@@ -2490,6 +2552,42 @@ describe("ordinary change-package write plan", () => {
 });
 
 describe("project update package write plan", () => {
+  it("validates and imports an old signed snapshot with unused settings without rewriting its signed content", async () => {
+    const fixture = await createProjectUpdateFixture({ requireSignedChangePackages: true });
+    const source = await fixture.sourceStorage.readJson<ProjectConfig>("project.json");
+    await fixture.sourceStorage.writeJson("project.json", {
+      ...source,
+      settings: {
+        ...source.settings, auto_save: false, allow_change_package: false,
+        export: { default_format: "csv", include_source: false, include_key: true,
+          include_report: true, include_manifest: true },
+      },
+    });
+    setChangesProjectStorage(fixture.sourceStorage);
+    const exported = await exportChangePackage(fixture.receiverOwner.id, {
+      mode: "project_update", sign: true, actor: fixture.receiverOwner,
+    });
+    const pkg = await readChangePackage(new Uint8Array(await exported.blob.arrayBuffer()) as unknown as Blob);
+    const signedConfig = pkg.projectFiles["project/project.json"];
+    const signedHash = pkg.manifest.content_hash;
+    await expect(completeChangePackageExport(exported))
+      .resolves.toMatchObject({ revision: pkg.manifest.target_revision });
+    await ensureWorkspaceBaseline(fixture.receiverStorage, fixture.receiverProject);
+    setChangesProjectStorage(fixture.receiverStorage);
+    await applyChangePackage(pkg, [], { actor: fixture.receiverOwner });
+    expect(pkg.validation).toMatchObject({ contentIntegrity: "passed", signatureStatus: "valid" });
+    expect(pkg.projectFiles["project/project.json"]).toBe(signedConfig);
+    expect(pkg.manifest.content_hash).toBe(signedHash);
+    expect(await fixture.receiverStorage.readText("project.json")).toBe(signedConfig);
+    const loaded = await loadProjectFromStorage(fixture.receiverStorage);
+    expect(loaded.settings).not.toHaveProperty("auto_save");
+    expect(loaded.settings).not.toHaveProperty("allow_change_package");
+    expect(loaded.settings.export).toEqual({ default_format: "csv", include_source: false, include_key: true });
+    await expect(applyChangePackage(pkg, [], { actor: fixture.receiverOwner }))
+      .resolves.toMatchObject({ alreadyApplied: true });
+    expect(pkg.validation).toMatchObject({ contentIntegrity: "passed", signatureStatus: "valid" });
+  });
+
   it("rejects unsigned project update export when project requires signatures", async () => {
     await expect(
       createProjectUpdateFixture({
@@ -3419,7 +3517,7 @@ describe("collaboration regression protection", () => {
     const incoming = {
       ...current, revision: "different-revision", revision_hash: "different-revision",
       trust_epoch: 3, name: "Other copy", files: [],
-      settings: { ...current.settings, auto_save: false, role_permissions: { translator: ["file.view"] } },
+      settings: { ...current.settings, chunk_size: 250, role_permissions: { translator: ["file.view"] } },
     };
     fixture.changePackage.entries = {};
     fixture.changePackage.comments = {};

@@ -31,7 +31,7 @@ async function fixture(count = 12) {
   }));
   const project = createProject({
     files: [{ id: "file-1", name: "file.txt", source_path: "source/file.txt", entries_path: "entries/file-1", type: "txt", hidden: false, locked: false }],
-    settings: { chunk_size: 500, workflow: { enable_tasks: false }, auto_save: true, allow_change_package: true },
+    settings: { chunk_size: 500, workflow: { enable_tasks: false } },
   });
   await storage.writeJson("project.json", project);
   for (const [index, entry] of entries.entries()) {

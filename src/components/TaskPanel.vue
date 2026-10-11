@@ -6,6 +6,7 @@ import {
 } from "../model/memberOptions";
 import { getFileDisplayName } from "../model/displayNames";
 import { getTaskTypeLabel } from "../model/taskPresentation";
+import { TASK_STATUS_LABELS } from "../model/status";
 import type { Member, ProjectFile, Task } from "../model/types";
 import type { TaskProgress } from "../services/tasks";
 import {
@@ -46,13 +47,6 @@ const emit = defineEmits<{
 
 const selectedAssignee = ref("");
 
-const statusLabels: Record<Task["status"], string> = {
-  unassigned: "未分配",
-  assigned: "已分配",
-  in_progress: "进行中",
-  submitted: "已提交",
-  completed: "已完成",
-};
 
 const assigneeName = computed(() => {
   return getMemberDisplayName(props.members, props.task?.assignee ?? "");
@@ -85,7 +79,7 @@ const taskSummary = computed(() => {
     return "";
   }
 
-  return `${getTaskTypeLabel(props.task.type)} · ${statusLabels[props.task.status]} · ${assigneeName.value}`;
+  return `${getTaskTypeLabel(props.task.type)} · ${TASK_STATUS_LABELS[props.task.status]} · ${assigneeName.value}`;
 });
 
 const dueAtText = computed(() => {

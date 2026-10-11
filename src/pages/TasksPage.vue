@@ -5,6 +5,7 @@ import TaskEditDialog from "../components/TaskEditDialog.vue";
 import TaskListItem from "../components/TaskListItem.vue";
 import TaskPanel from "../components/TaskPanel.vue";
 import { buildMemberOptions } from "../model/memberOptions";
+import { TASK_STATUSES, TASK_STATUS_LABELS } from "../model/status";
 import { canTransitionTaskStatus } from "../model/taskStatus";
 import type { Member, ProjectConfig, Task, TaskStatus } from "../model/types";
 import {
@@ -60,6 +61,7 @@ const fileFilter = ref("all");
 const isLoading = ref(false);
 const isBusy = ref(false);
 const errorMessage = ref("");
+const progressErrorMessage = ref("");
 const savedMessage = ref("");
 const dialogOpen = ref(false);
 const dialogMode = ref<"create" | "edit">("create");
@@ -81,11 +83,7 @@ const memberFilterOptions = computed(() =>
 const filters: Array<{ value: TaskFilter; label: string }> = [
   { value: "mine", label: "我的任务" },
   { value: "all", label: "全部任务" },
-  { value: "unassigned", label: "未分配" },
-  { value: "assigned", label: "已分配" },
-  { value: "in_progress", label: "进行中" },
-  { value: "submitted", label: "已提交" },
-  { value: "completed", label: "已完成" },
+  ...TASK_STATUSES.map((value) => ({ value, label: TASK_STATUS_LABELS[value] })),
 ];
 
 const visibleTasks = computed(() => {
@@ -120,7 +118,11 @@ const selectedTaskActions = computed(() => {
 
   return {
     update: Boolean(task && canUpdateTask(currentUser.value)),
-    assign: Boolean(task && canAssignTask(currentUser.value)),
+    assign: Boolean(
+      task &&
+        canAssignTask(currentUser.value) &&
+        canTransitionTaskStatus("assign", task.status),
+    ),
     submit: Boolean(
       task &&
         canSubmitTask(currentUser.value) &&
@@ -154,7 +156,6 @@ const selectedTaskActions = computed(() => {
 
 function showSaved(message: string) {
   savedMessage.value = message;
-  errorMessage.value = "";
 }
 
 function showError(error: unknown, fallback: string) {
@@ -162,22 +163,40 @@ function showError(error: unknown, fallback: string) {
   savedMessage.value = "";
 }
 
+let progressRequestId = 0;
+
+function clearSelectedTask() {
+  progressRequestId += 1;
+  selectedTask.value = undefined;
+  selectedProgress.value = undefined;
+  progressErrorMessage.value = "";
+}
+
 async function selectTask(task: Task) {
+  const requestId = ++progressRequestId;
   selectedTask.value = task;
+  selectedProgress.value = undefined;
+  progressErrorMessage.value = "";
   savedMessage.value = "";
 
   try {
-    selectedProgress.value = await getTaskProgress(task.id);
-  } catch {
-    selectedProgress.value = undefined;
+    const progress = await getTaskProgress(task.id);
+    if (requestId === progressRequestId) {
+      selectedProgress.value = progress;
+    }
+  } catch (error) {
+    if (requestId === progressRequestId) {
+      progressErrorMessage.value = error instanceof Error
+        ? error.message
+        : "任务进度加载失败，请重新选择任务后再试。";
+    }
   }
 }
 
 async function refreshTasks(preferredTaskId?: string) {
   if (!canView.value) {
     tasks.value = [];
-    selectedTask.value = undefined;
-    selectedProgress.value = undefined;
+    clearSelectedTask();
     return;
   }
 
@@ -195,13 +214,11 @@ async function refreshTasks(preferredTaskId?: string) {
     if (nextSelected) {
       await selectTask(nextSelected);
     } else {
-      selectedTask.value = undefined;
-      selectedProgress.value = undefined;
+      clearSelectedTask();
     }
   } catch (error) {
     tasks.value = [];
-    selectedTask.value = undefined;
-    selectedProgress.value = undefined;
+    clearSelectedTask();
     showError(error, "任务列表加载失败。请确认项目数据可以读取。");
   } finally {
     isLoading.value = false;
@@ -338,12 +355,14 @@ watch(
 );
 
 watch(visibleTasks, (nextTasks) => {
-  if (!selectedTask.value || nextTasks.some((task) => task.id === selectedTask.value?.id)) {
+  if (selectedTask.value && nextTasks.some((task) => task.id === selectedTask.value?.id)) {
     return;
   }
 
   if (nextTasks[0]) {
     void selectTask(nextTasks[0]);
+  } else {
+    clearSelectedTask();
   }
 });
 </script>
@@ -369,6 +388,7 @@ watch(visibleTasks, (nextTasks) => {
     </ProjectPageHeader>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
+    <p v-if="progressErrorMessage" class="error-message">{{ progressErrorMessage }}</p>
     <p v-if="savedMessage" class="saved-message">{{ savedMessage }}</p>
 
     <p v-if="!canView" class="empty-state">当前成员没有查看任务的权限。</p>

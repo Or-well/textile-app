@@ -8,6 +8,10 @@ import { describe, expect, it, afterEach } from "vitest";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
 import {
+  assignTask,
+  cancelTaskSubmission,
+  reopenTask,
+  updateTask,
   completeTask,
   createTask,
   getTaskFilesEntrySummary,
@@ -153,6 +157,54 @@ describe("task storage integrity", () => {
 
     const completed = await completeTask(task.id);
     expect(completed.status).toBe("completed");
+  });
+
+  it("reads retired statuses without rewriting the original task file", async () => {
+    const storage = await createTaskProjectStorage();
+    await storage.writeJsonl("tasks/tasks.jsonl", [
+      { id: "legacy-assigned", type: "custom", status: "in_progress", assignee: "owner-1" },
+      { id: "legacy-blocked", type: "custom", status: "blocked", assignee: "owner-1" },
+      { id: "legacy-unassigned", type: "custom", status: "blocked", assignee: "" },
+    ]);
+    const original = await storage.readText("tasks/tasks.jsonl");
+    const tasks = await loadTasks();
+    expect(tasks.find(task => task.id === "legacy-assigned")?.status).toBe("assigned");
+    expect(tasks.find(task => task.id === "legacy-blocked")?.status).toBe("assigned");
+    expect(tasks.find(task => task.id === "legacy-unassigned")?.status).toBe("unassigned");
+    expect(await storage.readText("tasks/tasks.jsonl")).toBe(original);
+    expect((await submitTask("legacy-assigned")).status).toBe("submitted");
+    expect((await cancelTaskSubmission("legacy-assigned")).status).toBe("assigned");
+    expect(await storage.readJsonl("tasks/tasks.jsonl")).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "in_progress" })]),
+    );
+  });
+
+  it("returns cancelled and reopened tasks to assigned", async () => {
+    await createTaskProjectStorage();
+    const task = await createTask({
+      title: "Task", type: "custom", range_start: 1, range_end: 1, assignee: "owner-1",
+    }, "owner-1");
+    await submitTask(task.id);
+    expect((await cancelTaskSubmission(task.id)).status).toBe("assigned");
+    await submitTask(task.id);
+    await completeTask(task.id);
+    expect((await reopenTask(task.id)).status).toBe("assigned");
+  });
+
+  it("keeps workflow and assignment changes out of ordinary task editing", async () => {
+    const storage = await createTaskProjectStorage();
+    const task = await createTask({
+      title: "Task", type: "custom", range_start: 1, range_end: 1,
+    }, "owner-1");
+    const original = await storage.readText("tasks/tasks.jsonl");
+    await expect(updateTask(task.id, { status: "completed" })).rejects.toThrow("任务详情");
+    await expect(updateTask(task.id, { assignee: "owner-1" })).rejects.toThrow("分配操作");
+    expect(await storage.readText("tasks/tasks.jsonl")).toBe(original);
+    await assignTask(task.id, "owner-1");
+    await submitTask(task.id);
+    expect(await updateTask(task.id, { title: "Renamed" })).toMatchObject({
+      title: "Renamed", status: "submitted", assignee: "owner-1",
+    });
   });
 
   it("calculates progress for entry-id tasks without a file id", async () => {

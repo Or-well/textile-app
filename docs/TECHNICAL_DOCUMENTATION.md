@@ -622,8 +622,6 @@ changes/
   "updated_at": "2026-06-19T00:00:00.000Z",
   "settings": {
     "chunk_size": 500,
-    "auto_save": true,
-    "allow_change_package": true,
     "workflow": {
       "enable_tasks": true,
       "enable_proofread": true,
@@ -662,14 +660,13 @@ changes/
 - `trust_epoch`：项目信任代次，可选非负整数，旧项目默认为 0；只有所有可信发布私钥都不可用、必须线下重建信任时递增。
 - `files`：项目文件索引。
 - `chunk_size`：控制新增、更新源文件和导入译文时每个 entries chunk 的最大词条数；旧的单 chunk 项目仍兼容读取。
-- `auto_save`：保留设置，当前编辑仍以显式保存为主。
-- `allow_change_package`：项目级开关字段，当前主要能力仍由权限 action 决定。
+- 词条编辑使用显式保存，修改包能力由权限 action 控制；项目配置不再声明或生成无功能的 `auto_save`、`allow_change_package` 开关。
 - `collaboration.require_signed_change_packages`：要求普通、任务、维护修改包和项目更新包带有有效成员签名。新项目默认 `true`；旧项目缺失该字段时按 `false` 兼容读取。密钥轮换、撤销和公钥恢复等密钥信任过渡不受该兼容开关影响，始终必须签名；负责人转让在非强制签名项目中可使用未签名的人工信任项目更新包。
 - `enable_tasks`：保存于工作流；为 `false` 时 UI 隐藏任务入口，任务 service 拒绝写入类操作。
 - `allow_self_proofread`、`allow_self_review`、`allow_same_user_multi_proofread`：创建项目页可选择并默认勾选允许；旧项目缺失字段时由 `normalizeWorkflowSettings()` 按不允许兼容读取。
 - `role_permissions`：项目可覆盖默认角色权限。
 - `permission_schema_version`：角色权限配置兼容版本。旧项目缺失时按 v1 读取并补充新增的词条管理默认权限；v2 以前补充词条锁定和隐藏默认权限；保存角色权限后写入当前版本，之后严格按当前配置生效。
-- 旧项目中的 `export.include_report` 和 `export.include_manifest` 继续允许读取，但成品包不再生成检查报告或项目清单；下次保存导出设置时不会继续写入这两个兼容字段。
+- 导出设置只声明格式、审核筛选、原文和键值四项；`include_report`、`include_manifest` 不再作为兼容字段保留。配置加载时忽略上述无效设置，显式保存加载后的项目配置时不再写入；读取不会改写磁盘文件，修改包哈希和签名继续基于包内原始内容校验。备份和协作包仍可原样传递旧磁盘配置中的多余属性，这些属性不会参与业务判断。`tests/unit/projectSchema.test.ts`、`tests/unit/projectCreation.test.ts`、`tests/unit/exporter.test.ts` 和 `tests/unit/changePackageWritePlan.test.ts` 验证配置清理、新建、成品选项、旧签名快照发布和接收，以及重复导入。
 
 ## 11. `members.json`
 
@@ -792,15 +789,16 @@ tasks/tasks.jsonl
 状态：
 
 ```text
-assigned -> in_progress -> submitted -> completed
+unassigned -> assigned -> submitted -> completed
 ```
 
-服务还支持取消提交、收回和重新打开动作。旧 `unassigned` 状态仅为兼容保留；普通成员不能自由领取任务，任务负责人由有权限的成员分配。
+服务还支持取消提交、收回和退回动作。`unassigned` 表示尚未指定负责人，也是新建任务和收回任务的正常状态；普通成员不能自由领取任务，负责人由有权限的成员分配。
 
 旧数据兼容：
 
 - `reclaimed` 规范化为 `unassigned`。
-- `blocked` 规范化为 `in_progress` 或 `unassigned`。
+- `in_progress` 是保留的旧项目和修改包输入值，运行时规范化为 `assigned`；界面和新任务动作不再提供或产生该状态。读取旧任务不会立即改写磁盘。
+- `blocked` 规范化为 `assigned` 或 `unassigned`。
 - 旧 `export` 任务类型规范化为 `custom`。
 - `git_hidden` 提交方式规范化为 `change_package`。
 - `git_manual` 规范化为 `owner_manual`。
@@ -1336,7 +1334,7 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 
 - 任务 CRUD。
 - 分配、提交、取消提交、完成、收回和重新打开。
-- `model/taskStatus.ts` 是任务状态转换的唯一规则源，service 校验和页面按钮显示共同调用。
+- `model/taskStatus.ts` 是任务状态转换及旧 `in_progress` 状态归并的唯一规则源，service 校验和页面按钮显示共同调用。相关测试见 `tests/unit/taskStatus.test.ts`、`tests/unit/tasks.test.ts`、`tests/unit/tasksPage.test.ts` 和 `tests/unit/changePackageWritePlan.test.ts`。
 - 旧状态和旧提交方式兼容。
 - 计算任务覆盖词条和任务进度。
 
@@ -1386,7 +1384,10 @@ CSV、TXT、KS 不承载工作流审计。`importEntryTranslations()` 对所有�
 
 - 整个任务文件每次写入整体重写。
 - `enable_tasks === false` 时任务页入口隐藏，任务 service 会拒绝新增、更新、删除、分配、提交、取消提交、完成、收回和重开。
-- 已提交任务才能完成；已分配、进行中或已提交任务才能收回；已提交或已完成任务才能重新打开。
+- 已提交任务才能完成；已分配或已提交任务才能收回；已提交或已完成任务才能退回。取消提交或退回时，有负责人则回到 assigned，否则回到 unassigned。
+- 编辑弹窗中的状态和负责人只读；保存普通任务资料不携带这两个字段，`updateTask()` 拒绝改变状态或负责人，分别交由工作流动作和 `assignTask()` 处理。完成状态不展示分配操作，需先退回。
+- 任务页筛选状态、卡片与详情标签共享 `model/status.ts` 的定义；空筛选清除详情和进度，进度请求通过请求代次隔离，当前请求失败必须显示原因，重新选择或清空任务时清除对应进度错误；操作成功提示不能覆盖随后发生的列表或进度读取错误。
+- 提交任务只改变本地状态，不导出或发送修改包，也不要求词条进度为 100%；词条进度与人工提交、完成状态独立。
 - 普通成员自由领取任务的遗留入口不再暴露；任务负责人继续由有分配权限的成员设置。
 - 普通修改包将 `due_at` 和 `due_time_zone` 视为任务受保护字段。维护修改包实际修改截止时间时必须同时提供绝对时间和有效 IANA 时区；项目更新包可继续承载旧任务，由接收方后续明确迁移。
 
@@ -1868,7 +1869,7 @@ manifest 示例：
 - 普通修改包中的词条受保护字段不能变化；允许参与冲突处理的词条字段限于 `target`、`status`、`translated_by`、`proofread_by`、`proofread_count`、`reviewed_by`、`disputed`、`dispute_reason`、`dispute_resolved_at`、`dispute_resolved_by` 和 `context`。
 - 开启任务时，普通成员普通修改包只能携带其已分配任务范围内的词条和批注。关闭强制签名时，根据 `manifest.user_id` 在当前项目成员表中的权限判断管理者范围例外及代交批注权限，不依赖签名状态；开启强制签名时，先要求签名有效再校验成员权限。
 - 普通修改包中的术语新增、编辑和删除按导出者当前术语权限校验。`terms/terms.jsonl` 只能提交导出者创建或最后编辑的术语；`term-changes/deletions.jsonl` 的删除人必须等于 `manifest.user_id`。
-- 普通修改包中的任务只能更新既有任务的执行状态，且普通包只接受 `assigned`、`in_progress`、`submitted` 这类执行中状态。标题、范围、创建者、分配关系、截止时间和截止时区等管理字段须与当前任务或已核验的共同基线一致，否则阻止导入；实际只合并状态，不回写管理字段，兼容维护包更新资料后的正常提交。任务归属、范围和状态转换检查继续保留。
+- 普通修改包中的任务只能更新既有任务的执行状态，且普通包只接受 `assigned`、`submitted` 这类执行中状态；旧包的 `in_progress` 按 `assigned` 参与状态比较和应用，避免因旧值产生虚假倒退或冲突。哈希和验签仍使用原始包内容，不在验证前改写包数据。标题、范围、创建者、分配关系、截止时间和截止时区等管理字段须与当前任务或已核验的共同基线一致，否则阻止导入；实际只合并状态，不回写管理字段，兼容维护包更新资料后的正常提交。任务归属、范围和状态转换检查继续保留。
 - 普通修改包中的 `members/members.json` 只能作为导出人自己的凭据补丁导入：只能有一个成员记录，`id` 必须等于 `manifest.user_id`，必须包含 `password_hash` 和 `password_salt`，不能包含角色、权限、公钥、名称或其他成员字段。导入时只合并这几个凭据字段，不覆盖整份 `members.json`。
 
 预检查失败时不开始项目文件写入。
