@@ -18,11 +18,12 @@ import {
   hasWorkflowTarget,
   normalizeEntries,
   normalizeEntry,
+  TASK_STATUS_LABELS,
   type EntryWorkflowOperation,
 } from "../model/status";
 import { clearCachedEntries, clearCachedEntriesForFile } from "./entries";
 import { clearCachedTasks } from "./tasks";
-import { normalizeLegacyTaskStatus } from "../model/taskStatus";
+import { canTransitionTaskStatus, normalizeLegacyTaskStatus } from "../model/taskStatus";
 import { clearCachedTerms } from "./terms";
 import {
   isValidTimeZone,
@@ -258,6 +259,7 @@ export interface TaskChangeConflict {
   mainTask: Task;
   packageTask: Task;
   reasons: TaskConflictReason[];
+  packageStatusError?: string;
 }
 
 export type TaskConflictReason =
@@ -2379,7 +2381,7 @@ function assertOrdinaryTaskPackageFields(
       !samePackageValue(mainTask[field], packageTask[field]) &&
       (!baseTask || !samePackageValue(baseTask[field], packageTask[field]))
     ) {
-      throw new Error(`普通修改包不能修改任务受保护字段：${field}。`);
+      throw new Error(`普通修改包不能修改任务受保护字段：${field}。任务“${mainTask.title}”（${mainTask.id}），请由负责人通过任务管理处理。`);
     }
   }
 }
@@ -2966,6 +2968,33 @@ function entryWorkflowChanged(before: Entry, after: Entry): boolean {
   );
 }
 
+function getOrdinaryTaskStatusChange(
+  currentTask: Task,
+  packageTask: Task,
+  baseTask?: Task,
+) {
+  const currentStatus = normalizeLegacyTaskStatus(currentTask.status);
+  const packageStatus = normalizeLegacyTaskStatus(packageTask.status);
+  const baseStatus = baseTask ? normalizeLegacyTaskStatus(baseTask.status) : undefined;
+  const hasChange = currentStatus !== packageStatus && packageStatus !== baseStatus;
+  const allowed =
+    canTransitionTaskStatus("submit", currentStatus, packageStatus) ||
+    (packageStatus === "assigned" &&
+      canTransitionTaskStatus("cancel_submit", currentStatus, packageStatus));
+  const packageStatusError = hasChange && !allowed
+    ? `任务“${currentTask.title}”（${currentTask.id}）当前为“${TASK_STATUS_LABELS[currentStatus]}”，修改包为“${TASK_STATUS_LABELS[packageStatus]}”。普通修改包只能提交任务或取消提交，不能完成、收回或重分配任务。请保留当前任务状态，管理变更由负责人在任务页处理。`
+    : undefined;
+  const hasConflict = hasChange && (
+    !allowed ||
+    (baseTask
+      ? currentStatus !== baseStatus
+      : ORDINARY_TASK_STATUS_ORDER.indexOf(packageStatus) <
+        ORDINARY_TASK_STATUS_ORDER.indexOf(currentStatus))
+  );
+
+  return { packageStatus, hasChange, hasConflict, packageStatusError };
+}
+
 function mergeOrdinaryPackageTasks(
   existingTasks: Task[],
   packageTasks: Task[],
@@ -2980,51 +3009,32 @@ function mergeOrdinaryPackageTasks(
     const index = nextRows.findIndex((task) => task.id === packageTask.id);
 
     if (index < 0) {
-      throw new Error("普通修改包不能新增任务，只能更新已有任务的执行状态。");
+      throw new Error(`普通修改包不能新增任务，只能更新已有任务的执行状态。任务“${packageTask.title}”（${packageTask.id}）不存在，请核对项目副本或由负责人创建任务。`);
     }
 
     const currentTask = nextRows[index]!;
     const baseTask = findRowById(baseTasks, packageTask.id)?.row;
     assertOrdinaryTaskPackageFields(currentTask, packageTask, baseTask);
 
-    const currentStatus = normalizeLegacyTaskStatus(currentTask.status);
-    const packageStatus = normalizeLegacyTaskStatus(packageTask.status);
-    const baseStatus = baseTask ? normalizeLegacyTaskStatus(baseTask.status) : undefined;
+    const change = getOrdinaryTaskStatusChange(currentTask, packageTask, baseTask);
 
-    if (currentStatus !== packageStatus) {
-      const allowedStatuses: Task["status"][] = [
-        "assigned",
-        "submitted",
-      ];
-
-      if (baseTask && packageStatus === baseStatus) {
-        continue;
-      }
+    if (change.hasChange) {
       const conflictId = `task:${packageTask.id}`;
       const resolution = findConflictResolution(resolutions, conflictId);
-      const isConflict = baseTask
-        ? currentStatus !== baseStatus &&
-          packageStatus !== baseStatus &&
-          currentStatus !== packageStatus
-        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageStatus) <
-          ORDINARY_TASK_STATUS_ORDER.indexOf(currentStatus);
       const shouldUsePackage =
-        !isConflict || resolution?.action === "use_package";
+        !change.hasConflict || resolution?.action === "use_package";
 
-      if (!shouldUsePackage || resolution?.action === "skip") {
+      if (!shouldUsePackage || resolution?.action === "skip" || resolution?.action === "keep_main") {
         continue;
       }
 
-      if (
-        !allowedStatuses.includes(currentStatus) ||
-        !allowedStatuses.includes(packageStatus)
-      ) {
-        throw new Error("普通修改包只能提交任务或取消提交，不能完成、收回或重分配任务。");
+      if (change.packageStatusError) {
+        throw new Error(change.packageStatusError);
       }
 
       nextRows[index] = {
         ...currentTask,
-        status: packageStatus,
+        status: change.packageStatus,
         updated_at: updatedAt,
       };
       imported += 1;
@@ -5521,17 +5531,9 @@ export async function detectConflicts(
         changePackage.base?.tasks ?? {},
         packageTask.id,
       )?.row;
-      const mainStatus = normalizeLegacyTaskStatus(mainTask.status);
-      const packageStatus = normalizeLegacyTaskStatus(packageTask.status);
-      const baseStatus = baseTask ? normalizeLegacyTaskStatus(baseTask.status) : undefined;
-      const hasConflict = baseTask
-        ? mainStatus !== baseStatus &&
-          packageStatus !== baseStatus &&
-          mainStatus !== packageStatus
-        : ORDINARY_TASK_STATUS_ORDER.indexOf(packageStatus) <
-          ORDINARY_TASK_STATUS_ORDER.indexOf(mainStatus);
+      const change = getOrdinaryTaskStatusChange(mainTask, packageTask, baseTask);
 
-      if (hasConflict) {
+      if (change.hasConflict) {
         conflicts.push({
           kind: "task",
           conflictId: `task:${packageTask.id}`,
@@ -5539,6 +5541,7 @@ export async function detectConflicts(
           mainTask,
           packageTask,
           reasons: ["status"],
+          packageStatusError: change.packageStatusError,
         });
       }
     }
@@ -6562,31 +6565,6 @@ export async function applyChangePackage(
           ),
         );
 
-    if (useOrdinarySafeguards && rejectedEntryIds.size > 0) {
-      for (const packageTask of normalizedPackageTasks) {
-        const currentTask = existingTasks.find((task) => task.id === packageTask.id);
-
-        if (
-          !currentTask ||
-          currentTask.status === packageTask.status ||
-          packageTask.status !== "submitted"
-        ) {
-          continue;
-        }
-
-        const taskEntryIds = await getTaskScopeEntryIds(storage, [packageTask]);
-        const rejectedCount = Array.from(rejectedEntryIds).filter((entryId) =>
-          taskEntryIds.has(entryId),
-        ).length;
-
-        if (rejectedCount > 0) {
-          throw new Error(
-            `任务“${packageTask.title}”有 ${rejectedCount} 条修改选择了保留或跳过，不能同时标记为已提交。请先处理全部词条。`,
-          );
-        }
-      }
-    }
-
     const result = useOrdinarySafeguards
       ? mergeOrdinaryPackageTasks(
           existingTasks,
@@ -6595,6 +6573,32 @@ export async function applyChangePackage(
           resolutions,
         )
       : mergeRowsById(existingTasks, normalizedPackageTasks);
+
+    if (useOrdinarySafeguards && rejectedEntryIds.size > 0) {
+      const currentTasksById = new Map(existingTasks.map((task) => [task.id, task]));
+      for (const nextTask of result.rows) {
+        const currentTask = currentTasksById.get(nextTask.id);
+
+        if (
+          !currentTask ||
+          normalizeLegacyTaskStatus(currentTask.status) === "submitted" ||
+          normalizeLegacyTaskStatus(nextTask.status) !== "submitted"
+        ) {
+          continue;
+        }
+
+        const taskEntryIds = await getTaskScopeEntryIds(storage, [nextTask]);
+        const rejectedCount = Array.from(rejectedEntryIds).filter((entryId) =>
+          taskEntryIds.has(entryId),
+        ).length;
+
+        if (rejectedCount > 0) {
+          throw new Error(
+            `任务“${nextTask.title}”（${nextTask.id}）有 ${rejectedCount} 条修改选择了保留或跳过，不能同时标记为已提交。请先处理全部词条，或取消这次任务提交后重新导出修改包。`,
+          );
+        }
+      }
+    }
 
     if (result.imported > 0) {
       writePlan.writeJsonl(path, result.rows);

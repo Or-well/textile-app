@@ -2208,6 +2208,136 @@ describe("ordinary change-package write plan", () => {
     ]);
   });
 
+  it.each([
+    [false, "keep_main"],
+    [false, "skip"],
+    [true, "keep_main"],
+    [true, "skip"],
+  ] as const)("imports valid work while resolving an unsupported task state (base=%s, action=%s)", async (withBase, action) => {
+    const fixture = await createChangePackageFixture({
+      packageEntry: { target: "New translation" },
+      packageOperation: "translation_edit",
+    });
+    const [task] = await fixture.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    const completedTask: Task = {
+      ...task!, title: "Completed task", status: "completed", updated_at: "2026-10-07T00:00:00.000Z",
+    };
+    const activeTask: Task = { ...task!, id: "task-active", title: "Active task" };
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [completedTask, activeTask]);
+    if (withBase) {
+      await ensureWorkspaceBaseline(fixture.storage, await fixture.storage.readJson<ProjectConfig>("project.json"));
+      fixture.changePackage.base = {
+        schema_version: 1,
+        entries: { "entries/file-1/chunk_0001.jsonl": [fixture.originalEntry] },
+        comments: {}, terms: {},
+        tasks: { "tasks/tasks.jsonl": [completedTask, activeTask] },
+      };
+    }
+    fixture.changePackage.tasks = {
+      "tasks/tasks.jsonl": [
+        { ...completedTask, status: "submitted", updated_at: "2026-10-04T00:00:00.000Z" },
+        { ...activeTask, status: "submitted" },
+      ],
+    };
+    await refreshChangePackageHash(fixture.changePackage);
+    const packageHash = fixture.changePackage.manifest.content_hash;
+    const packageTasksBefore = JSON.stringify(fixture.changePackage.tasks);
+    const entriesBefore = await fixture.storage.readText("entries/file-1/chunk_0001.jsonl");
+    const tasksBefore = await fixture.storage.readText("tasks/tasks.jsonl");
+    setChangesProjectStorage(fixture.storage);
+
+    const conflicts = await detectConflicts(fixture.changePackage);
+    expect(conflicts).toEqual([expect.objectContaining({
+      kind: "task", conflictId: `task:${completedTask.id}`,
+      packageStatusError: expect.stringContaining("Completed task"),
+    })]);
+    await expect(applyChangePackage(fixture.changePackage, [], { actor: fixture.actor }))
+      .rejects.toThrow("仍有冲突未处理");
+    await expect(applyChangePackage(fixture.changePackage, [
+      { conflictId: conflicts[0]!.conflictId, action: "use_package" },
+    ], { actor: fixture.actor })).rejects.toThrow(`任务“Completed task”（${completedTask.id}）`);
+    expect(await fixture.storage.readText("entries/file-1/chunk_0001.jsonl")).toBe(entriesBefore);
+    expect(await fixture.storage.readText("tasks/tasks.jsonl")).toBe(tasksBefore);
+    expect(await fixture.storage.fileExists("comments/file-1/1.jsonl")).toBe(false);
+
+    await expect(applyChangePackage(fixture.changePackage, [
+      { conflictId: conflicts[0]!.conflictId, action },
+    ], { actor: fixture.actor })).resolves.toMatchObject({ appliedEntries: 1, importedTasks: 1 });
+    expect(await fixture.storage.readJsonl("entries/file-1/chunk_0001.jsonl"))
+      .toMatchObject([{ target: "New translation" }]);
+    expect(await fixture.storage.readJsonl("tasks/tasks.jsonl"))
+      .toEqual([completedTask, expect.objectContaining({ id: activeTask.id, status: "submitted" })]);
+    expect(fixture.changePackage.manifest.content_hash).toBe(packageHash);
+    expect(JSON.stringify(fixture.changePackage.tasks)).toBe(packageTasksBefore);
+  });
+
+  it.each([
+    ["keep_main", "assigned"], ["skip", "assigned"],
+    ["keep_main", "completed"], ["skip", "completed"],
+  ] as const)("checks the final task state after choosing %s for conflicts with a %s task", async (action, currentStatus) => {
+    const fixture = await createChangePackageFixture({ packageEntry: { target: "Package translation" } });
+    const [task] = await fixture.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    const baseTask: Task = {
+      ...task!, range_end: 2, status: currentStatus === "assigned" ? "completed" : "assigned",
+    };
+    const secondEntry = { ...fixture.originalEntry, id: "file-1:2", index: 2, key: "line_000002" };
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [baseTask]);
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [fixture.originalEntry, secondEntry]);
+    await ensureWorkspaceBaseline(fixture.storage, await fixture.storage.readJson<ProjectConfig>("project.json"));
+    fixture.changePackage.base = {
+      schema_version: 1,
+      entries: { "entries/file-1/chunk_0001.jsonl": [fixture.originalEntry, secondEntry] },
+      comments: {}, terms: {}, tasks: { "tasks/tasks.jsonl": [baseTask] },
+    };
+    fixture.changePackage.entries["entries/file-1/chunk_0001.jsonl"]!.push({
+      ...secondEntry, target: "Independent package translation", updated_by: "member-2",
+    });
+    fixture.changePackage.tasks = { "tasks/tasks.jsonl": [{ ...baseTask, status: "submitted" }] };
+    const currentTask: Task = { ...baseTask, status: currentStatus };
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [currentTask]);
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      { ...fixture.originalEntry, target: "Independent main translation" }, secondEntry,
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    const conflicts = await detectConflicts(fixture.changePackage);
+    expect(conflicts.map((conflict) => conflict.kind).sort()).toEqual(["entry", "task"]);
+    await expect(applyChangePackage(fixture.changePackage, conflicts.map((conflict) => ({
+      conflictId: conflict.conflictId, action,
+    })), { actor: fixture.actor })).resolves.toMatchObject({ keptEntries: 1, importedTasks: 0 });
+    expect(await fixture.storage.readJsonl("tasks/tasks.jsonl")).toEqual([currentTask]);
+    expect(await fixture.storage.readJsonl("entries/file-1/chunk_0001.jsonl")).toMatchObject([
+      { target: "Independent main translation" }, { target: "Independent package translation" },
+    ]);
+  });
+
+  it("does not treat an unchanged based task as a new submission when entry changes are rejected", async () => {
+    const fixture = await createChangePackageFixture({ packageEntry: { target: "Package translation" } });
+    const [task] = await fixture.storage.readJsonl<Task>("tasks/tasks.jsonl");
+    const baseTask: Task = { ...task!, status: "submitted" };
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [baseTask]);
+    await ensureWorkspaceBaseline(fixture.storage, await fixture.storage.readJson<ProjectConfig>("project.json"));
+    fixture.changePackage.base = {
+      schema_version: 1, entries: { "entries/file-1/chunk_0001.jsonl": [fixture.originalEntry] },
+      comments: {}, terms: {}, tasks: { "tasks/tasks.jsonl": [baseTask] },
+    };
+    fixture.changePackage.tasks = { "tasks/tasks.jsonl": [baseTask] };
+    await fixture.storage.writeJsonl("tasks/tasks.jsonl", [{ ...baseTask, status: "assigned" }]);
+    await fixture.storage.writeJsonl("entries/file-1/chunk_0001.jsonl", [
+      { ...fixture.originalEntry, target: "Main translation" },
+    ]);
+    await refreshChangePackageHash(fixture.changePackage);
+    setChangesProjectStorage(fixture.storage);
+
+    await expect(applyChangePackage(fixture.changePackage, [
+      { entryId: fixture.originalEntry.id, action: "keep_main" },
+    ], { actor: fixture.actor })).resolves.toMatchObject({ keptEntries: 1, importedTasks: 0 });
+    expect(await fixture.storage.readJsonl("tasks/tasks.jsonl")).toMatchObject([{ status: "assigned" }]);
+    expect(await fixture.storage.readJsonl("entries/file-1/chunk_0001.jsonl"))
+      .toMatchObject([{ target: "Main translation" }]);
+  });
+
   it("keeps a real divergence as an explicit conflict", async () => {
     const fixture = await createChangePackageFixture({
       packageOperation: "proofread",
@@ -2264,6 +2394,8 @@ describe("ordinary change-package write plan", () => {
 
     setChangesProjectStorage(fixture.storage);
 
+    const entriesBefore = await fixture.storage.readText("entries/file-1/chunk_0001.jsonl");
+    const eventsBefore = await fixture.storage.readText("logs/events.jsonl");
     await expect(
       applyChangePackage(
         fixture.changePackage,
@@ -2274,6 +2406,9 @@ describe("ordinary change-package write plan", () => {
     await expect(
       fixture.storage.readJsonl<Task>("tasks/tasks.jsonl"),
     ).resolves.toMatchObject([{ status: "in_progress" }]);
+    expect(await fixture.storage.readText("entries/file-1/chunk_0001.jsonl")).toBe(entriesBefore);
+    expect(await fixture.storage.readText("logs/events.jsonl")).toBe(eventsBefore);
+    expect(await fixture.storage.fileExists("comments/file-1/1.jsonl")).toBe(false);
   });
 
   it("resets workflow safely when an entry conflict is manually merged", async () => {

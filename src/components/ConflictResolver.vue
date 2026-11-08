@@ -96,6 +96,10 @@ function updateAction(
   conflict: ChangeConflict,
   action: ConflictResolutionAction,
 ) {
+  if (action === "use_package" && conflict.kind === "task" && conflict.packageStatusError) {
+    return;
+  }
+
   const draft = drafts.value.find(
     (item) => item.conflictId === conflict.conflictId,
   );
@@ -433,6 +437,10 @@ function formatTaskMeta(task: Task): string {
         </section>
       </div>
 
+      <p v-if="conflict.kind === 'task' && conflict.packageStatusError" class="disabled-reason">
+        {{ conflict.packageStatusError }}
+      </p>
+
       <div
         v-for="draft in drafts.filter((item) => item.conflictId === conflict.conflictId)"
         :key="draft.conflictId"
@@ -448,7 +456,10 @@ function formatTaskMeta(task: Task): string {
             <option value="keep_main">
               {{ isProjectUpdate ? "使用项目更新" : "保留当前项目" }}
             </option>
-            <option value="use_package">
+            <option
+              value="use_package"
+              :disabled="conflict.kind === 'task' && Boolean(conflict.packageStatusError)"
+            >
               {{ isProjectUpdate ? "保留本地修改" : "使用修改包版本" }}
             </option>
             <option
@@ -457,7 +468,9 @@ function formatTaskMeta(task: Task): string {
             >
               手动处理
             </option>
-            <option value="skip">跳过</option>
+            <option value="skip">
+              {{ isProjectUpdate ? "放弃本地冲突修改，使用项目更新" : "跳过本项修改，保留当前项目" }}
+            </option>
           </select>
         </label>
 
