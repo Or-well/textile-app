@@ -75,6 +75,19 @@ interface EntryHistoryPosition {
   snapshot: EntryVersionSnapshot;
 }
 
+export interface EntryHistoryVersion {
+  key: string;
+  snapshot: EntryVersionSnapshot;
+  target: string;
+  status: EntryStatus;
+}
+
+export interface EntryHistoryRow {
+  key: string;
+  event?: ProjectEvent;
+  version?: EntryHistoryVersion;
+}
+
 export interface ProjectEventFilter {
   entryId?: string;
   fileId?: string;
@@ -297,6 +310,71 @@ export async function appendEventToStorage(
 
 export async function getEntryHistory(entryId: string): Promise<ProjectEvent[]> {
   return loadEvents({ entryId });
+}
+
+export function projectEntryHistory(
+  entry: Pick<Entry, "id" | "target" | "status">,
+  events: readonly ProjectEvent[],
+): { rows: EntryHistoryRow[]; currentKey?: string } {
+  const rows: EntryHistoryRow[] = [];
+  // Later restores may reference an earlier restore or status snapshot.
+  const versionsBySnapshot = new Map<string, EntryHistoryVersion>();
+  const latestByTarget = new Map<string, EntryHistoryVersion>();
+  let current: EntryHistoryVersion | undefined;
+
+  function addVersion(event: EntryHistoryVersionEvent, snapshot: EntryVersionSnapshot) {
+    const key = `${event.id}:${snapshot}`;
+    const version = {
+      key,
+      snapshot,
+      target: event.detail[`${snapshot}_target`],
+      status: event.detail[`${snapshot}_status`],
+    };
+    rows.push({ key, event, version });
+    latestByTarget.set(version.target, version);
+    return version;
+  }
+
+  for (const event of events) {
+    if (event.entry_id !== entry.id) continue;
+    if (!isEntryHistoryVersionEvent(event)) {
+      rows.push({ key: event.id, event });
+      continue;
+    }
+
+    const detail = event.detail;
+    if (!current || current.target !== detail.before_target) {
+      current = addVersion(event, "before");
+    }
+    versionsBySnapshot.set(`${event.id}:before`, current);
+
+    if (event.type === "entry.restored") {
+      const restoredVersion = versionsBySnapshot.get(
+        `${detail.restored_from_event_id}:${detail.restored_from_snapshot ?? "after"}`,
+      );
+      current = restoredVersion?.target === detail.after_target
+        ? restoredVersion
+        : latestByTarget.get(detail.after_target) ?? addVersion(event, "after");
+      rows.push({ key: event.id, event });
+    } else if (detail.before_target !== detail.after_target) {
+      current = addVersion(event, "after");
+    } else {
+      rows.push({ key: event.id, event });
+    }
+
+    versionsBySnapshot.set(`${event.id}:after`, current);
+  }
+
+  if (current && current.target !== entry.target) {
+    current = latestByTarget.get(entry.target);
+    if (!current) {
+      const key = "current";
+      current = { key, snapshot: "after", target: entry.target, status: entry.status };
+      rows.push({ key, version: current });
+    }
+  }
+
+  return { rows: rows.reverse(), currentKey: current?.key };
 }
 
 export function getEntryHistoryNavigation(

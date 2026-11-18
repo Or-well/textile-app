@@ -10,6 +10,7 @@ import {
   getEntryHistory,
   getEntryHistoryNavigation,
   isEntryVersionEvent,
+  projectEntryHistory,
   setHistoryProjectStorage,
   type EntryHistoryDirection,
 } from "../../src/services/history";
@@ -61,6 +62,34 @@ async function createEntryStorage(
 }
 
 describe("entry version history", () => {
+  it("keeps matching text saved at different times and marks the exact restored version", async () => {
+    const { storage, entry } = await createEntryStorage();
+    const actor = createMember(["owner"], { id: "owner-1" });
+    setEntriesProjectStorage(storage);
+    setHistoryProjectStorage(storage);
+
+    const middle = await saveEntry({ ...entry, target: "Middle" }, { actor });
+    await saveEntry({ ...middle, target: entry.target }, { actor });
+    const [first, repeat] = await getEntryHistory(entry.id);
+
+    await restoreEntryVersion(entry.id, repeat!.id, { actor, direction: "undo", snapshot: "before" });
+    const restored = await restoreEntryVersion(entry.id, first!.id, { actor, snapshot: "before" });
+    const history = projectEntryHistory(restored, await getEntryHistory(entry.id));
+
+    expect(history.currentKey).toBe(`${first!.id}:before`);
+    expect(history.rows.flatMap((row) => row.version ? [row.key] : [])).toEqual([
+      `${repeat!.id}:after`, `${first!.id}:after`, `${first!.id}:before`,
+    ]);
+    expect(history.rows.filter((row) => !row.version).map((row) => row.event?.detail?.operation))
+      .toEqual(["restore", "undo"]);
+    expect(restored.translated_by).toBe(entry.translated_by);
+
+    const newest = await saveEntry({ ...restored, target: "New edit" }, { actor });
+    const nextHistory = projectEntryHistory(newest, await getEntryHistory(entry.id));
+    expect(nextHistory.rows.filter((row) => row.version).map((row) => row.version?.target))
+      .toEqual(["New edit", entry.target, "Middle", entry.target]);
+  });
+
   it("records target changes with before and after snapshots", async () => {
     const { storage, entry } = await createEntryStorage();
     const actor = createMember(["owner"], { id: "owner-1" });
