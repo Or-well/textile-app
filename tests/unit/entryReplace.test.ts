@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Entry, ProjectEvent, Task } from "../../src/model/types";
-import { setEntriesProjectStorage } from "../../src/services/entries";
+import { restoreEntryVersion, setEntriesProjectStorage } from "../../src/services/entries";
 import {
   executeEntryReplace,
   previewEntryReplace,
@@ -152,6 +152,16 @@ describe("entry replace", () => {
         match_count: 1,
         preserve_workflow: true,
       },
+    });
+    await expect(restoreEntryVersion(reviewed.id, events[0]!.id, {
+      actor: createMember(["owner"], { id: "owner-1" }),
+      direction: "undo",
+      snapshot: "before",
+    })).resolves.toMatchObject({
+      target: reviewed.target,
+      translated_by: "translator-1",
+      status: "translated",
+      proofread_count: 0,
     });
   });
 

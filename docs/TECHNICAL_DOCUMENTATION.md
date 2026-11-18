@@ -866,12 +866,14 @@ logs/events.jsonl               # 当前活动片，最多 1000 条或 256 KiB
 词条版本事件：
 
 - `entry.updated`：手工保存、批量译文导入或修改包合并导致译文、状态或工作流审计变化。
-- `entry.restored`：恢复某个历史译文版本。
+- `entry.restored`：恢复指定版本，或撤销、重做已保存的译文修改。
 - `entry.target_replaced`：词条管理页文本替换导致译文变化，保留工作流状态和校对/审核审计字段。
-- `detail.operation` 区分 `translation_edit`、`proofread`、`review`、流程回退、`translation_import`、`package_merge` 和 `restore`。
+- `detail.operation` 区分 `translation_edit`、`proofread`、`review`、流程回退、`translation_import`、`package_merge`、`restore`、`undo` 和 `redo`。
 - `detail` 保存译文、状态、译者、校对成员、校对次数和审核成员的完整前后快照。
 - 修改包合并生成本地权威版本事件，并通过 `source_event_id`、`package_id` 关联来源；普通包的源词条版本事件不直接复制为本地版本。
-- 恢复事件额外保存 `restored_from_event_id` 和 `restored_from_snapshot`，明确恢复的是该事件的修改前或修改后快照。
+- 历史操作记录 `restored_from_event_id` 和 `restored_from_snapshot`。撤销读取一次译文修改前的快照，重做读取同一次修改后的快照。
+- 历史面板按日志追加顺序推导每个词条的撤销和重做位置，时间相同的记录也保持操作顺序。仅状态变化的记录不移动位置。保存新译文或直接恢复指定版本会清除当前可重做的步骤，原记录继续保留。
+- 恢复、撤销和重做都使用 `restoreEntryVersion()`，沿用既有权限和工作流重置规则，并通过同一写入计划保存词条和追加事件。批量文本替换的快照也可用于词条历史，新记录额外保存原译者。
 - 旧日志缺少译文或状态快照时继续作为普通审计事件读取，但不能恢复；仅缺少译者快照时仍可恢复，译者按未知处理。
 
 文件历史事件：

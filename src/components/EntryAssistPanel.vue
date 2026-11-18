@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import CommentPanel from "./CommentPanel.vue";
 import ContextPanel from "./ContextPanel.vue";
 import TermEditDialog from "./TermEditDialog.vue";
@@ -16,8 +16,10 @@ import type {
 } from "../model/types";
 import {
   getEntryHistory,
-  isEntryVersionEvent,
-  type EntryVersionEvent,
+  getEntryHistoryNavigation,
+  isEntryHistoryVersionEvent,
+  type EntryHistoryDirection,
+  type EntryHistoryVersionEvent,
   type EntryVersionSnapshot,
 } from "../services/history";
 import { restoreEntryVersion } from "../services/entries";
@@ -35,7 +37,7 @@ import {
   canUpdateTerm,
   getCurrentUser,
 } from "../services/permissions";
-import { compareInstants, formatDateTime } from "../utils/time";
+import { formatDateTime } from "../utils/time";
 
 type AssistTab = "terms" | "comments" | "context" | "history";
 
@@ -47,7 +49,7 @@ interface TermDisplayItem {
 
 interface HistoryVersion {
   key: string;
-  event: EntryVersionEvent;
+  event: EntryHistoryVersionEvent;
   snapshot: EntryVersionSnapshot;
   target: string;
   status: EntryStatus;
@@ -66,10 +68,13 @@ const props = defineProps<{
   draftTarget: string;
   activeTab?: AssistTab;
   highlightCommentId?: string;
+  isSaving?: boolean;
 }>();
 
 const emit = defineEmits<{
   entryUpdated: [entry: Entry];
+  historyApplied: [entry: Entry];
+  historyBusy: [busy: boolean];
   updateActiveTab: [tab: AssistTab];
   viewEntryComment: [comment: Comment];
 }>();
@@ -86,7 +91,8 @@ const termErrorMessage = ref("");
 const termActionMessage = ref("");
 const historyErrorMessage = ref("");
 const historyActionMessage = ref("");
-const restoringEventId = ref("");
+const isReadingHistory = ref(false);
+const pendingHistoryAction = ref("");
 let termRequestId = 0;
 let termSearchRequestId = 0;
 let historyRequestId = 0;
@@ -109,8 +115,17 @@ const displayedTerms = computed<TermDisplayItem[]>(() => {
 const termEmptyText = computed(() =>
   isSearchingTerms.value ? "没有找到术语" : "没有相关术语",
 );
+const canChangeVersion = computed(() =>
+  canRestoreEntryVersion(currentUser.value, props.entry),
+);
+const historyBusy = computed(() =>
+  props.isSaving || isReadingHistory.value || Boolean(pendingHistoryAction.value),
+);
+const historyNavigation = computed(() =>
+  props.entry ? getEntryHistoryNavigation(props.entry, historyEvents.value) : undefined,
+);
 const historyVersions = computed<HistoryVersion[]>(() => {
-  const events = historyEvents.value.filter(isEntryVersionEvent);
+  const events = historyEvents.value.filter(isEntryHistoryVersionEvent).reverse();
   const versions: HistoryVersion[] = events.map((event) => ({
     key: `${event.id}:after`,
     event,
@@ -134,21 +149,19 @@ const historyVersions = computed<HistoryVersion[]>(() => {
 
   return versions;
 });
-const currentVersionKey = computed(
-  () =>
-    historyVersions.value.find(
-      (version) =>
-        version.target === props.entry?.target &&
-        version.status === props.entry?.status,
-    )?.key ?? "",
-);
+const currentVersionKey = computed(() => {
+  const latest = historyVersions.value[0];
+  return latest && latest.target === props.entry?.target && latest.status === props.entry?.status
+    ? latest.key
+    : undefined;
+});
 const historyRows = computed<HistoryRow[]>(() => {
   const versionByEventId = new Map(
     historyVersions.value
       .filter((version) => !version.isInitial)
       .map((version) => [version.event.id, version]),
   );
-  const rows = historyEvents.value.map((event) => ({
+  const rows = [...historyEvents.value].reverse().map((event) => ({
     key: event.id,
     event,
     version: versionByEventId.get(event.id),
@@ -178,19 +191,19 @@ const tabs: Array<{ id: AssistTab; label: string }> = [
 function setActiveTab(tab: AssistTab) {
   activeTab.value = tab;
   emit("updateActiveTab", tab);
-
-  if (tab === "history") {
-    void refreshEntryHistory(props.entry?.id);
-  }
 }
 
 function describeEvent(event: ProjectEvent): string {
   if (event.type === "entry.restored") {
+    if (event.detail?.operation === "undo") return "撤销了译文修改";
+    if (event.detail?.operation === "redo") return "重做了译文修改";
     return "恢复了历史译文";
   }
 
+  if (event.type === "entry.target_replaced") return "替换了译文";
+
   if (event.type === "entry.updated") {
-    if (!isEntryVersionEvent(event)) {
+    if (!isEntryHistoryVersionEvent(event)) {
       return "词条已更新";
     }
 
@@ -214,11 +227,7 @@ function describeEvent(event: ProjectEvent): string {
 }
 
 function canRestoreVersion(version: HistoryVersion): boolean {
-  return Boolean(
-    props.entry &&
-      version.key !== currentVersionKey.value &&
-      canRestoreEntryVersion(currentUser.value, props.entry),
-  );
+  return canChangeVersion.value && version.target !== props.entry?.target;
 }
 
 function formatEventTime(value: string): string {
@@ -231,13 +240,15 @@ function getMemberName(memberId: string): string {
   });
 }
 
-async function handleRestoreVersion(version: HistoryVersion): Promise<void> {
-  if (!props.entry || !canRestoreVersion(version)) {
-    return;
-  }
+function navigateHistory(direction: EntryHistoryDirection): void {
+  const step = historyNavigation.value?.[direction];
+  if (step) void applyHistoryVersion(step.eventId, step.snapshot, direction, direction);
+}
 
+function handleRestoreVersion(version: HistoryVersion): void {
+  if (!canRestoreVersion(version) || historyBusy.value) return;
   const targetPreview = version.target || "空译文";
-  const draftWarning = props.draftTarget !== undefined && props.draftTarget !== props.entry.target
+  const draftWarning = props.draftTarget !== props.entry?.target
     ? "当前未保存的译文会被替换。"
     : "";
 
@@ -249,51 +260,58 @@ async function handleRestoreVersion(version: HistoryVersion): Promise<void> {
     return;
   }
 
-  restoringEventId.value = version.key;
+  void applyHistoryVersion(version.event.id, version.snapshot, version.key);
+}
+
+async function applyHistoryVersion(
+  eventId: string,
+  snapshot: EntryVersionSnapshot,
+  actionKey: string,
+  direction?: EntryHistoryDirection,
+): Promise<void> {
+  const entry = props.entry;
+  if (!entry || !canChangeVersion.value || historyBusy.value) return;
+  const label = direction === "undo" ? "撤销" : direction === "redo" ? "重做" : "恢复";
+  if (direction && props.draftTarget !== entry.target &&
+    !window.confirm(`当前译文尚未保存，是否放弃草稿并${label}已保存的译文修改？`)) {
+    return;
+  }
+
+  pendingHistoryAction.value = actionKey;
+  emit("historyBusy", true);
   historyErrorMessage.value = "";
   historyActionMessage.value = "";
 
   try {
-    const restoredEntry = await restoreEntryVersion(
-      props.entry.id,
-      version.event.id,
-      {
-        actor: currentUser.value,
-        snapshot: version.snapshot,
-      },
-    );
-
-    emit("entryUpdated", restoredEntry);
-    historyActionMessage.value = "已恢复历史译文，需重新校对和审核。";
-    await refreshEntryHistory(restoredEntry.id);
+    const restoredEntry = await restoreEntryVersion(entry.id, eventId, {
+      actor: currentUser.value,
+      snapshot,
+      direction,
+    });
+    emit("historyApplied", restoredEntry);
+    if (props.entry?.id === entry.id && activeTab.value === "history") {
+      historyActionMessage.value = direction ? `已${label}译文修改，需重新校对和审核。` : "已恢复历史译文，需重新校对和审核。";
+    }
+    await nextTick();
   } catch (error) {
-    historyErrorMessage.value =
-      error instanceof Error ? error.message : "恢复历史译文失败。";
+    if (props.entry?.id === entry.id && activeTab.value === "history") {
+      historyErrorMessage.value = error instanceof Error ? error.message : `${label}译文修改失败。`;
+    }
   } finally {
-    restoringEventId.value = "";
+    pendingHistoryAction.value = "";
+    emit("historyBusy", false);
   }
 }
 
-async function refreshEntryHistory(entryId?: string): Promise<void> {
+async function refreshEntryHistory(entryId: string): Promise<void> {
   const requestId = (historyRequestId += 1);
-
-  if (!entryId) {
-    historyEvents.value = [];
-    historyErrorMessage.value = "";
-    historyActionMessage.value = "";
-    return;
-  }
-
+  isReadingHistory.value = true;
+  historyErrorMessage.value = "";
   try {
     const events = await getEntryHistory(entryId);
 
     if (requestId === historyRequestId) {
-      historyEvents.value = events.sort(
-        (a, b) =>
-          compareInstants(b.created_at, a.created_at) ||
-          a.id.localeCompare(b.id),
-      );
-      historyErrorMessage.value = "";
+      historyEvents.value = events;
     }
   } catch (error) {
     if (requestId === historyRequestId) {
@@ -301,6 +319,8 @@ async function refreshEntryHistory(entryId?: string): Promise<void> {
       historyErrorMessage.value =
         error instanceof Error ? error.message : "历史记录无法读取。";
     }
+  } finally {
+    if (requestId === historyRequestId) isReadingHistory.value = false;
   }
 }
 
@@ -418,13 +438,7 @@ async function saveTerm(input: TermInput) {
 watch(
   () => props.activeTab,
   (tab) => {
-    if (tab) {
-      activeTab.value = tab;
-
-      if (tab === "history") {
-        void refreshEntryHistory(props.entry?.id);
-      }
-    }
+    if (tab) activeTab.value = tab;
   },
 );
 
@@ -441,10 +455,20 @@ watch(termSearchText, () => {
 });
 
 watch(
-  [() => props.entry?.id, () => props.entry?.updated_at],
-  ([entryId]) => {
-    if (activeTab.value === "history") {
-      void refreshEntryHistory(entryId);
+  [activeTab, () => props.entry],
+  ([tab, entry], [, previousEntry]) => {
+    if (entry?.id !== previousEntry?.id || tab !== "history") {
+      historyEvents.value = [];
+      historyActionMessage.value = "";
+      historyErrorMessage.value = "";
+    } else if (entry !== previousEntry && !pendingHistoryAction.value) {
+      historyActionMessage.value = "";
+    }
+    if (tab === "history" && entry) {
+      void refreshEntryHistory(entry.id);
+    } else {
+      historyRequestId += 1;
+      isReadingHistory.value = false;
     }
   },
   { immediate: true },
@@ -460,6 +484,7 @@ watch(
         class="tab-button"
         :class="{ active: activeTab === tab.id }"
         type="button"
+        :disabled="Boolean(pendingHistoryAction)"
         @click="setActiveTab(tab.id)"
       >
         {{ tab.label }}
@@ -516,17 +541,34 @@ watch(
       <ContextPanel :entry="entry" @entry-updated="emit('entryUpdated', $event)" />
     </section>
 
-    <section v-else class="tab-panel">
-      <p v-if="historyErrorMessage" class="error-message">
+    <section v-else class="tab-panel history-panel">
+      <div v-if="canChangeVersion" class="history-toolbar" aria-label="译文版本操作" role="group">
+        <button
+          class="restore-button"
+          type="button"
+          :disabled="historyBusy || !historyNavigation?.undo"
+          @click="navigateHistory('undo')"
+        >撤销</button>
+        <button
+          class="restore-button"
+          type="button"
+          :disabled="historyBusy || !historyNavigation?.redo"
+          @click="navigateHistory('redo')"
+        >重做</button>
+      </div>
+      <p v-if="historyErrorMessage" class="error-message" role="alert">
         {{ historyErrorMessage }}
       </p>
-      <p v-if="historyActionMessage" class="term-action-message">
+      <p v-if="historyActionMessage" class="term-action-message" role="status">
         {{ historyActionMessage }}
       </p>
-      <p v-else-if="historyEvents.length === 0" class="empty-text">
+      <p v-if="historyEvents.length === 0 && isReadingHistory" class="empty-text">
+        正在读取历史记录...
+      </p>
+      <p v-else-if="historyEvents.length === 0 && !historyErrorMessage" class="empty-text">
         暂无历史记录
       </p>
-      <ul v-else class="history-list">
+      <ul v-if="historyEvents.length > 0" class="history-list">
         <li
           v-for="row in historyRows"
           :key="row.key"
@@ -540,7 +582,7 @@ watch(
               }}
             </strong>
             <span
-              v-if="row.version?.key === currentVersionKey"
+              v-if="row.version && row.version.key === currentVersionKey"
               class="current-version"
             >
               当前版本
@@ -560,11 +602,11 @@ watch(
               v-if="canRestoreVersion(row.version)"
               class="restore-button"
               type="button"
-              :disabled="Boolean(restoringEventId)"
+              :disabled="historyBusy"
               @click="handleRestoreVersion(row.version)"
             >
               {{
-                restoringEventId === row.version.key
+                pendingHistoryAction === row.version.key
                   ? "正在恢复..."
                   : "恢复此版本"
               }}
@@ -689,6 +731,17 @@ watch(
   color: var(--color-brand);
 }
 
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.history-toolbar {
+  display: flex;
+  gap: var(--space-3);
+}
+
 .history-list {
   display: grid;
   gap: var(--space-3);
@@ -743,7 +796,7 @@ watch(
 }
 
 .restore-button:disabled {
-  cursor: wait;
+  cursor: default;
   opacity: 0.6;
 }
 

@@ -53,15 +53,26 @@ export type EntryHistoryOperation =
   | EntryWorkflowOperation
   | "translation_import"
   | "package_merge"
-  | "restore";
+  | "restore"
+  | EntryHistoryDirection;
 
 export type EntryVersionSnapshot = "before" | "after";
+export type EntryHistoryDirection = "undo" | "redo";
 
-export interface EntryVersionEvent extends ProjectEvent {
-  type: "entry.updated" | "entry.restored";
+export interface EntryHistoryVersionEvent extends ProjectEvent {
+  type: "entry.updated" | "entry.restored" | "entry.target_replaced";
   entry_id: string;
   file_id: string;
   detail: ProjectEvent["detail"] & EntryVersionDetail;
+}
+
+export interface EntryVersionEvent extends EntryHistoryVersionEvent {
+  type: "entry.updated" | "entry.restored";
+}
+
+interface EntryHistoryPosition {
+  eventId: string;
+  snapshot: EntryVersionSnapshot;
 }
 
 export interface ProjectEventFilter {
@@ -288,6 +299,52 @@ export async function getEntryHistory(entryId: string): Promise<ProjectEvent[]> 
   return loadEvents({ entryId });
 }
 
+export function getEntryHistoryNavigation(
+  entry: Pick<Entry, "id" | "target">,
+  events: readonly ProjectEvent[],
+): Record<EntryHistoryDirection, EntryHistoryPosition | undefined> {
+  const undo: EntryHistoryVersionEvent[] = [];
+  const redo: EntryHistoryVersionEvent[] = [];
+
+  // Replay in append order, including when several events share a timestamp.
+  for (const event of events) {
+    if (event.entry_id !== entry.id || !isEntryHistoryVersionEvent(event)) continue;
+    const detail = event.detail;
+    if (detail.before_target === detail.after_target) continue;
+
+    const previous = undo.at(-1);
+    const next = redo.at(-1);
+    if (event.type === "entry.restored" && detail.operation === "undo" &&
+      previous && detail.restored_from_event_id === previous.id &&
+      detail.restored_from_snapshot === "before") {
+      undo.pop();
+      redo.push(previous);
+    } else if (event.type === "entry.restored" && detail.operation === "redo" &&
+      next && detail.restored_from_event_id === next.id &&
+      detail.restored_from_snapshot === "after") {
+      redo.pop();
+      undo.push(next);
+    } else {
+      if (previous && previous.detail.after_target !== detail.before_target) {
+        undo.length = 0;
+      }
+      undo.push(event);
+      redo.length = 0;
+    }
+  }
+
+  const previous = undo.at(-1);
+  const next = redo.at(-1);
+  return {
+    undo: previous?.detail.after_target === entry.target
+      ? { eventId: previous.id, snapshot: "before" }
+      : undefined,
+    redo: next?.detail.before_target === entry.target
+      ? { eventId: next.id, snapshot: "after" }
+      : undefined,
+  };
+}
+
 export function deriveEntryWorkflowAudit(
   entry: Entry,
   events: ProjectEvent[],
@@ -373,10 +430,18 @@ export function createEntryVersionEvent(
 export function isEntryVersionEvent(
   event: ProjectEvent,
 ): event is EntryVersionEvent {
+  return (event.type === "entry.updated" || event.type === "entry.restored") &&
+    isEntryHistoryVersionEvent(event);
+}
+
+export function isEntryHistoryVersionEvent(
+  event: ProjectEvent,
+): event is EntryHistoryVersionEvent {
   const detail = event.detail;
 
   return Boolean(
-    (event.type === "entry.updated" || event.type === "entry.restored") &&
+    (event.type === "entry.updated" || event.type === "entry.restored" ||
+      event.type === "entry.target_replaced") &&
       event.entry_id &&
       event.file_id &&
       detail &&

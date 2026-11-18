@@ -7,7 +7,11 @@ import {
 } from "../../src/services/entries";
 import {
   deriveEntryWorkflowAudit,
+  getEntryHistory,
+  getEntryHistoryNavigation,
   isEntryVersionEvent,
+  setHistoryProjectStorage,
+  type EntryHistoryDirection,
 } from "../../src/services/history";
 import { createMemoryProjectDirectory } from "../../src/services/projectFs";
 import { createProjectStorage } from "../../src/services/projectStorage";
@@ -553,6 +557,68 @@ describe("entry version history", () => {
         },
       },
     ]);
+  });
+
+  it("undoes and redoes saved text in append order without treating status changes as steps", async () => {
+    const { storage, entry } = await createEntryStorage();
+    const actor = createMember(["owner"], { id: "owner-1" });
+    setEntriesProjectStorage(storage);
+    setHistoryProjectStorage(storage);
+
+    const middle = await saveEntry({ ...entry, target: "Middle" }, { actor });
+    let current = await saveEntry({ ...middle, target: entry.target }, { actor });
+    const [first, second] = await getEntryHistory(entry.id);
+    const eventsAtSameTime = [first!, { ...second!, created_at: first!.created_at }];
+    await storage.writeJsonl("logs/events.jsonl", eventsAtSameTime);
+
+    async function move(direction: EntryHistoryDirection, expected: string) {
+      const navigation = getEntryHistoryNavigation(current, await getEntryHistory(entry.id));
+      const step = navigation[direction]!;
+      expect(step).toBeDefined();
+      current = await restoreEntryVersion(entry.id, step.eventId, {
+        actor, direction, snapshot: step.snapshot,
+      });
+      expect(current.target).toBe(expected);
+    }
+
+    await move("undo", "Middle");
+    await move("undo", entry.target);
+    expect(getEntryHistoryNavigation(current, await getEntryHistory(entry.id)).undo).toBeUndefined();
+
+    current = await saveEntry({ ...current, status: "proofread", proofread_by: [actor.id], proofread_count: 1 }, { actor });
+    const reopenedStorage = createProjectStorage(storage.root);
+    setEntriesProjectStorage(reopenedStorage);
+    setHistoryProjectStorage(reopenedStorage);
+    await move("redo", "Middle");
+    expect(current).toMatchObject({ status: "translated", proofread_count: 0 });
+    await move("redo", entry.target);
+
+    const events = await getEntryHistory(entry.id);
+    expect(events.filter((event) => event.type === "entry.restored").map((event) => event.detail?.operation))
+      .toEqual(["undo", "undo", "redo", "redo"]);
+    expect(getEntryHistoryNavigation(current, events).redo).toBeUndefined();
+  });
+
+  it("clears the redo path after saving new text while keeping the old version in history", async () => {
+    const { storage, entry } = await createEntryStorage();
+    const actor = createMember(["owner"], { id: "owner-1" });
+    setEntriesProjectStorage(storage);
+    setHistoryProjectStorage(storage);
+
+    await saveEntry({ ...entry, target: "Old edit" }, { actor });
+    const [oldEdit] = await getEntryHistory(entry.id);
+    const undone = await restoreEntryVersion(entry.id, oldEdit!.id, { actor, direction: "undo", snapshot: "before" });
+    const next = await saveEntry({ ...undone, target: "New edit" }, { actor });
+    const events = await getEntryHistory(entry.id);
+    expect(events).toContainEqual(oldEdit);
+    expect(getEntryHistoryNavigation(next, events)).toEqual({
+      undo: { eventId: events.at(-1)?.id, snapshot: "before" },
+      redo: undefined,
+    });
+    await expect(restoreEntryVersion(entry.id, oldEdit!.id, { actor, direction: "redo" }))
+      .rejects.toThrow("译文历史已变化");
+    await expect(restoreEntryVersion(entry.id, oldEdit!.id, { actor }))
+      .resolves.toMatchObject({ target: "Old edit" });
   });
 
   it("does not attribute legacy restored versions to the restorer", async () => {

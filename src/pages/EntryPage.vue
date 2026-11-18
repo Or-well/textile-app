@@ -55,6 +55,8 @@ const highlightedCommentId = ref(props.targetCommentId ?? "");
 const draftTarget = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
+const isHistorySaving = ref(false);
+const isEditingBusy = computed(() => isSaving.value || isHistorySaving.value);
 const errorMessage = ref("");
 const savedMessage = ref("");
 const currentEntryPage = ref(1);
@@ -74,7 +76,7 @@ const fileNames = computed(() =>
 );
 
 function canDiscardDraft() {
-  return !isSaving.value && !isLoading.value && (
+  return !isEditingBusy.value && !isLoading.value && (
     !hasUnsavedTranslation.value ||
     window.confirm("译文尚未保存，是否放弃修改并切换？")
   );
@@ -122,7 +124,7 @@ async function toggleFileContext() {
 }
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (props.scopeEntries && (hasUnsavedTranslation.value || isSaving.value)) {
+  if (props.scopeEntries && (hasUnsavedTranslation.value || isEditingBusy.value)) {
     event.preventDefault();
     event.returnValue = "";
   }
@@ -300,6 +302,10 @@ function setSelectedEntry(
     scrollPosition?: EntryScrollPosition;
   } = {},
 ) {
+  if (entry?.id !== selectedEntry.value?.id) {
+    errorMessage.value = "";
+    savedMessage.value = "";
+  }
   selectedEntry.value = entry;
   draftTarget.value = entry?.target ?? "";
 
@@ -381,7 +387,6 @@ function handleSelectEntry(
     return;
   }
   setSelectedEntry(entry, { scrollPosition });
-  savedMessage.value = "";
 }
 
 function replaceEntry(savedEntry: Entry) {
@@ -586,7 +591,17 @@ async function handleSaveAndNext(entry: Entry) {
 
 function handleEntryUpdated(entry: Entry) {
   replaceEntry(entry);
-  savedMessage.value = "词条状态已更新。";
+  if (selectedEntry.value?.id === entry.id) {
+    savedMessage.value = "词条状态已更新。";
+  }
+}
+
+function handleHistoryBusy(busy: boolean) {
+  isHistorySaving.value = busy;
+  if (busy) {
+    errorMessage.value = "";
+    savedMessage.value = "";
+  }
 }
 
 function handleViewEntryComment(comment: Comment) {
@@ -662,6 +677,9 @@ watch(filteredEntries, (nextEntries) => {
     return;
   }
 
+  // Keep the editor on this entry if the restored text or status falls out of the filter.
+  if (isHistorySaving.value && selectedEntry.value) return;
+
   setSelectedEntry(nextEntries[0], { scrollPosition: "nearest" });
 });
 
@@ -676,7 +694,7 @@ onMounted(() => {
   void loadFileEntries();
   window.addEventListener("beforeunload", handleBeforeUnload);
 });
-watch(isSaving, (busy) => emit("editingBusy", busy), { flush: "sync" });
+watch(isEditingBusy, (busy) => emit("editingBusy", busy), { flush: "sync" });
 onBeforeUnmount(() => {
   window.removeEventListener("beforeunload", handleBeforeUnload);
   emit("editingBusy", false);
@@ -695,14 +713,14 @@ onBeforeUnmount(() => {
           v-if="scopeEntries"
           type="button"
           class="secondary-button"
-          :disabled="isSaving || isLoading"
+          :disabled="isEditingBusy || isLoading"
           @click="handleExitScope"
         >返回结果列表</button>
         <button
           v-if="scopeEntries"
           type="button"
           class="secondary-button"
-          :disabled="isSaving || isLoading || !selectedEntry"
+          :disabled="isEditingBusy || isLoading || !selectedEntry"
           @click="toggleFileContext"
         >{{ showingFileContext ? '返回本次结果' : '查看文件上下文' }}</button>
         <p class="entry-count">{{ scopeEntries ? `第 ${selectedIndex + 1} / ${entries.length} 条` : entryCountLabel }}</p>
@@ -746,7 +764,7 @@ onBeforeUnmount(() => {
         <EntryEditor
           :entry="selectedEntry"
           :file-name="currentFile?.name || '已删除文件'"
-          :is-saving="isSaving"
+          :is-saving="isEditingBusy"
           :can-go-previous="canGoPrevious"
           :can-go-next="canGoNext"
           :workflow="project.settings.workflow"
@@ -773,7 +791,10 @@ onBeforeUnmount(() => {
           :draft-target="draftTarget"
           :active-tab="assistTab"
           :highlight-comment-id="highlightedCommentId"
+          :is-saving="isSaving"
           @entry-updated="handleEntryUpdated"
+          @history-applied="replaceEntry"
+          @history-busy="handleHistoryBusy"
           @update-active-tab="assistTab = $event"
           @view-entry-comment="handleViewEntryComment"
         />

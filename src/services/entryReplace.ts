@@ -201,6 +201,8 @@ function createReplaceEvent(
       after_target: after.target,
       before_status: before.status,
       after_status: after.status,
+      before_translated_by: before.translated_by,
+      after_translated_by: after.translated_by,
       match_count: matchCount,
       case_sensitive: Boolean(request.caseSensitive),
       preserve_workflow: true,

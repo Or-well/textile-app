@@ -113,16 +113,17 @@ export async function loadProjectEventLogTail(
 
 export async function loadProjectEventsFromStorage(
   storage: ProjectStorage,
+  tail?: ProjectEventLogTail,
 ): Promise<ProjectEvent[]> {
-  const archives = await listEventArchiveFiles(storage);
+  const archives = tail?.archives ?? await listEventArchiveFiles(storage);
   const archiveGroups = await mapWithConcurrency(
     archives,
     8,
     (file) => storage.readJsonl<ProjectEvent>(file.path),
   );
-  const activeEvents = (await storage.fileExists(LEGACY_EVENT_LOG_PATH))
+  const activeEvents = tail?.activeEvents ?? ((await storage.fileExists(LEGACY_EVENT_LOG_PATH))
     ? await storage.readJsonl<ProjectEvent>(LEGACY_EVENT_LOG_PATH)
-    : [];
+    : []);
 
   return [...archiveGroups.flat(), ...activeEvents];
 }

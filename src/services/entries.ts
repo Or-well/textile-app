@@ -28,8 +28,10 @@ import { mapWithConcurrency } from "../utils/async";
 import {
   createEntryVersionEvent,
   clearEntryWorkflowAuditCache,
+  getEntryHistoryNavigation,
+  isEntryHistoryVersionEvent,
   loadEntryWorkflowAudit,
-  isEntryVersionEvent,
+  type EntryHistoryDirection,
   type EntryVersionSnapshot,
 } from "./history";
 import type { ProjectDirectoryHandle } from "./projectFs";
@@ -42,6 +44,7 @@ import { assertEntryContentWritable } from "./entryAccess";
 import {
   findProjectEventFromNewest,
   loadProjectEventLogTail,
+  loadProjectEventsFromStorage,
   planAppendProjectEvents,
   type ProjectEventLogTail,
 } from "./eventLog";
@@ -99,6 +102,7 @@ export interface SaveEntryOptions {
 
 export interface RestoreEntryVersionOptions extends SaveEntryOptions {
   snapshot?: EntryVersionSnapshot;
+  direction?: EntryHistoryDirection;
 }
 
 export interface WriteEntriesOptions {
@@ -1337,21 +1341,6 @@ export async function restoreEntryVersion(
   const storage = getProjectStorage();
   const actor = resolveActor(options.actor);
   const fileId = getFileIdFromEntryId(entryId);
-  const eventLogTail = await loadProjectEventLogTail(storage);
-  const versionEvent = await findProjectEventFromNewest(
-    storage,
-    (event) => event.id === versionEventId,
-    eventLogTail,
-  );
-
-  if (
-    !versionEvent ||
-    !isEntryVersionEvent(versionEvent) ||
-    versionEvent.entry_id !== entryId
-  ) {
-    throw new Error("没有找到可恢复的译文历史版本。");
-  }
-
   const storedChunk = await loadChunkContainingEntry(storage, fileId, entryId);
 
   if (storedChunk) {
@@ -1365,7 +1354,27 @@ export async function restoreEntryVersion(
       throw new Error("当前成员没有恢复译文历史版本的权限。");
     }
 
-    const snapshot = options.snapshot ?? "after";
+    const { direction, snapshot = "after" } = options;
+    const eventLogTail = await loadProjectEventLogTail(storage);
+    const matchesVersion = (event: ProjectEvent) =>
+      event.id === versionEventId && event.entry_id === entryId && event.file_id === fileId;
+    let versionEvent: ProjectEvent | undefined;
+
+    if (direction) {
+      const events = await loadProjectEventsFromStorage(storage, eventLogTail);
+      const step = getEntryHistoryNavigation(originalEntry, events)[direction];
+      if (step?.eventId !== versionEventId || step.snapshot !== snapshot) {
+        throw new Error("译文历史已变化，请重新选择要撤销或重做的版本。");
+      }
+      versionEvent = events.find(matchesVersion);
+    } else {
+      versionEvent = await findProjectEventFromNewest(storage, matchesVersion, eventLogTail);
+    }
+
+    if (!versionEvent || !isEntryHistoryVersionEvent(versionEvent)) {
+      throw new Error("没有找到可恢复的译文历史版本。");
+    }
+
     const restoredTarget =
       snapshot === "before"
         ? versionEvent.detail.before_target
@@ -1395,7 +1404,7 @@ export async function restoreEntryVersion(
       actor.id,
       {
         type: "entry.restored",
-        operation: "restore",
+        operation: direction ?? "restore",
         restoredFromEventId: versionEvent.id,
         restoredFromSnapshot: snapshot,
       },
